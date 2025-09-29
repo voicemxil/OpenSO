@@ -294,7 +294,10 @@ namespace FSO.Client.Regulators
         }
         public void Disconnect()
         {
-            AsyncTransition("Disconnect");
+            if (CurrentState.Name != "Disconnected")
+            {
+                AsyncTransition("Disconnect");
+            }
         }
         
         public void JoinLot(uint id, LotTransitionInfo transition = null)

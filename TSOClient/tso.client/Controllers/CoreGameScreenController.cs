@@ -101,6 +101,7 @@ namespace FSO.Client.Controllers
                         break;
                     case "Disconnected":
                         Screen.CleanupLastWorld();
+
                         if (ReconnectLotID != 0)
                         {
                             GameThread.SetTimeout(() => {
@@ -171,6 +172,13 @@ namespace FSO.Client.Controllers
                     JoinLotRegulator.Disconnect();
                 }
             }
+        }
+
+        public uint GetVisualLotID()
+        {
+            uint lotID = Screen.VisualVM?.TSOState?.LotID ?? 0;
+
+            return lotID == 0 ? JoinLotRegulator.GetCurrentLotID() : lotID;
         }
 
         public uint GetCurrentLotID()
@@ -409,7 +417,10 @@ namespace FSO.Client.Controllers
 
         public void HandleVMShutdown(VMCloseNetReason reason)
         {
-            JoinLotRegulator.AsyncTransition("Disconnect");
+            if (JoinLotRegulator.CurrentState.Name != "Disconnected")
+            {
+                JoinLotRegulator.AsyncTransition("Disconnect");
+            }
         }
 
         public bool IsMe(uint id)

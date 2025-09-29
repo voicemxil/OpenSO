@@ -287,7 +287,7 @@ namespace FSO.Client.Rendering.City
         {
             if (controller != null)
             {
-                var id = controller.GetCurrentLotID();
+                var id = controller.GetVisualLotID();
                 if (id != 0)
                 {
                     //center on this lot, with the given camera offset

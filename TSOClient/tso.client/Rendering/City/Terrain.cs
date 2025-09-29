@@ -1769,7 +1769,7 @@ namespace FSO.Client.Rendering.City
             VertexShader.CurrentTechnique.Passes[3].Apply();
 
             var controller = UIScreen.Current.FindController<CoreGameScreenController>();
-            var id = controller.GetCurrentLotID();
+            var id = controller.GetVisualLotID();
 
             if (m_LotZoomProgress == 1)
             {
