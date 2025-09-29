@@ -695,6 +695,24 @@ namespace FSO.SimAntics.Engine
             }
         }
 
+        public Point EdgeCheck(int marginTiles)
+        {
+            var position = Caller.Position;
+
+            int marginSubtiles = marginTiles << 4;
+            int w = VM.Context.Architecture.Width << 4;
+            int h = VM.Context.Architecture.Height << 4;
+
+            var result = new Point();
+
+            if (position.x < marginSubtiles) result.X--;
+            if (position.y < marginSubtiles) result.Y--;
+            if (position.x > w - marginSubtiles) result.X++;
+            if (position.y > h - marginSubtiles) result.Y++;
+
+            return result;
+        }
+
         #region VM Marshalling Functions
         public override VMStackFrameMarshal Save()
         {

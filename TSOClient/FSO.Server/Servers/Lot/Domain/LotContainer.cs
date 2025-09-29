@@ -1125,6 +1125,11 @@ namespace FSO.Server.Servers.Lot.Domain
                         Host.UpdateActiveVisitRecords();
                     }
 
+                    if (AllowGuestOpening && !JobLot)
+                    {
+                        TickFreeRoam();
+                    }
+
                     var beingKilled = preTickAvatars.Where(x => x.KillTimeout == 1);
                     if (beingKilled.Count() > 0)
                     {
@@ -1227,14 +1232,93 @@ namespace FSO.Server.Servers.Lot.Domain
             evt.WaitOne();
         }
 
+        public void TickFreeRoam()
+        {
+            foreach (var obj in Lot.Context.ObjectQueries.Avatars)
+            {
+                var ava = obj as VMAvatar;
+                if (ava.KillTimeout != -1)
+                {
+                    // Can't transition if they're already leaving.
+                    continue;
+                }
+
+                // Direct control free roam
+                if (ava.Thread.Stack.LastOrDefault() is VMDirectControlFrame dcFrame)
+                {
+                    var edge = dcFrame.EdgeCheck(1);
+                    if (edge != default)
+                    {
+                        // User appears to be attempting to leave the property. See if the lot can be entered and then tell the client to go and join it.
+
+                        var location = LotPersist.location;
+                        var coords = MapCoordinates.Unpack(location);
+                        var cityOffset = LotTransitionInfo.RelativeChangeLotToCity(new Point(edge.X, edge.Y));
+                        coords.X += (ushort)cityOffset.X;
+                        coords.Y += (ushort)cityOffset.Y;
+
+                        if (Realestate.IsOpenable(coords.X, coords.Y))
+                        {
+                            LOG.Info($"Edge check {edge} ({coords.X}, {coords.Y}) {Stopwatch.GetTimestamp()}");
+
+                            var pid = ava.PersistID;
+
+                            var info = new LotTransitionInfo()
+                            {
+                                BeforeLocation = LotPersist.location,
+                                RelativeChangeX = edge.X,
+                                RelativeChangeY = edge.Y,
+
+                                AvatarLotTilePosX = ava.Position.x,
+                                AvatarLotTilePosY = ava.Position.y,
+                                AvatarDirection = ava.RadianDirection,
+
+                                Type = LotTransitionType.DirectControl
+                            };
+
+                            SaveAvatar(ava, () =>
+                            {
+                                Host.ReleaseDbAvatarClaim(pid);
+
+                                Lot.ForwardCommand(new VMNetBeginFreeRoamCmd()
+                                {
+                                    AvatarPID = pid,
+                                    TargetLot = MapCoordinates.Pack(coords.X, coords.Y),
+                                    Transition = info
+                                });
+                            });
+                        }
+                    }
+                    // Preload lots if the avatar is close to the edge.
+                    // TODO
+
+                    // Future process:
+                    // Server detects advancement to edge and tries to start the process a bit early (other stuff is the same)
+                    //..
+                    // - Client gets request to hop to target lot and starts connecting in the background.
+                    // - JoinLot includes a position as before, but it can be significantly out of bounds
+                    // - Surrpunding lots that can be reused from the previous lot are omitted to save space and time.
+                    // - Client seamless switch between the old world and the new one when it's fully ready (uses async preload)
+                    // - Client can correct its server position to better match the client (need to be aware of latency)
+                }
+
+                // TODO: Interaction based free roam (when they're routing and close to the end, perform the transition)
+            }
+        }
+
         public bool IsAvatarOnLot(uint pid)
         {
             //we need to check if the avatar's sim is still on the lot. their data + claim might have left, but the avatar could still be here.
             bool result = false;
             if (!ActiveYet) return false; //we are not on an inactive lot.
+
             BlockOnLotThread(() =>
             {
-                result = Lot.Context.ObjectQueries.AvatarsByPersist.ContainsKey(pid);
+                var ava = Lot.GetAvatarByPersist(pid);
+
+                // TODO: kick free roam avatars out faster if they're still waiting for the kill timeout when checking this
+
+                result = ava != null;
             });
             return result;
         }
@@ -1244,7 +1328,10 @@ namespace FSO.Server.Servers.Lot.Domain
             RelationshipsToSave.Clear();
             foreach (var avatar in avatars)
             {
-                if (avatar != null && avatar.PersistID != 0 && (ignoreKill || avatar.KillTimeout == -1)) SaveAvatar(avatar);
+                if (avatar != null && avatar.PersistID != 0 && (ignoreKill || avatar.KillTimeout == -1))
+                {
+                    SaveAvatar(avatar);
+                }
             }
             if (RelationshipsToSave.Count > 0) BatchRelationshipSave();
         }
@@ -1268,10 +1355,13 @@ namespace FSO.Server.Servers.Lot.Domain
                 //Load all the avatars data
                 var state = StateFromDB(avatar, user, rels, jobinfo, myRoomieLots, myIgnored);
 
+                var transitionInfo = session.GetAttribute("lotTransitionInfo") as LotTransitionInfo;
+
                 var client = new VMNetClient();
                 client.AvatarState = state;
                 client.RemoteIP = session.IpAddress;
                 client.PersistID = session.AvatarId;
+                client.TransitionInfo = transitionInfo;
 
                 if (TimeToShutdown == 0)
                 {
@@ -1349,7 +1439,7 @@ namespace FSO.Server.Servers.Lot.Domain
             });
         }
 
-        public void SaveAvatar(VMAvatar avatar)
+        public void SaveAvatar(VMAvatar avatar, Action postSave = null)
         {
             var statevm = new VMNetAvatarPersistState();
             statevm.Save(avatar);
@@ -1399,6 +1489,8 @@ namespace FSO.Server.Servers.Lot.Domain
                 {
                     db.Avatars.UpdateAvatarLotSave(pid, dbState);
                     if (jobLevel != null) db.Avatars.UpdateAvatarJobLevel(jobLevel);
+
+                    postSave();
                 }
             });
         }

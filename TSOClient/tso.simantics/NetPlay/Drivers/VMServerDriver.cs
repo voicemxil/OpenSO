@@ -87,6 +87,7 @@ namespace FSO.SimAntics.NetPlay.Drivers
                 {
                     ActorUID = client.PersistID,
                     AvatarState = client.AvatarState,
+                    TransitionInfo = client.TransitionInfo
                 });
             }
             lock (ClientsToSync)

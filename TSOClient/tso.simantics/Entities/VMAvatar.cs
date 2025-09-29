@@ -628,7 +628,7 @@ namespace FSO.SimAntics
             }
         }
 
-        public void UserLeaveLot()
+        public void UserLeaveLot(bool instant = false)
         {
             //interaction cancel should handle this
             //if (Thread.Context.VM.EODHost != null) Thread.Context.VM.EODHost.ForceDisconnect(this); //try this a lot.
@@ -647,7 +647,8 @@ namespace FSO.SimAntics
                 qaction.Flags |= TTABFlags.FSOSkipPermissions;
                 Thread.EnqueueAction(qaction);
             }
-            else
+           
+            if (instant || qaction == null)
             {
                 KillTimeout = FORCE_DELETE_TIMEOUT;
             }

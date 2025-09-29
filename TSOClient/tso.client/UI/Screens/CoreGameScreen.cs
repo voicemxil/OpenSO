@@ -28,6 +28,7 @@ using FSO.Client.UI.Panels.Neighborhoods;
 using FSO.Server.Clients;
 using FSO.LotView.Utils.Camera;
 using FSO.Client.UI.Archive;
+using FSO.Common.Model;
 
 namespace FSO.Client.UI.Screens
 {
@@ -65,6 +66,8 @@ namespace FSO.Client.UI.Screens
         public uint VisualBudget { get; set; }
 
         private UIMouseEventRef MouseHitAreaEventRef = null;
+
+        private CameraControllers TransitionCameras;
 
         public bool InLot
         {
@@ -407,23 +410,13 @@ namespace FSO.Client.UI.Screens
                 if (World != null) {
                     if (CityRenderer.m_Zoomed == TerrainZoomMode.Lot)
                     {
-                        if (World.FrameCounter < 3)
-                        {
-                            //wait until the draw stage has stabalized a bit. tends to be like this
-                            // 1. heavy singular draw
-                            // 2. update * 30
-                            // 3. normal draws
-                            CityRenderer.m_LotZoomProgress = 0;
-                            World.Visible = true;
-                            World.Opacity = 0;
-                        }
-                        else if (World.FrameCounter == 5 && GlobalSettings.Default.CompatState < GlobalSettings.TARGET_COMPAT_STATE)
+                        if (World.FrameCounter == 5 && GlobalSettings.Default.CompatState < GlobalSettings.TARGET_COMPAT_STATE)
                         {
                             GlobalSettings.Default.CompatState = GlobalSettings.TARGET_COMPAT_STATE;
                             GlobalSettings.Default.Save();
                         }
-                        else
-                            CityRenderer.InheritPosition(World, FindController<CoreGameScreenController>(), false);
+
+                       CityRenderer.InheritPosition(World, FindController<CoreGameScreenController>(), false);
                     }
                     if (CityRenderer.m_LotZoomProgress > 0f && CityRenderer.m_LotZoomProgress < 1f)
                     {
@@ -522,7 +515,7 @@ namespace FSO.Client.UI.Screens
                 else if (!WorldLoaded && vm.Context.Blueprint != null)
                 {
                     var result = World.Preload(GameFacade.GraphicsDevice);
-                    if (result)
+                    if (result && vm.GetAvatarByPersist(vm.MyUID) != null)
                     {
                         WorldLoaded = true;
                         ClientStateChange(6, 1);
@@ -564,10 +557,16 @@ namespace FSO.Client.UI.Screens
 
             //clear our cache too, if the setting lets us do that
             DiscordRpcEngine.SendFSOPresence(gizmo.CurrentAvatar.Value.Avatar_Name, null, 0, 0, 0, 0, null, gizmo.CurrentAvatar.Value.Avatar_PrivacyMode > 0);
-            TimedReferenceController.Clear();
-            TimedReferenceController.Clear();
 
-            if (ZoomLevel < 4) ZoomLevel = 5;
+            bool localTransition = FindController<CoreGameScreenController>()?.LocalTransition ?? false;
+
+            if (localTransition)
+            {
+                TimedReferenceController.Clear();
+                TimedReferenceController.Clear();
+            }
+
+            if (ZoomLevel < 4) ZoomLevel = localTransition ? 4 : 5;
             vm.Context.Ambience.Kill();
             foreach (var ent in vm.Entities) { //stop object sounds
                 var threads = ent.SoundThreads;
@@ -686,9 +685,47 @@ namespace FSO.Client.UI.Screens
                     UIScreen.RemoveDialog(JoinLotProgress);
                     CursorManager.INSTANCE.SetCursorPriority(0);
                     ZoomLevel = 1;
+
+                    TryKeepFirstPerson();
+
                     ucp.SetInLot(true);
                     break;
             }
+        }
+
+        private void TryKeepFirstPerson()
+        {
+            if (TransitionCameras == null)
+            {
+                return;
+            }
+
+            if (vm != null && World != null)
+            {
+                var myAvatar = vm.GetAvatarByPersist(vm.MyUID);
+
+                if (myAvatar == null)
+                {
+                    // Not here yet. We'll try to keep first person on a future tick.
+                    return;
+                }
+
+                if (myAvatar.GetPersonData(SimAntics.Model.VMPersonDataVariable.UnusedAndDoNotUse2) == 32767)
+                {
+                    World.ToggleFirstPerson(CameraControllerType.Direct);
+                    CityRenderer.m_LotZoomProgress = 1;
+
+                    if (TransitionCameras != null)
+                    {
+                        var camera = World.State.Cameras.CameraDirect;
+                        var lastCamera = TransitionCameras.CameraDirect;
+                        camera.RotationX = lastCamera.RotationX;
+                        camera.RotationY = lastCamera.RotationY;
+                    }
+                }
+            }
+
+            TransitionCameras = null;
         }
 
         public void InitializeLot()
@@ -760,9 +797,11 @@ namespace FSO.Client.UI.Screens
             }
         }
 
-        private void VMLotSwitch(uint lotId)
+        private void VMLotSwitch(uint lotId, LotTransitionInfo transition)
         {
-            FindController<CoreGameScreenController>()?.SwitchLot(lotId);
+            TransitionCameras = World?.State?.Cameras;
+
+            FindController<CoreGameScreenController>()?.SwitchLot(lotId, transition);
         }
 
         private string lastLotTitle = "";

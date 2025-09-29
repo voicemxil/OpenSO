@@ -38,6 +38,7 @@ namespace FSO.Server.Protocol.Electron
         ArchiveClientList,
         ArchiveModerationRequest,
         VerificationNotification,
+        JoinLotWithTransitionRequest,
         Unknown = 0xFFFF
     }
 
