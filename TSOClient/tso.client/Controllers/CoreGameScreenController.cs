@@ -104,9 +104,9 @@ namespace FSO.Client.Controllers
 
                         if (ReconnectLotID != 0)
                         {
-                            GameThread.SetTimeout(() => {
+                            GameThread.InUpdate(() => {
                                 if (ReconnectLotID != 0) JoinLot(ReconnectLotID, ReconnectTransition);
-                            }, 100);
+                            });
                         }
                         //destroy the currently active lot (if possible)
                         break;
