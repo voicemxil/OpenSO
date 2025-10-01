@@ -729,6 +729,7 @@ namespace FSO.Server.Servers.Lot.Domain
             LOG.Info("Resetting VM for lot with dbid = " + Context.DbId);
             VMGlobalLink = Kernel.Get<LotServerGlobalLink>();
             VMDriver = new VMServerDriver(VMGlobalLink);
+            VMDriver.TicksPerPacket = Config.Tick_Rate_Divider;
             VMDriver.OnTickBroadcast += TickBroadcast;
             VMDriver.OnDirectMessage += DirectMessage;
             VMDriver.OnDropClient += DropClient;

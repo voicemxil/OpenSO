@@ -6,6 +6,7 @@ namespace FSO.Server.Servers.Lot
     public class LotServerConfiguration : AbstractAriesServerConfig
     {
         public int Max_Lots = 1;
+        public int Tick_Rate_Divider = 4;
 
         public string SimNFS;
         public int RingBufferSize = 10;
