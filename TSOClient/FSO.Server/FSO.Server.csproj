@@ -38,14 +38,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\FSO.Common.DatabaseService\FSO.Common.DatabaseService.csproj" />
-    <ProjectReference Include="..\FSO.Server.Api.Core\FSO.Server.Api.Core.csproj" />
     <ProjectReference Include="..\FSO.Server.Clients\FSO.Server.Clients.csproj" />
     <ProjectReference Include="..\FSO.Server.Common\FSO.Server.Common.csproj" />
     <ProjectReference Include="..\FSO.Server.Database\FSO.Server.Database.csproj" />
     <ProjectReference Include="..\FSO.Server.DataService\FSO.Common.DataService.csproj" />
     <ProjectReference Include="..\FSO.Server.Domain\FSO.Server.Domain.csproj" />
     <ProjectReference Include="..\FSO.Server.Protocol\FSO.Server.Protocol.csproj" />
-    <ProjectReference Include="..\FSO.Server.Updater\FSO.Server.Watchdog.csproj" />
     <ProjectReference Include="..\tso.simantics\FSO.SimAntics.csproj" />
   </ItemGroup>
 
