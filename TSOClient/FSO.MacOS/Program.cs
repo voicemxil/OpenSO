@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using FSO.Client;
 using FSO.Client.UI.Panels;
+using FSO.Common;
 using FSO.Common.Rendering.Framework.IO;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
@@ -22,6 +23,8 @@ namespace FSO.MacOS
         public static void Main(string[] args)
         {
             InitMacOS();
+            
+            FSOEnvironment.Enable3D = true;
 
             if ((new FSOProgram()).InitWithArguments(args))
             {
