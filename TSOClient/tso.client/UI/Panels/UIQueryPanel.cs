@@ -743,7 +743,7 @@ namespace FSO.Client.UI.Panels
         {
             base.InternalDraw(batch);
 
-            float scale = 0.7f;
+            float scale = 0.7f / FSOEnvironment.DPIScaleFactor;
             Texture2D thumb = null;
             if (Thumb3D != null)
             {

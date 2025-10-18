@@ -31,6 +31,7 @@ namespace FSO.Windows
         {
             //initialize some platform specific stuff
             FSO.Files.ImageLoaderHelpers.BitmapFunction = BitmapReader;
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
             ClipboardHandler.Default = new WinFormsClipboard();
             FSO.Files.ImageLoaderHelpers.SavePNGFunc = SavePNG;
 

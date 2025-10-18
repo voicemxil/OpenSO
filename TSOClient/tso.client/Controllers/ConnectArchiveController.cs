@@ -201,7 +201,7 @@ namespace FSO.Client.Controllers
                         View.SetProgressArchive((5.0f / 14.0f) * 100, "Connected, awaiting avatar selection");
 
                         // Show the avatar selection UI.
-                        ShowMainDialog(new ArchivePersonSelection());
+                        ShowMainDialog(new ArchivePersonSelection() { ScaleX = 1, ScaleY = 1 });
 
                         break;
                     case "ArchiveSelectAvatar":

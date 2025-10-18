@@ -379,7 +379,7 @@ namespace FSO.Client.UI
             for (int i = 0; i < wrapped.Lines.Count; i++)
             {
                 int thisWidth = (int)(style.MeasureString(wrapped.Lines[i]).X);
-                var pos = position + new Vector2((width - thisWidth) / 2, 0);
+                var pos = position + new Vector2((width - thisWidth) / 2, 1);
                 if (style.VFont != null)
                 {
                     batch.End();
