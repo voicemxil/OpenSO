@@ -397,7 +397,7 @@ namespace FSO.Client.UI.Screens
             Background.SetSize(GlobalSettings.Default.GraphicsWidth, GlobalSettings.Default.GraphicsHeight);
             Background.Position = new Vector2((GlobalSettings.Default.GraphicsWidth - 1024) / -2, (GlobalSettings.Default.GraphicsHeight - 768) / -2);
             InvalidateMatrix();
-            Parent.InvalidateMatrix();
+            Parent?.InvalidateMatrix();
         }
 
         public void AsyncAPILotThumbnail(uint shardId, uint lotId, Action<Texture2D> callback)
