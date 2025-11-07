@@ -117,7 +117,7 @@ namespace FSO.LotView.Components
             set
             {
                 _Position = value;
-                if (blueprint != null) _Position.Z += blueprint.InterpAltitude(new Vector3(0.5f, 0.5f, 0) + _Position - MTOffset / 16) + MTOffset.Z / 16f;
+                if (blueprint != null) _Position.Z += blueprint.InterpAltitudeWithSubworlds(new Vector3(0.5f, 0.5f, 0) + _Position - MTOffset / 16) + MTOffset.Z / 16f;
                 OnPositionChanged();
                 _WorldDirty = true;
 

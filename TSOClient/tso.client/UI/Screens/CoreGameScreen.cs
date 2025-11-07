@@ -29,6 +29,7 @@ using FSO.Server.Clients;
 using FSO.LotView.Utils.Camera;
 using FSO.Client.UI.Archive;
 using FSO.Common.Model;
+using FSO.Common.Domain.Realestate;
 
 namespace FSO.Client.UI.Screens
 {
@@ -731,7 +732,7 @@ namespace FSO.Client.UI.Screens
                     CursorManager.INSTANCE.SetCursorPriority(0);
                     ZoomLevel = 1;
 
-                    TryKeepFirstPerson(updateState);
+                    InheritTransition(updateState);
                     CleanupTransition();
 
                     ucp.SetInLot(true);
@@ -739,7 +740,7 @@ namespace FSO.Client.UI.Screens
             }
         }
 
-        private void TryKeepFirstPerson(UpdateState state)
+        private void InheritTransition(UpdateState state)
         {
             if (TransitionCameras == null)
             {
@@ -755,6 +756,43 @@ namespace FSO.Client.UI.Screens
                     // Not here yet. We'll try to keep first person on a future tick.
                     return;
                 }
+
+                var info = FindController<CoreGameScreenController>().ReconnectTransition;
+
+                if (info == null)
+                {
+                    // Should be impossible...
+                    return;
+                }
+
+                var lastWorld = TransitionWorld;
+                CameraControllers newCameras = World.State.Cameras;
+                World.State.DisableSmoothRotation = true;
+
+                var position = MapCoordinates.Unpack(vm.TSOState.LotID);
+                var previousElevation = CityRenderer.GetElevationAt(position.X + info.RelativeChangeY, position.Y - info.RelativeChangeX);
+                var currentElevation = CityRenderer.GetElevationAt(position.X, position.Y);
+
+                var baseAltDiff = (currentElevation - previousElevation) * 100;
+                var heightDiff = baseAltDiff * World.Architecture.Blueprint.TerrainFactor * 3;
+
+                TransitionCameras.Camera3D.CamHeight -= heightDiff;
+
+                if (lastWorld != null)
+                {
+                    var lastState = TransitionWorld.State;
+                    if (World.State.Level != lastState.Level) World.State.Level = lastState.Level;
+                    if (World.State.Rotation != lastState.Rotation) World.State.Rotation = lastState.Rotation;
+                    if (World.State.Zoom != lastState.Zoom) World.State.Zoom = lastState.Zoom;
+                    World.State.PreciseZoom = lastState.PreciseZoom;
+                    World.State.CenterTile = lastState.CenterTile - new Vector2(info.RelativeChangeX * (TransitionWorld.Architecture.Blueprint.Width - 2), info.RelativeChangeY * (TransitionWorld.Architecture.Blueprint.Height - 2));
+                }
+
+                // TODO: shift camera height by surrounding lot height?
+                TransitionCamera(newCameras.Camera3D, TransitionCameras.Camera3D);
+                //TransitionCamera(newCameras.Camera2D, TransitionCameras.Camera2D);
+                //TransitionCamera(newCameras.CameraFirstPerson, TransitionCameras.CameraFirstPerson);
+                //TransitionCamera(newCameras.CameraDirect, TransitionCameras.CameraDirect);
 
                 if (myAvatar.GetPersonData(SimAntics.Model.VMPersonDataVariable.UnusedAndDoNotUse2) == 32767)
                 {
@@ -773,9 +811,19 @@ namespace FSO.Client.UI.Screens
                         World.State.Cameras.PreDraw(World);
                     }
                 }
+
+                World.State.DisableSmoothRotation = false;
+                LotControl.ResetTargetZoom();
             }
 
             TransitionCameras = null;
+        }
+
+        private void TransitionCamera(ICameraController camera, ICameraController previousCamera)
+        {
+            camera.BeforeActive(previousCamera, World);
+            camera.OnActive(previousCamera, World);
+            camera.InvalidateCamera(World.State);
         }
 
         public void InitializeLot()

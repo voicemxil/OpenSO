@@ -85,7 +85,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                 {
                     roomieChange = !roomieChange;
                     vm.TSOState.Roommates.Add(pid);
-                    vm.TSOState.Names.Precache(vm, pid);
+                    vm.TSOState.Names.Precache(vm, VMGlobalEntityType.Avatar, pid);
                     if (level > VMTSOAvatarPermissions.Roommate) vm.TSOState.BuildRoommates.Add(pid);
                     if (level == VMTSOAvatarPermissions.Owner) vm.TSOState.OwnerID = pid;
                 }

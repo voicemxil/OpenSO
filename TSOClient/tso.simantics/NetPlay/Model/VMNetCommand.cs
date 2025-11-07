@@ -60,6 +60,7 @@ namespace FSO.SimAntics.NetPlay.Model
             { VMCommandType.SM64AnimData, typeof(VMNetSM64AnimDataCmd) },
 
             { VMCommandType.BeginFreeRoam, typeof(VMNetBeginFreeRoamCmd) },
+            { VMCommandType.GotoLot, typeof(VMNetGotoLotCmd) },
         };
         public static Dictionary<Type, VMCommandType> ReverseMap = CmdMap.ToDictionary(x => x.Value, x => x.Key);
 
@@ -176,5 +177,6 @@ namespace FSO.SimAntics.NetPlay.Model
 
         // Archive
         BeginFreeRoam = 49,
+        GotoLot = 50,
     }
 }

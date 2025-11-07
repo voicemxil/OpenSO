@@ -50,6 +50,8 @@ namespace FSO.Server.Servers.Lot.Domain
         private const int TIME_DILATION_THRESHOLD_MS = 500; // Accelerate through half second pauses.
         private const int TIME_DILATION_SKIP_THRESHOLD_MS = 5000; // 5 seconds, or 1 ingame minute
 
+        private const uint TRANSITION_GUID = 0x746ED02B;
+
         private static Logger LOG = LogManager.GetCurrentClassLogger();
 
         private IDAFactory DAFactory;
@@ -1238,6 +1240,9 @@ namespace FSO.Server.Servers.Lot.Domain
             foreach (var obj in Lot.Context.ObjectQueries.Avatars)
             {
                 var ava = obj as VMAvatar;
+
+                var lastStack = ava.Thread.Stack.LastOrDefault();
+
                 if (ava.KillTimeout != -1)
                 {
                     // Can't transition if they're already leaving.
@@ -1245,7 +1250,7 @@ namespace FSO.Server.Servers.Lot.Domain
                 }
 
                 // Direct control free roam
-                if (ava.Thread.Stack.LastOrDefault() is VMDirectControlFrame dcFrame)
+                if (lastStack is VMDirectControlFrame dcFrame)
                 {
                     var edge = dcFrame.EdgeCheck(1);
                     if (edge != default)
@@ -1298,12 +1303,66 @@ namespace FSO.Server.Servers.Lot.Domain
                     //..
                     // - Client gets request to hop to target lot and starts connecting in the background.
                     // - JoinLot includes a position as before, but it can be significantly out of bounds
-                    // - Surrpunding lots that can be reused from the previous lot are omitted to save space and time.
+                    // - Surrounding lots that can be reused from the previous lot are omitted to save space and time.
                     // - Client seamless switch between the old world and the new one when it's fully ready (uses async preload)
                     // - Client can correct its server position to better match the client (need to be aware of latency)
                 }
+                else if (lastStack.Callee.Object.GUID == TRANSITION_GUID)
+                {
+                    var transitionDest = lastStack.Callee;
 
-                // TODO: Interaction based free roam (when they're routing and close to the end, perform the transition)
+                    var transitionRequested = transitionDest.GetAttribute(5);
+
+                    if (transitionRequested != 0)
+                    {
+                        var idLow = transitionDest.GetAttribute(1);
+                        var idHigh = transitionDest.GetAttribute(2);
+                        var destX = transitionDest.GetAttribute(3);
+                        var destY = transitionDest.GetAttribute(4);
+
+                        var myCoords = MapCoordinates.Unpack(LotPersist.location);
+
+                        var location = (uint)((int)idLow | (idHigh << 16));
+                        var coords = MapCoordinates.Unpack(location);
+
+                        if (Realestate.IsOpenable(coords.X, coords.Y))
+                        {
+                            var pid = ava.PersistID;
+                            var cityEdge = new Point(coords.X - myCoords.X, coords.Y - myCoords.Y);
+                            var edge = LotTransitionInfo.RelativeChangeCityToLot(cityEdge);
+
+                            var info = new LotTransitionInfo()
+                            {
+                                BeforeLocation = LotPersist.location,
+                                RelativeChangeX = edge.X,
+                                RelativeChangeY = edge.Y,
+
+                                AvatarLotTilePosX = ava.Position.x,
+                                AvatarLotTilePosY = ava.Position.y,
+                                AvatarDirection = ava.RadianDirection,
+
+                                Type = LotTransitionType.Routing,
+                                RoutingLotTilePosX = destX,
+                                RoutingLotTilePosY = destY,
+                                RoutingTargetLocation = location
+                            };
+
+                            ava.Thread.Interrupt = true;
+
+                            SaveAvatar(ava, () =>
+                            {
+                                Host.ReleaseDbAvatarClaim(pid);
+
+                                Lot.ForwardCommand(new VMNetBeginFreeRoamCmd()
+                                {
+                                    AvatarPID = pid,
+                                    TargetLot = MapCoordinates.Pack(coords.X, coords.Y),
+                                    Transition = info
+                                });
+                            });
+                        }
+                    }
+                }
             }
         }
 

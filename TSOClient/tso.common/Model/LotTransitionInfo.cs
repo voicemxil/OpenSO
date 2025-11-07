@@ -28,11 +28,21 @@ namespace FSO.Common.Model
         /// By default, relative change x/y are in lot space, for calculation of the new lot tile pos on the target lot.
         /// This function converts them to offsets usable for city map coordinates.
         /// </summary>
-        /// <param name="relativeChange"></param>
-        /// <returns></returns>
+        /// <param name="relativeChange">Relative change in lot space</param>
+        /// <returns>Relative change in city space</returns>
         public static Point RelativeChangeLotToCity(Point relativeChange)
         {
             return new Point(-relativeChange.Y, relativeChange.X);
+        }
+
+        /// <summary>
+        /// This function converts relative city tile x/y into lot space.
+        /// </summary>
+        /// <param name="relativeChange">Relative change in city space</param>
+        /// <returns>Relative change in lot space</returns>
+        public static Point RelativeChangeCityToLot(Point relativeChange)
+        {
+            return new Point(relativeChange.Y, -relativeChange.X);
         }
 
         /// <summary>

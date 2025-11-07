@@ -1848,6 +1848,7 @@ namespace FSO.SimAntics
         public bool Global;
 
         public Dictionary<int, short> MotiveAdChanges;
+        public bool IsTooltip;
 
         public override string ToString()
         {

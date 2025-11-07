@@ -1,9 +1,9 @@
-﻿using FSO.LotView.Model;
-using FSO.SimAntics.Primitives;
+﻿using FSO.Common.Model;
+using FSO.Common.Utils;
+using FSO.LotView.Model;
 using FSO.SimAntics.Model;
 using FSO.SimAntics.Model.TSOPlatform;
-using FSO.Common.Model;
-using FSO.Common.Utils;
+using FSO.SimAntics.Primitives;
 
 namespace FSO.SimAntics.NetPlay.Model.Commands
 {
@@ -175,6 +175,10 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                     avatar.SetPersonData(VMPersonDataVariable.UnusedAndDoNotUse2, 32767); // Enable direct control
                     avatar.Thread.EnsureDirectControlAction();
                 }
+                else if (TransitionInfo.Type == LotTransitionType.Routing)
+                {
+                    VMNetGotoCmd.QueueGoto(vm, avatar, new LotTilePos((short)TransitionInfo.RoutingLotTilePosX, (short)TransitionInfo.RoutingLotTilePosY, 1));
+                }
             }
 
             return true;
@@ -213,7 +217,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
 
                 if (TransitionInfo.Type == LotTransitionType.Routing)
                 {
-                    // TODO
+                    // TODO !!
                     // Check if target tile position is in bounds
                     // If the tile position is occupied, go to the mailbox.
                 }

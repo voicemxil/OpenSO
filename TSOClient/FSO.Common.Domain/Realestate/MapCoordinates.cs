@@ -69,12 +69,23 @@ namespace FSO.Common.Domain.Realestate
             Y = y;
         }
 
+        public MapCoordinate(Point point)
+        {
+            X = (ushort)point.X;
+            Y = (ushort)point.Y;
+        }
+
         public ushort X;
         public ushort Y;
 
         public Vector2 ToVector2()
         {
             return new Vector2(X, Y);
+        }
+
+        public Point ToPoint()
+        {
+            return new Point(X, Y);
         }
     }
 }

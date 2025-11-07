@@ -119,7 +119,8 @@ namespace FSO.LotView.Model
         // AF2022, obviously getting removed in a day
         public SM64Component SM64;
 
-        public Blueprint(int width, int height){
+        public Blueprint(int width, int height)
+        {
             this.Width = width;
             this.Height = height;
 
@@ -133,7 +134,7 @@ namespace FSO.LotView.Model
                 this.WCRC = new WallComponentRC();
                 WCRC.blueprint = this;
             }
-        
+
             RoomColors = new Color[65536];
             this.WallsAt = new List<int>[Stories];
             this.Walls = new WallTile[Stories][];
@@ -141,7 +142,7 @@ namespace FSO.LotView.Model
 
             this.Floors = new FloorTile[Stories][];
 
-            for (int i=0; i<Stories; i++)
+            for (int i = 0; i < Stories; i++)
             {
                 this.WallsAt[i] = new List<int>();
                 this.Walls[i] = new WallTile[numTiles];
@@ -156,18 +157,48 @@ namespace FSO.LotView.Model
             this.SM64 = new SM64Component(this);
         }
 
+        public void BoundAltPoint(ref int x, ref int y)
+        {
+            x = Math.Max(1, Math.Min(Width - 1, x));
+            y = Math.Max(1, Math.Min(Height - 1, y));
+        }
+
         public float GetAltitude(int x, int y)
         {
-            if (x <= 0 || y <= 0) return 0f;
-            return (AltitudeCenters[((y % Height) * Width + (x % Width))] - BaseAlt) * TerrainFactor;
+            BoundAltPoint(ref x, ref y);
+            if (AltitudeCenters == null) return 0;
+            return (AltitudeCenters[y * Width + x] - BaseAlt) * TerrainFactor;
         }
 
 
         public float GetAltPoint(int x, int y)
         {
             //x += 1; y += 1;
-            if (x <= 0 || y <= 0) return 0f;
-            return (Altitude[((y % Height) * Width + (x % Width))]);
+            BoundAltPoint(ref x, ref y);
+            return Altitude[y * Width + x];
+        }
+
+        public float InterpAltitudeWithSubworlds(Vector3 Position)
+        {
+            if (Position.X > 0 && Position.X < Width && Position.Y > 0 && Position.Y < Height)
+            {
+                return InterpAltitude(Position);
+            }
+
+            // Try find a subworld to get the altitude from
+
+            foreach (var subworld in SubWorlds)
+            {
+                var newPos = Position + new Vector3(subworld.GlobalPosition, 0);
+                var subBp = subworld.Architecture.Blueprint;
+
+                if (newPos.X > 0 && newPos.X < subBp.Width && newPos.Y > 0 && newPos.Y < subBp.Height)
+                {
+                    return subBp.InterpAltitude(newPos);
+                }
+            }
+
+            return InterpAltitude(Position);
         }
 
         public float InterpAltitude(Vector3 Position)
