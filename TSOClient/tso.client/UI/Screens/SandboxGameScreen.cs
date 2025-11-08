@@ -669,7 +669,7 @@ namespace FSO.Client.UI.Screens
             //hmm...
         }
 
-        private void VMLotSwitch(uint lotId)
+        private void VMLotSwitch(uint lotId, LotTransitionInfo transition)
         {
             if ((short)lotId == -1)
             {

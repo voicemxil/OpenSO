@@ -157,6 +157,7 @@ namespace FSO.Server.Embedded
                             Public_Host = $"{publicHost}:{lotPort}",
                             Max_Lots = 100,
                             Use_SSL = false,
+                            Tick_Rate_Divider = config.Flags.HasFlag(ArchiveConfigFlags.ReducedTickRate) ? 4 : 1,
                             Cities = new Servers.Lot.LotServerConfigurationCity[]
                             {
                                 new Servers.Lot.LotServerConfigurationCity()

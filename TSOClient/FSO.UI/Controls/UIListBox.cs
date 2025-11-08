@@ -423,7 +423,7 @@ namespace FSO.Client.UI.Controls
             if (Mask)
             {
                 var gd = batch.GraphicsDevice;
-                var size = Size;
+                var size = Size * Scale;
                 if (Target == null || (int)size.X != Target.Width || (int)size.Y != Target.Height)
                 {
                     Target?.Dispose();
@@ -434,8 +434,7 @@ namespace FSO.Client.UI.Controls
                 gd.Clear(Color.Transparent);
                 var pos = LocalPoint(0, 0);
 
-                var trans = Microsoft.Xna.Framework.Matrix.CreateTranslation(-pos.X, -pos.Y, 0)
-                    * Microsoft.Xna.Framework.Matrix.CreateScale(1/Scale.X, 1/Scale.Y, 1f);
+                var trans = Microsoft.Xna.Framework.Matrix.CreateTranslation(-pos.X, -pos.Y, 0);
                 batch.BatchMatrixStack.Push(trans);
                 batch.Begin(transformMatrix: trans, blendState: BlendState.AlphaBlend, sortMode: SpriteSortMode.Deferred);
                 batch.GraphicsDevice.RasterizerState = RasterizerState.CullNone;
@@ -457,7 +456,7 @@ namespace FSO.Client.UI.Controls
 
                 if (Target != null)
                 {
-                    DrawLocalTexture(batch, Target, Vector2.Zero);
+                    DrawLocalTexture(batch, Target, null, Vector2.Zero, new Vector2(1 / Scale.X, 1 / Scale.Y));
                 }
             }
             else

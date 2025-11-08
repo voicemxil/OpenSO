@@ -79,6 +79,10 @@ float3 RotateXY(float3 posIn, float angle) {
 	return posIn;
 }
 
+float2 NegMod(float2 value, float2 mod) {
+	return ((value % mod) - mod) % mod;
+}
+
 //Parameters:
 //miny, yrange, fall speed, fall speed variation
 //wind x, wind z, wind variation, rotation variation
@@ -103,7 +107,7 @@ ParticleOutput SnowVS(in ParticleInput input)
 	float2 xz = input.Position.xz + (realTime) * windSpeed;
 
 	float2 xzbase = (Parameters3.xz + boxCtr.xz); //test
-	xz = ((xz - xzbase) % Parameters3.yw) + xzbase;
+	xz = NegMod((xz - xzbase), Parameters3.yw) + xzbase;
 
 	float flakeSize = (sin(input.Position.y * 1000)*0.15 + 1) * Parameters4.x;
 	float4 realCtr = float4(xz.x, newY + boxCtr.y, xz.y, 1);
@@ -140,7 +144,7 @@ ParticleOutput RainVS(in ParticleInput input)
 	float2 xz = input.Position.xz + (realTime) * windSpeed;
 
 	float2 xzbase = (Parameters3.xz + boxCtr.xz); //test
-	xz = ((xz - xzbase) % Parameters3.yw) + xzbase;
+	xz = NegMod((xz - xzbase), Parameters3.yw) + xzbase;
 
 	float4 realCtr = float4(xz.x, newY + boxCtr.y, xz.y, 1);
 	float2 windDelta = (windSpeed * (TimeRate / repeatTime)) / -2;

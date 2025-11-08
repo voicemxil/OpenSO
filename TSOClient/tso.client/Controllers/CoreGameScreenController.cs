@@ -7,6 +7,7 @@ using FSO.Common;
 using FSO.Common.DataService;
 using FSO.Common.DataService.Model;
 using FSO.Common.Enum;
+using FSO.Common.Model;
 using FSO.Common.Utils;
 using FSO.Files.Formats.tsodata;
 using FSO.Server.Protocol.Electron.Model;
@@ -35,6 +36,7 @@ namespace FSO.Client.Controllers
         /// Lot to connect to immediately after disconnecting. Used for job lots and switching lots.
         /// </summary>
         public uint ReconnectLotID = 0;
+        public LotTransitionInfo ReconnectTransition;
 
         public TerrainController Terrain;
         public NeighborhoodActionController NeighborhoodProtocol;
@@ -44,6 +46,7 @@ namespace FSO.Client.Controllers
         public CityConnectionMode Mode => Network.Mode;
         public ArchiveConfigFlags ArchiveConfig => Network.ArchiveConfig;
         public ConnectArchiveRequest ArchiveHost => Network.ArchiveHost;
+        public bool LocalTransition => ReconnectLotID != 0 && ReconnectTransition != null;
 
         public CoreGameScreenController(CoreGameScreen view, Network.Network network, IClientDataService dataService, IKernel kernel, LotConnectionRegulator joinLotRegulator)
         {
@@ -98,11 +101,12 @@ namespace FSO.Client.Controllers
                         break;
                     case "Disconnected":
                         Screen.CleanupLastWorld();
+
                         if (ReconnectLotID != 0)
                         {
-                            GameThread.SetTimeout(() => {
-                                if (ReconnectLotID != 0) JoinLot(ReconnectLotID);
-                            }, 100);
+                            GameThread.InUpdate(() => {
+                                if (ReconnectLotID != 0) JoinLot(ReconnectLotID, ReconnectTransition);
+                            });
                         }
                         //destroy the currently active lot (if possible)
                         break;
@@ -127,12 +131,12 @@ namespace FSO.Client.Controllers
             });
         }
 
-        public void JoinLot(uint id)
+        public void JoinLot(uint id, LotTransitionInfo transition = null)
         {
             var lot = JoinLotRegulator.GetCurrentLotID();
             if (lot == 0)
             {
-                JoinLotRegulator.JoinLot(id);
+                JoinLotRegulator.JoinLot(id, transition);
                 ReconnectLotID = 0;
             }
             else if (lot == id)
@@ -147,19 +151,34 @@ namespace FSO.Client.Controllers
             }
         }
 
-        public void SwitchLot(uint id)
+        public void SwitchLot(uint id, LotTransitionInfo transition)
         {
             if (JoinLotRegulator.GetCurrentLotID() == 0)
             {
-                JoinLotRegulator.JoinLot(id);
+                JoinLotRegulator.JoinLot(id, transition);
                 ReconnectLotID = 0;
             }
             else
             {
                 //force a switch to the target lot
+                JoinLotRegulator.LeavingLot = true;
                 ReconnectLotID = id;
+                ReconnectTransition = transition;
                 Screen.InitiateLotSwitch();
+
+                // If there's a transition, we can leave immediately.
+                if (transition != null)
+                {
+                    JoinLotRegulator.Disconnect();
+                }
             }
+        }
+
+        public uint GetVisualLotID()
+        {
+            uint lotID = Screen.VisualVM?.TSOState?.LotID ?? 0;
+
+            return lotID == 0 ? JoinLotRegulator.GetCurrentLotID() : lotID;
         }
 
         public uint GetCurrentLotID()
@@ -398,7 +417,10 @@ namespace FSO.Client.Controllers
 
         public void HandleVMShutdown(VMCloseNetReason reason)
         {
-            JoinLotRegulator.AsyncTransition("Disconnect");
+            if (JoinLotRegulator.CurrentState.Name != "Disconnected")
+            {
+                JoinLotRegulator.AsyncTransition("Disconnect");
+            }
         }
 
         public bool IsMe(uint id)

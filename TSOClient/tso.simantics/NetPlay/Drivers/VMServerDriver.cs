@@ -16,11 +16,12 @@ namespace FSO.SimAntics.NetPlay.Drivers
         private List<VMNetCommand> QueuedCmds;
         private List<VMNetCommand> DeferredCmds;
 
-        private const int TICKS_PER_PACKET = 4;
         private const int INACTIVITY_TICKS_WARN = 15 * 60 * 30;
         private const int INACTIVITY_TICKS_KICK = 20 * 60 * 30;
         private uint ProblemTick;
         private List<VMNetTick> TickBuffer;
+
+        public int TicksPerPacket = 4;
 
         // Networking Abstractions
         private uint LastDesyncTick;
@@ -40,7 +41,7 @@ namespace FSO.SimAntics.NetPlay.Drivers
         private bool FastTick;
 
         //Sync and sync history
-        private const int MAX_HISTORY = (30 * 30) / TICKS_PER_PACKET;
+        private int MaxHistory => (30 * 30) / TicksPerPacket;
         private bool SyncSerializing; //this is set when we begin serializing the state on another thread.
         private byte[] LastSync;
         private List<byte[]> TicksSinceSync;
@@ -87,6 +88,7 @@ namespace FSO.SimAntics.NetPlay.Drivers
                 {
                     ActorUID = client.PersistID,
                     AvatarState = client.AvatarState,
+                    TransitionInfo = client.TransitionInfo
                 });
             }
             lock (ClientsToSync)
@@ -332,7 +334,7 @@ namespace FSO.SimAntics.NetPlay.Drivers
 
             TickBuffer.Add(tick);
 
-            if (FastTick || TickBuffer.Count >= TICKS_PER_PACKET)
+            if (FastTick || TickBuffer.Count >= TicksPerPacket)
             {
                 lock (ClientsToSync)
                 {
@@ -365,7 +367,7 @@ namespace FSO.SimAntics.NetPlay.Drivers
 
             if (TicksSinceSync != null)
             {
-                if (TicksSinceSync.Count > MAX_HISTORY && !SyncSerializing)
+                if (TicksSinceSync.Count > MaxHistory && !SyncSerializing)
                 {
                     //when we have many seconds of ticks for the player to get through,
                     //it might take them a while to catch up, even after assets load

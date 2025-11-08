@@ -1,5 +1,6 @@
 ﻿using FSO.Client.UI.Controls;
 using FSO.Common.DataService;
+using FSO.Common.Model;
 using FSO.Common.Utils;
 using FSO.Server.Clients;
 using FSO.Server.Clients.Framework;
@@ -34,7 +35,10 @@ namespace FSO.Client.Regulators
             }
         }
 
+        public bool LeavingLot;
+
         private FindLotResponse FindLotResponse;
+        private LotTransitionInfo ActiveTransition;
         private IClientDataService DataService;
 
         public LotConnectionRegulator([Named("City")] AriesClient cityClient, [Named("Lot")] AriesClient lotClient, IClientDataService dataService)
@@ -129,13 +133,16 @@ namespace FSO.Client.Regulators
             {
                 case "SelectLot":
                     IsDisconnecting = false;
+                    LeavingLot = false;
                     AsyncTransition("FindLot", data);
                     break;
 
                 case "FindLot":
                     //LotId = ((JoinLotRequest)data).LotId;
+                    var joinReq = ((JoinLotRequest)data);
+                    ActiveTransition = joinReq.Transition;
                     City.Write(new FSO.Server.Protocol.Electron.Packets.FindLotRequest {
-                        LotId = ((JoinLotRequest)data).LotId
+                        LotId = joinReq.LotId
                     });
                     break;
                 case "FoundLot":
@@ -174,8 +181,17 @@ namespace FSO.Client.Regulators
                     Client.Write(new RequestClientSessionResponse
                     {
                         Password = FindLotResponse.LotServerTicket,
-                        User = FindLotResponse.User
+                        User = FindLotResponse.User,
+                        ServiceIdent = ActiveTransition != null ? "JLT" : null
                     });
+
+                    if (ActiveTransition != null)
+                    {
+                        Client.Write(new JoinLotWithTransitionRequest
+                        {
+                            Transition = ActiveTransition,
+                        });
+                    }
                     break;
 
                 case "HostOnline":
@@ -191,7 +207,7 @@ namespace FSO.Client.Regulators
                     DataService.Request(Server.DataService.Model.MaskedStruct.PropertyPage_LotInfo, LotId);
                     break;
                 case "UnexpectedDisconnect":
-                    if (ReestablishAttempt > 0)
+                    if (LeavingLot || ReestablishAttempt > 0)
                     {
                         IsDisconnecting = true;
                         AsyncTransition("Disconnected");
@@ -278,12 +294,15 @@ namespace FSO.Client.Regulators
         }
         public void Disconnect()
         {
-            AsyncTransition("Disconnect");
+            if (CurrentState.Name != "Disconnected")
+            {
+                AsyncTransition("Disconnect");
+            }
         }
         
-        public void JoinLot(uint id)
+        public void JoinLot(uint id, LotTransitionInfo transition = null)
         {
-            AsyncProcessMessage(new JoinLotRequest { LotId = id });
+            AsyncProcessMessage(new JoinLotRequest { LotId = id, Transition = transition });
         }
 
         public uint GetCurrentLotID()
@@ -360,5 +379,6 @@ namespace FSO.Client.Regulators
     class JoinLotRequest
     {
         public uint LotId;
+        public LotTransitionInfo Transition;
     }
 }

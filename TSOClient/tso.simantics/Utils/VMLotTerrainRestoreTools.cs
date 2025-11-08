@@ -1,4 +1,5 @@
-﻿using FSO.Content.Model;
+﻿using FSO.Common.Model;
+using FSO.Content.Model;
 using FSO.LotView;
 using FSO.LotView.Components;
 using FSO.LotView.Model;
@@ -1025,7 +1026,8 @@ namespace FSO.SimAntics.Utils
                 {
                     if (x == 1 & y == 1) continue; //that's us...
 
-                    uint newLocation = (uint)(((baseX + x - 1) << 16) | ((baseY + y - 1) & 0xFFFF));
+                    Point cityRelative = new Point(x - 1, y - 1);
+                    uint newLocation = (uint)(((baseX + cityRelative.X) << 16) | ((baseY + cityRelative.Y) & 0xFFFF));
 
                     var gd = vm.Context.World.State.Device;
                     var subworld = vm.Context.World.MakeSubWorld(gd);

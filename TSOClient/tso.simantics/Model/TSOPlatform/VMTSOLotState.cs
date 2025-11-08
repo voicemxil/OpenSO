@@ -10,7 +10,7 @@ namespace FSO.SimAntics.Model.TSOPlatform
     public class VMTSOLotState : VMAbstractLotState
     {
         //ephemeral state
-        public IVMAvatarNameCache Names = new VMBasicAvatarNameCache();
+        public IVMGlobalNameCache Names = new VMBasicGlobalNameCache();
 
         //permanent state
         public string Name = "Lot";

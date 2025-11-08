@@ -182,7 +182,7 @@ namespace FSO.Client.Rendering.City
         {
             if (controller != null)
             {
-                var id = controller.GetCurrentLotID();
+                var id = controller.GetVisualLotID();
                 if (id != 0)
                 {
                     //center on this lot, with the given camera offset
@@ -293,7 +293,7 @@ namespace FSO.Client.Rendering.City
                 if (screen.vm != null && screen.vm.Ready && screen.WorldLoaded)
                 {
                     var controller = screen.FindController<CoreGameScreenController>();
-                    var id = controller.GetCurrentLotID();
+                    var id = controller.GetVisualLotID();
 
                     var x = id >> 16;
                     var y = id & 0xFFFF;

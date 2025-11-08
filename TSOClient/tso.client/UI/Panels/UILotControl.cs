@@ -1,45 +1,46 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using FSO.Client.UI.Framework;
+﻿using FSO.Client.Debug;
+using FSO.Client.Network;
 using FSO.Client.UI.Controls;
+using FSO.Client.UI.Framework;
 using FSO.Client.UI.Model;
+using FSO.Client.UI.Panels.EODs;
+using FSO.Client.UI.Panels.LotControls;
+using FSO.Client.UI.Panels.Neighborhoods;
+using FSO.Client.UI.Panels.Profile;
+using FSO.Client.UI.Screens;
+using FSO.Client.Utils;
+using FSO.Common;
+using FSO.Common.Domain.Realestate;
+using FSO.Common.Enum;
+using FSO.Common.Model;
+using FSO.Common.Rendering.Framework;
+using FSO.Common.Rendering.Framework.IO;
+using FSO.Common.Rendering.Framework.Model;
+using FSO.Files.RC;
+using FSO.HIT;
+using FSO.LotView;
+using FSO.LotView.Components;
+using FSO.LotView.Facade;
+using FSO.LotView.Model;
+using FSO.LotView.Utils.Camera;
+using FSO.SimAntics;
+using FSO.SimAntics.Engine;
+using FSO.SimAntics.Engine.TSOTransaction;
+using FSO.SimAntics.Model;
+using FSO.SimAntics.Model.TSOPlatform;
+using FSO.SimAntics.NetPlay.Model;
+using FSO.SimAntics.NetPlay.Model.Commands;
+using FSO.SimAntics.Primitives;
+using FSO.SimAntics.Utils;
+using FSO.UI.Controls;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using FSO.Common.Rendering.Framework.Model;
-using FSO.Common.Rendering.Framework.IO;
-using FSO.Common.Rendering.Framework;
-using FSO.HIT;
-
-using FSO.LotView;
-using FSO.SimAntics;
-using FSO.LotView.Components;
-using FSO.Client.UI.Panels.LotControls;
 using Microsoft.Xna.Framework.Input;
-using FSO.LotView.Model;
-using FSO.SimAntics.Primitives;
-using FSO.SimAntics.NetPlay.Model.Commands;
-using FSO.Client.Debug;
-using FSO.SimAntics.NetPlay.Model;
-using FSO.SimAntics.Model.TSOPlatform;
-using FSO.Client.UI.Panels.EODs;
-using FSO.SimAntics.Utils;
-using FSO.Common;
-using System.IO;
-using FSO.SimAntics.Engine.TSOTransaction;
-using FSO.LotView.Facade;
-using FSO.Common.Enum;
-using FSO.Client.UI.Screens;
 using Ninject;
-using FSO.Client.Network;
-using FSO.Client.UI.Panels.Neighborhoods;
-using FSO.UI.Controls;
-using FSO.Client.UI.Panels.Profile;
-using FSO.SimAntics.Model;
-using FSO.SimAntics.Engine;
-using FSO.Client.Utils;
-using FSO.Common.Model;
-using FSO.LotView.Utils.Camera;
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 
 namespace FSO.Client.UI.Panels
 {
@@ -78,6 +79,7 @@ namespace FSO.Client.UI.Panels
             }
         }
         public short ObjectHover;
+        public string ObjectTooltip;
         public bool InteractionsAvailable;
         public UIInteractionQueue Queue;
 
@@ -122,6 +124,8 @@ namespace FSO.Client.UI.Panels
         public bool TVisible { get { return Visible; } }
         public bool UserModZoom { get; set; }
 
+        public bool EnableTransitions = true;
+
         public void Scroll(Vector2 vec)
         {
             World.Scroll(vec, false);
@@ -137,6 +141,9 @@ namespace FSO.Client.UI.Panels
 
         private static uint GOTO_GUID = 0x000007C4;
         public VMEntity GotoObject;
+
+        private static uint TRANSITION_GUID = 0x746ED02B;
+        public VMEntity TransitionObject;
 
         private Rectangle MouseCutRect = new Rectangle(-4, -4, 4, 4);
         private List<uint> CutRooms = new List<uint>();
@@ -431,9 +438,9 @@ namespace FSO.Client.UI.Panels
             }
         }
 
-        private short GetFloorBlockableHover(Point pt)
+        private short GetFloorBlockableHover(Point pt, out Vector3 tilePos)
         {
-            var tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y));
+            tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y));
             var newHover = World.GetObjectIDAtScreenPos(pt.X,
                     pt.Y,
                     GameFacade.GraphicsDevice);
@@ -466,16 +473,22 @@ namespace FSO.Client.UI.Panels
                     pt.Y,
                     GameFacade.GraphicsDevice);
 
-                var hobj = vm.GetObjectById(newHover);
+                if (newHover == 0 && ObjectHover < 0)
+                {
+                    // Special hover - take the existing value.
+                    newHover = ObjectHover;
+                }
+
+                var hobj = GetHoverById(newHover);
                 if (hobj == null || hobj.Position.Level < tilePos.Z) newHover = 0;
                 ObjectHover = newHover;
 
-                bool objSelected = ObjectHover > 0;
+                bool objSelected = ObjectHover != 0;
                 if (objSelected || (GotoObject.Position != LotTilePos.OUT_OF_WORLD && ObjectHover <= 0))
                 {
                     if (objSelected)
                     {
-                        obj = vm.GetObjectById(ObjectHover);
+                        obj = GetHoverById(ObjectHover);
                     }
                     else
                     {
@@ -587,6 +600,56 @@ namespace FSO.Client.UI.Panels
             return ((TapPoint - screenMiddle).ToVector2() / World.BackbufferScale).ToPoint() + screenMiddle;
         }
 
+        private bool TryPrepareLotTransition(Vector3 point)
+        {
+            if (PieMenu != null || TransitionObject == null || (point.X == 0 && point.Y == 0))
+            {
+                // TODO: Ideally the tile location from hover should be nullable, but that needs changed in a lot of places.1
+                return false;
+            }
+
+            Point tilePoint = new Point((int)Math.Floor(point.X), (int)Math.Floor(point.Y));
+            Point transitionScale = new Point(World.Architecture.Blueprint.Width - 2, World.Architecture.Blueprint.Height - 2);
+            Point border = new Point(1, 1);
+
+            Point targetLotOffset = Vector2.Floor((tilePoint - border).ToVector2() / transitionScale.ToVector2()).ToPoint();
+
+            if (targetLotOffset == default)
+            {
+                // On this lot...
+                return false;
+            }
+
+            if (Math.Abs(targetLotOffset.X) > 1 || Math.Abs(targetLotOffset.Y) > 1)
+            {
+                // Out of range...
+                return false;
+            }
+
+            Point myLocation = MapCoordinates.Unpack(vm.TSOState.LotID).ToPoint();
+            Point targetCityOffset = LotTransitionInfo.RelativeChangeLotToCity(targetLotOffset);
+            var newLocation = new MapCoordinate(myLocation + targetCityOffset);
+
+            var packed = MapCoordinates.Pack(newLocation.X, newLocation.Y);
+
+            TransitionObject.SetAttribute(1, (short)newLocation.Y); // lot id (low)
+            TransitionObject.SetAttribute(2, (short)newLocation.X); // lot id (high)
+            TransitionObject.SetAttribute(3, (short)(((tilePoint.X - targetLotOffset.X * transitionScale.X) << 4) + 8)); // dest x
+            TransitionObject.SetAttribute(4, (short)(((tilePoint.Y - targetLotOffset.Y * transitionScale.Y) << 4) + 8)); // dest y
+
+            return true;
+        }
+
+        private VMEntity GetHoverById(short id)
+        {
+            if (id == -1)
+            {
+                return TransitionObject;
+            }
+
+            return vm.GetObjectById(id);
+        }
+
         public void LiveModeUpdate(UpdateState state, bool scrolled)
         {
             if (MouseIsOn && !RMBScroll && ActiveEntity != null)
@@ -597,43 +660,45 @@ namespace FSO.Client.UI.Panels
                     OldMX = state.MouseState.X;
                     OldMY = state.MouseState.Y;
                     var scaled = GetScaledPoint(state.MouseState.Position);
-                    var newHover = GetFloorBlockableHover(scaled);
+                    var newHover = GetFloorBlockableHover(scaled, out Vector3 tilePos);
 
-                    if (ObjectHover != newHover)
+                    if (newHover == 0 && TryPrepareLotTransition(tilePos))
+                    {
+                        newHover = -1;
+                    }
+
+                    if (ObjectHover != newHover || ObjectTooltip != null)
                     {
                         ObjectHover = newHover;
-                        if (ObjectHover > 0)
+                        if (ObjectHover != 0)
                         {
-                            var obj = vm.GetObjectById(ObjectHover);
+                            var obj = GetHoverById(ObjectHover);
+
                             if (obj != null)
                             {
                                 var menu = obj.GetPieMenu(vm, ActiveEntity, false, true);
                                 InteractionsAvailable = (menu.Count > 0);
+                                ObjectTooltip = menu.Find(x => x.IsTooltip)?.Name;
+                            }
+                            else
+                            {
+                                ObjectTooltip = null;
                             }
                         }
                     }
 
                     if (!TipIsError) ShowTooltip = false;
-                    if (ObjectHover > 0)
+                    if (ObjectHover != 0)
                     {
-                        var obj = vm.GetObjectById(ObjectHover);
+                        var obj = GetHoverById(ObjectHover);
                         if (!TipIsError && obj != null)
                         {
-                            if (obj is VMAvatar)
+                            if (obj is VMAvatar && ObjectTooltip == null)
                             {
-                                if (((VMAvatar)obj).GetPersonData(VMPersonDataVariable.PersonType) != 255)
-                                {
-                                    state.UIState.TooltipProperties.Show = true;
-                                    state.UIState.TooltipProperties.Color = Color.Black;
-                                    state.UIState.TooltipProperties.Opacity = 1;
-                                    state.UIState.TooltipProperties.Position = new Vector2(state.MouseState.X,
-                                        state.MouseState.Y);
-                                    state.UIState.Tooltip = GetAvatarString(obj as VMAvatar);
-                                    state.UIState.TooltipProperties.UpdateDead = false;
-                                    ShowTooltip = true;
-                                }
+                                ObjectTooltip = GetAvatarString(obj as VMAvatar);
                             }
-                            else if (((VMGameObject)obj).Disabled > 0)
+
+                            if (((obj as VMGameObject)?.Disabled ?? 0) > 0)
                             {
                                 var flags = ((VMGameObject)obj).Disabled;
                                 if ((flags & VMGameObjectDisableFlags.ForSale) > 0)
@@ -649,7 +714,17 @@ namespace FSO.Client.UI.Panels
                                     TipIsError = false;
                                 }
                             }
-
+                            else if (ObjectTooltip != null && PieMenu == null)
+                            {
+                                state.UIState.TooltipProperties.Show = true;
+                                state.UIState.TooltipProperties.Color = Color.Black;
+                                state.UIState.TooltipProperties.Opacity = 1;
+                                state.UIState.TooltipProperties.Position = new Vector2(state.MouseState.X,
+                                    state.MouseState.Y);
+                                state.UIState.Tooltip = ObjectTooltip;
+                                state.UIState.TooltipProperties.UpdateDead = false;
+                                ShowTooltip = true;
+                            }
                         }
                     }
                     if (!ShowTooltip)
@@ -678,10 +753,14 @@ namespace FSO.Client.UI.Panels
                     {
                         if (InteractionsAvailable)
                         {
-                            var obj = vm.GetObjectById(ObjectHover);
+                            var obj = GetHoverById(ObjectHover);
                             if (obj is VMAvatar)
                             {
                                 cursor = (((VMAvatar)obj).GetPersonData(VMPersonDataVariable.PersonType) < 254) ? CursorType.LivePerson : CursorType.LiveObjectAvail;
+                            }
+                            else if (obj != null && obj == TransitionObject)
+                            {
+                                cursor = CursorType.LiveNothing;
                             }
                             else
                             {
@@ -797,9 +876,9 @@ namespace FSO.Client.UI.Panels
                 vm.TSOState.Names = new VMDataServiceNameCache(FSOFacade.Kernel.Get<Common.DataService.IClientDataService>());
             foreach (var roomie in vm.TSOState.Roommates)
             {
-                vm.TSOState.Names.Precache(vm, roomie);
+                vm.TSOState.Names.Precache(vm, VMGlobalEntityType.Avatar, roomie);
             }
-            vm.TSOState.Names.Precache(vm, vm.TSOState.OwnerID);
+            vm.TSOState.Names.Precache(vm, VMGlobalEntityType.Avatar, vm.TSOState.OwnerID);
 
             var objOwners = new HashSet<uint>();
             foreach (var ent in vm.Context.ObjectQueries.MultitileByPersist)
@@ -808,7 +887,7 @@ namespace FSO.Client.UI.Panels
                 if (owner != null) objOwners.Add(owner.Value);
             }
             foreach (var owner in objOwners)
-                vm.TSOState.Names.Precache(vm, owner);
+                vm.TSOState.Names.Precache(vm, VMGlobalEntityType.Avatar, owner);
 
             HasLanded = true;
         }
@@ -863,6 +942,17 @@ namespace FSO.Client.UI.Panels
                     TargetZoom = 0.25f; break;
             }
             LastZoom = World.State.Zoom;
+        }
+
+        public void ResetTargetZoom()
+        {
+            FoundMe = true;
+
+            if (World.State.Cameras.ActiveType == LotView.Utils.Camera.CameraControllerType._3D)
+            {
+                var s3d = World.State.Cameras.Camera3D;
+                TargetZoom = (s3d.Zoom3D - 9.75f) / -5.7f + 0.25f;
+            }
         }
 
         private WorldZoom LastZoom;
@@ -946,6 +1036,11 @@ namespace FSO.Client.UI.Panels
             }
 
             if (GotoObject == null) GotoObject = vm.Context.CreateObjectInstance(GOTO_GUID, LotTilePos.OUT_OF_WORLD, Direction.NORTH, true).Objects[0];
+
+            if (EnableTransitions && TransitionObject == null)
+            {
+                TransitionObject = vm.Context.CreateObjectInstance(TRANSITION_GUID, LotTilePos.OUT_OF_WORLD, Direction.NORTH, true).Objects[0];
+            }
 
             if (ActiveEntity != null && BlockingDialog != null)
             {

@@ -126,7 +126,7 @@ namespace FSO.SimAntics
         public delegate void VMRefreshHandler();
         public delegate void VMBreakpointHandler(VMEntity entity);
         public delegate void VMEODMessageHandler(VMNetEODMessageCmd msg);
-        public delegate void VMLotSwitchHandler(uint lotId);
+        public delegate void VMLotSwitchHandler(uint lotId, LotTransitionInfo transition);
         public delegate void VMGenericEvtHandler(VMEventType type, object data);
 
         public IVMTSOGlobalLink GlobalLink
@@ -657,9 +657,9 @@ namespace FSO.SimAntics
             OnEODMessage?.Invoke(msg);
         }
 
-        public void SignalLotSwitch(uint lotId)
+        public void SignalLotSwitch(uint lotId, LotTransitionInfo transition = null)
         {
-            OnRequestLotSwitch?.Invoke(lotId);
+            OnRequestLotSwitch?.Invoke(lotId, transition);
         }
 
         public void SignalGenericVMEvt(VMEventType type, object data)

@@ -41,7 +41,8 @@ namespace FSO.Server.Protocol.Electron
             typeof(ArchiveAvatarsResponse),
             typeof(ArchiveClientList),
             typeof(ArchiveModerationRequest),
-            typeof(VerificationNotification)
+            typeof(VerificationNotification),
+            typeof(JoinLotWithTransitionRequest)
         };
 
         static ElectronPackets()

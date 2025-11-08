@@ -84,7 +84,7 @@ namespace FSO.Client.UI.Screens
             UIScript ui = null;
             ui = this.RenderScript("archivepersonselection1024.uis");
 
-            Position = new Vector2((GlobalSettings.Default.GraphicsWidth - 1024) / 2, (GlobalSettings.Default.GraphicsHeight - 768) / 2) * FSOEnvironment.DPIScaleFactor;
+            Position = new Vector2(ScaleX * (GlobalSettings.Default.GraphicsWidth - 1024) / 2, ScaleY * (GlobalSettings.Default.GraphicsHeight - 768) / 2);
 
             m_ExitButton = (UIButton)ui["ExitButton"];
 
@@ -393,11 +393,11 @@ namespace FSO.Client.UI.Screens
         public override void GameResized()
         {
             base.GameResized();
-            Position = new Vector2((GlobalSettings.Default.GraphicsWidth - 1024) / 2, (GlobalSettings.Default.GraphicsHeight - 768) / 2) * FSOEnvironment.DPIScaleFactor;
+            Position = new Vector2(ScaleX * (GlobalSettings.Default.GraphicsWidth - 1024) / 2, ScaleY * (GlobalSettings.Default.GraphicsHeight - 768) / 2);
             Background.SetSize(GlobalSettings.Default.GraphicsWidth, GlobalSettings.Default.GraphicsHeight);
             Background.Position = new Vector2((GlobalSettings.Default.GraphicsWidth - 1024) / -2, (GlobalSettings.Default.GraphicsHeight - 768) / -2);
             InvalidateMatrix();
-            Parent.InvalidateMatrix();
+            Parent?.InvalidateMatrix();
         }
 
         public void AsyncAPILotThumbnail(uint shardId, uint lotId, Action<Texture2D> callback)

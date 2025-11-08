@@ -17,6 +17,7 @@ namespace FSO.Common
         AllowLotCreation = 1 << 6,
         AllowSimCreation = 1 << 7,
         LockArchivedSims = 1 << 8,
+        ReducedTickRate = 1 << 9,
 
         DedicatedServer = 1 << 16,
 

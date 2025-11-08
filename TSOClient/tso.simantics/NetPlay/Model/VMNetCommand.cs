@@ -58,6 +58,9 @@ namespace FSO.SimAntics.NetPlay.Model
             { VMCommandType.SM64Position, typeof(VMNetSM64PositionCmd) },
             { VMCommandType.SM64Event, typeof(VMNetSM64EventCmd) },
             { VMCommandType.SM64AnimData, typeof(VMNetSM64AnimDataCmd) },
+
+            { VMCommandType.BeginFreeRoam, typeof(VMNetBeginFreeRoamCmd) },
+            { VMCommandType.GotoLot, typeof(VMNetGotoLotCmd) },
         };
         public static Dictionary<Type, VMCommandType> ReverseMap = CmdMap.ToDictionary(x => x.Value, x => x.Key);
 
@@ -170,6 +173,10 @@ namespace FSO.SimAntics.NetPlay.Model
         DirectControlToggle = 45,
         SM64Position = 46,
         SM64Event = 47,
-        SM64AnimData = 48
+        SM64AnimData = 48,
+
+        // Archive
+        BeginFreeRoam = 49,
+        GotoLot = 50,
     }
 }

@@ -398,7 +398,7 @@ namespace FSO.LotView
         public Tuple<float, float> Get3DTTHeights()
         {
             if (Blueprint == null) { return new Tuple<float, float>(0, 0); }
-            var terrainHeight = (Blueprint.InterpAltitude(new Vector3(State.CenterTile, 0))) * 3;
+            var terrainHeight = (Blueprint.InterpAltitudeWithSubworlds(new Vector3(State.CenterTile, 0))) * 3;
 
             float targHeight;
 
@@ -408,7 +408,7 @@ namespace FSO.LotView
             }
             else
             {
-                targHeight = Math.Max((Blueprint.InterpAltitude(new Vector3(State.Camera.Position.X, State.Camera.Position.Z, 0) / 3) + (State.Level - 1) * 2.95f) * 3, terrainHeight);
+                targHeight = Math.Max((Blueprint.InterpAltitudeWithSubworlds(new Vector3(State.Camera.Position.X, State.Camera.Position.Z, 0) / 3) + (State.Level - 1) * 2.95f) * 3, terrainHeight);
             }
 
             return new Tuple<float, float>(terrainHeight, targHeight);
@@ -820,6 +820,12 @@ namespace FSO.LotView
             if (level == -1) level = State.Level;
             var ray = State.CameraRayAtScreenPos(pos, level);
 
+            return EstTileAtPosWithScroll(ray, level).Value;
+        }
+
+        public Vector2? EstTileAtPosWithScroll(Ray ray, sbyte level, bool canFail = false)
+        {
+            Ray baseRay = ray;
             var baseBox = new BoundingBox(new Vector3(0, -5000, 0), new Vector3(Blueprint.Width * 3, 5000, Blueprint.Height * 3));
             if (baseBox.Contains(ray.Position) != ContainmentType.Contains)
             {
@@ -893,6 +899,30 @@ namespace FSO.LotView
                 if (iteration++ > 1000) break;
             }
 
+            if (canFail)
+            {
+                return null;
+            }
+
+            // Failed to cast a ray into the main world. If there are subworlds, try there.
+            if (Blueprint.SubWorlds.Count > 0)
+            {
+                foreach (var nextWorld in Blueprint.SubWorlds)
+                {
+                    Ray newRay = baseRay;
+                    newRay.Position -= new Vector3(nextWorld.GlobalPosition.X * -3, nextWorld.Blueprint.BaseAlt * nextWorld.Blueprint.TerrainFactor * -3, nextWorld.GlobalPosition.Y * -3);
+                    var subPos = nextWorld.EstTileAtPosWithScroll(newRay, level, true);
+
+                    if (subPos == null)
+                    {
+                        continue;
+                    }
+
+                    Console.WriteLine(subPos.Value - nextWorld.GlobalPosition);
+                    return subPos.Value - nextWorld.GlobalPosition;
+                }
+            }
+
             //fall back to base positioning
             var bplane = new Plane(new Vector3(0, 0, 0), new Vector3(Blueprint.Width * 3, 0, 0), new Vector3(0, 0, Blueprint.Height * 3));
             if (ray.Position.Y < 0)
@@ -928,7 +958,7 @@ namespace FSO.LotView
         {
             var result = EstTileAtPosWithScroll3D(pos, startFloor);
 
-            float altitude = Blueprint.TileInbounds(new Vector2(result.X, result.Y)) ? Blueprint.InterpAltitude(result) : 0;
+            float altitude = Blueprint.InterpAltitudeWithSubworlds(result);
 
             result.Z = altitude + (result.Z-1) * 2.95f;
             return result;
