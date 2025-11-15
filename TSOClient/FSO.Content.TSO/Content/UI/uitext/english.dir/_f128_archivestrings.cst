@@ -20,7 +20,9 @@
 20 ^You're connected to a server hosted by this game client.^
 21 ^You're connected to a server hosted by another game client.^
 22 ^You're connected to a dedicated server.^
-23 ^You're offline. To connect with other players, select "Host Server" on the menu and uncheck "Offline Mode".^
+23 ^You're offline.
+
+To connect with other players, select "Host Server" on the menu and uncheck "Offline Mode".^
 24 ^If the game client hosting this server closes, everyone will disconnect!^
 25 ^!! View Server IP !!^
 26 ^Public IP:^
