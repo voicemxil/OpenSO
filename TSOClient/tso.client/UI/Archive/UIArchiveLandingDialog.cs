@@ -1,6 +1,7 @@
 ﻿using FSO.Client.Controllers;
 using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
+using FSO.Client.Utils;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
@@ -110,7 +111,19 @@ namespace FSO.Client.UI.Archive
 
         private void QuickStart(Framework.UIElement button)
         {
-            throw new NotImplementedException();
+            Visible = false;
+
+            var factory = new ArchiveServerFactory(
+                ArchiveServerFactory.GetQuickStartConfig(),
+                FindController<ConnectArchiveController>());
+
+            factory.Start((success) =>
+            {
+                if (!success)
+                {
+                    Visible = true;
+                }
+            });
         }
 
         private void Join(Framework.UIElement button)

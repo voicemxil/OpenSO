@@ -21,7 +21,10 @@ namespace FSO.Common
 
         DedicatedServer = 1 << 16,
 
-        Default = UPnP | AllOpenable | AllowLotCreation | AllowSimCreation
+        Default = UPnP | AllOpenable | AllowLotCreation | AllowSimCreation,
+
+        QuickStartDesirable = Offline | AllowLotCreation | AllowSimCreation | AllOpenable,
+        QuickStartUndesirable = UPnP | ReducedTickRate | Verification,
     }
 
     public class ArchiveConfiguration

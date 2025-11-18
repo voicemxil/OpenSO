@@ -76,7 +76,8 @@ namespace FSO.Client.UI.Archive
 
             vbox.Add(ServerTypeLabel = new UILabel()
             {
-                Caption = GameFacade.Strings.GetString("f128", (20 + (int)serverType).ToString())
+                Caption = GameFacade.Strings.GetString("f128", (20 + (int)serverType).ToString()),
+                Wrapped = true,
             });
 
             if (serverType < ArchiveServerType.Dedicated)
