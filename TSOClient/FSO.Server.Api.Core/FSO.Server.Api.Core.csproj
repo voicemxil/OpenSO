@@ -5,7 +5,6 @@
     <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
     <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
     <IsAotCompatible>True</IsAotCompatible>
-	<SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>

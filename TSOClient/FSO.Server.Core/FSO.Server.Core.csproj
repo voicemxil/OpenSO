@@ -9,9 +9,8 @@
     <ApplicationIcon>../FSO.Server/FreeSO.ico</ApplicationIcon>
     <IsAotCompatible>True</IsAotCompatible>
     <PublishAot>false</PublishAot>
-    <PublishTrimmed>true</PublishTrimmed>
     <IsAotCompatible>false</IsAotCompatible>
-    <TrimMode>full</TrimMode>
+	<SelfContained>False</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
