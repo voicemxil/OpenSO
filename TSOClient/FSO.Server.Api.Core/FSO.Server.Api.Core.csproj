@@ -5,6 +5,7 @@
     <TargetLatestRuntimePatch>true</TargetLatestRuntimePatch>
     <ErrorOnDuplicatePublishOutputFiles>false</ErrorOnDuplicatePublishOutputFiles>
     <IsAotCompatible>True</IsAotCompatible>
+	<SelfContained>true</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
@@ -36,6 +37,7 @@
     <PackageReference Include="AWSSDK.S3" Version="3.3.104.36" />
     <PackageReference Include="Microsoft.Data.Sqlite.Core" Version="9.0.9" />
     <PackageReference Include="Octokit" Version="0.36.0" />
+    <PackageReference Include="System.IO.FileSystem" Version="4.3.0" />
     <PackageReference Include="System.Security.Cryptography.Algorithms" Version="4.3.1" />
   </ItemGroup>
 

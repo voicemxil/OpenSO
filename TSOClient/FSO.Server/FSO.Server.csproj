@@ -45,7 +45,6 @@
     <ProjectReference Include="..\FSO.Server.DataService\FSO.Common.DataService.csproj" />
     <ProjectReference Include="..\FSO.Server.Domain\FSO.Server.Domain.csproj" />
     <ProjectReference Include="..\FSO.Server.Protocol\FSO.Server.Protocol.csproj" />
-    <ProjectReference Include="..\FSO.Server.Updater\FSO.Server.Watchdog.csproj" />
     <ProjectReference Include="..\tso.simantics\FSO.SimAntics.csproj" />
   </ItemGroup>
 
