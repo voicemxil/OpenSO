@@ -5,6 +5,7 @@ using System.IO;
 using FSO.Files.Formats.IFF.Chunks;
 using FSO.Files.Utils;
 using FSO.Common.Utils;
+using System.IO.Hashing;
 
 namespace FSO.Files.Formats.IFF
 {
@@ -178,13 +179,14 @@ namespace FSO.Files.Formats.IFF
             {
                 IEnumerable<object> executableTypes = ByChunkType[typeof(BHAV)];
                 if (ByChunkType.ContainsKey(typeof(BCON))) executableTypes = executableTypes.Concat(ByChunkType[typeof(BCON)]);
-                var hash = new xxHashSharp.xxHash();
-                hash.Init();
+
+                var hash = new XxHash32();
+                hash.Reset();
                 foreach (IffChunk chunk in executableTypes)
                 {
-                    hash.Update(chunk.ChunkData ?? chunk.OriginalData, chunk.ChunkData.Length);
+                    hash.Append(chunk.ChunkData ?? chunk.OriginalData);
                 }
-                ExecutableHash = hash.Digest();
+                ExecutableHash = hash.GetCurrentHashAsUInt32();
             }
         }
 
