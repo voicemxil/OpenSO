@@ -35,3 +35,18 @@ To connect with other players, select "Host Server" on the menu and uncheck "Off
 33 ^Copy^
 34 ^Copied to clipboard!^
 35 ^(could not determine IP - are you offline?)^
+
+36 ^Export Config^
+37 ^Exports a config.json file that can be used by FSO.Server.Core to run a standalone version of the Archive server.
+
+If you use this on a different system, you will need to copy the archive data (usually in Content/), TSO game data and possibly adjust paths in the config.json.^
+38 ^Use absolute path for archive data^
+39 ^Use absolute path for TSO game data^
+40 ^Export^
+41 ^Export Error^
+42 ^Couldn't export config to "%s". Make sure FreeSO has the permission to write to the specified location.^
+43 ^Config successfully exported to "%s".^
+44 ^Path:^
+45 ^Config successfully exported to "%s".
+
+This path has been copied to your clipboard.^

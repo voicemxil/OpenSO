@@ -57,6 +57,7 @@ namespace FSO.Client.UI.Archive
             new ServerFlag(ArchiveConfigFlags.LockArchivedSims, "Lock archived characters", false, 1, ArchivedCharacterHelp),
         };
 
+        private UIButton ExportButton;
         private UIButton UsersButton;
         private UIButton CustomPortsButton;
         private UIButton StartButton;
@@ -156,6 +157,11 @@ namespace FSO.Client.UI.Archive
 
             vbox.Add(flagsVbox);
 
+            vbox.Add(ExportButton = new UIButton()
+            {
+                Caption = "Export Config"
+            });
+
             var actionsHbox = new UIHBoxContainer();
 
             actionsHbox.Add(UsersButton = new UIButton()
@@ -190,6 +196,7 @@ namespace FSO.Client.UI.Archive
             CustomPortsButton.OnButtonClick += ChangePorts;
             StartButton.OnButtonClick += Start;
             CloseButton.OnButtonClick += Close;
+            ExportButton.OnButtonClick += Export;
 
             ValidateInputs(NameInput);
 
@@ -218,6 +225,11 @@ namespace FSO.Client.UI.Archive
             });
 
             UIScreen.GlobalShowDialog(portDialog, true);
+        }
+
+        private void Export(UIElement button)
+        {
+            UIScreen.GlobalShowDialog(new UIArchiveConfigExportDialog(), true);
         }
 
         private void PopulateSaves()
