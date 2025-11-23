@@ -50,3 +50,5 @@ If you use this on a different system, you will need to copy the archive data (u
 45 ^Config successfully exported to "%s".
 
 This path has been copied to your clipboard.^
+46 ^Can't export configuration without preparing the archive data first. Try running the server within the game client first.^
+47 ^Success^

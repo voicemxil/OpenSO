@@ -1,4 +1,5 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.IO;
 
@@ -29,12 +30,19 @@ namespace FSO.Common
 
     public class ArchiveConfiguration
     {
+        [JsonProperty("flags")]
         public ArchiveConfigFlags Flags { get; set; }
+        [JsonProperty("archiveDataDirectory")]
         public string ArchiveDataDirectory { get; set; } // Effectively equal to the nfs
+        [JsonProperty("cityPort")]
         public ushort CityPort { get; set; }
+        [JsonProperty("lotPort")]
         public ushort LotPort { get; set; }
+        [JsonProperty("serverKey")]
         public string ServerKey { get; set; }
+        [JsonProperty("gameScale")]
         public float GameScale { get; set; } = 1;
+        [JsonProperty("allowUserApi")]
         public bool AllowUserApi { get; set; }
 
         // Runtime

@@ -229,7 +229,8 @@ namespace FSO.Client.UI.Archive
 
         private void Export(UIElement button)
         {
-            UIScreen.GlobalShowDialog(new UIArchiveConfigExportDialog(), true);
+            var selected = SaveCombo.SelectedItem as ArchiveManifest;
+            UIScreen.GlobalShowDialog(new UIArchiveConfigExportDialog(Config, selected), true);
         }
 
         private void PopulateSaves()

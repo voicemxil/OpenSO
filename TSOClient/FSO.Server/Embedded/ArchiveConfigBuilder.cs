@@ -20,16 +20,18 @@ namespace FSO.Server.Embedded
 
             string binding = config.Flags.HasFlag(ArchiveConfigFlags.Offline) ? "127.0.0.1" : "0.0.0.0";
 
+            var dbPath = Path.Combine(config.ArchiveDataDirectory, "fsoarchive.db");
+
             return new ServerConfiguration()
             {
-                GameLocation = "unused",
+                GameLocation = FSO.Content.Content.Get().BasePath,
                 Secret = Guid.NewGuid().ToString(),
                 Archive = config,
                 SimNFS = config.ArchiveDataDirectory,
                 Database = new Database.DatabaseConfiguration()
                 {
                     Engine = "sqlite",
-                    ConnectionString = $"Data Source={Path.GetFullPath(Path.Combine(config.ArchiveDataDirectory, "fsoarchive.db"))};Version=3;UTF8Encoding=True",
+                    ConnectionString = $"Data Source={dbPath};Version=3;UTF8Encoding=True",
                 },
                 
                 Services = new ServerConfigurationservices()
@@ -134,7 +136,7 @@ namespace FSO.Server.Embedded
                             Neighborhoods = new Servers.City.CityServerNhoodConfiguration()
                             {
                                 Mayor_Elegibility_Limit = 4,
-                                Mayor_Elegilility_Falloff = 4,
+                                Mayor_Elegibility_Falloff = 4,
                                 Min_Nominations = 2,
                                 Election_Week_Align = true,
                                 Election_Move_Penalty = 14

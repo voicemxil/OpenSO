@@ -86,7 +86,7 @@ namespace FSO.Client.Utils
             return File.Exists(path);
         }
 
-        private void ExtractArchive(ArchiveManifest manifest, string path)
+        private void ExtractArchive(ArchiveManifest manifest, string path, Action<bool> onResult)
         {
             string extractPath = Path.Combine(Path.GetDirectoryName(manifest.ActivePath), "data/");
             var extractor = new UIZipExtractDialog(null, path, extractPath);
@@ -99,14 +99,14 @@ namespace FSO.Client.Utils
                 manifest.Save();
 
                 Config.ArchiveDataDirectory = extractPath;
-                StartWithConfig();
+                onResult(true);
             };
 
             extractor.Start();
             UIScreen.GlobalShowDialog(extractor, true);
         }
 
-        private void RequestDownload(ArchiveManifest manifest)
+        private void RequestDownload(ArchiveManifest manifest, Action<bool> onResult)
         {
             var basePath = Path.GetDirectoryName(manifest.ActivePath);
             var downloadPath = Path.Combine(basePath, "archive.zip");
@@ -119,7 +119,7 @@ namespace FSO.Client.Utils
             catch
             {
                 // TODO: dialog?
-                OnResult(false);
+                onResult(false);
                 return;
             }
 
@@ -148,11 +148,11 @@ namespace FSO.Client.Utils
 
                         if (success && ZipDataPresent(manifest, out string _))
                         {
-                            ExtractArchive(manifest, downloadPath);
+                            ExtractArchive(manifest, downloadPath, onResult);
                         }
                         else
                         {
-                            OnResult(false);
+                            onResult(true);
                             UIScreen.GlobalShowAlert(new UIAlertOptions
                             {
                                 Title = GameFacade.Strings.GetString("f128", "10"),
@@ -168,7 +168,7 @@ namespace FSO.Client.Utils
                     GameThread.NextUpdate(state =>
                     {
                         UIScreen.RemoveDialog(alert);
-                        OnResult(false);
+                        onResult(false);
                     });
                 })
             }, true);
@@ -185,7 +185,7 @@ namespace FSO.Client.Utils
             if (selected == null)
             {
                 // Nothing to start?
-                OnResult(false);
+                onResult(false);
             }
             else
             {
@@ -195,24 +195,35 @@ namespace FSO.Client.Utils
 
         public void Start(ArchiveManifest manifest, Action<bool> onResult)
         {
-            OnResult = onResult;
+            Prepare(manifest, (success) =>
+            {
+                if (!success)
+                {
+                    onResult(false);
+                }
 
+                StartWithConfig(onResult);
+            });
+        }
+
+        public void Prepare(ArchiveManifest manifest, Action<bool> onResult)
+        {
             if (ValidateData(manifest, out string dir))
             {
                 Config.ArchiveDataDirectory = dir;
-                StartWithConfig();
+                onResult(true);
             }
             else
             {
                 if (ZipDataPresent(manifest, out string zipPath))
                 {
-                    ExtractArchive(manifest, zipPath);
+                    ExtractArchive(manifest, zipPath, onResult);
                 }
                 else
                 {
                     // Don't have anything - need to ask the user to download.
 
-                    RequestDownload(manifest);
+                    RequestDownload(manifest, onResult);
                 }
             }
         }
@@ -245,7 +256,7 @@ namespace FSO.Client.Utils
             return true;
         }
 
-        private void StartWithConfig()
+        private void StartWithConfig(Action<bool> onResult)
         {
             if (Config.Flags.HasFlag(ArchiveConfigFlags.UPnP) || !Config.Flags.HasFlag(ArchiveConfigFlags.Offline))
             {
@@ -270,7 +281,7 @@ namespace FSO.Client.Utils
                         else
                         {
                             // UPnP failed. Get the user to disable it.
-                            OnResult(false);
+                            onResult(false);
                             UIAlert.Alert(GameFacade.Strings.GetString("f128", "16"), GameFacade.Strings.GetString("f128", "17"), true);
                         }
                     });

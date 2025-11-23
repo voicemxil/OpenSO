@@ -1,6 +1,10 @@
-﻿using FSO.Client.UI.Controls;
+﻿using FSO.Client.Model.Archive;
+using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
+using FSO.Client.Utils;
 using FSO.Common;
+using FSO.Common.Rendering.Framework.IO;
+using FSO.Server.Embedded;
 using FSO.UI.Controls;
 using Microsoft.Xna.Framework;
 
@@ -13,8 +17,14 @@ namespace FSO.Client.UI.Archive
         private bool ArchiveAbsolute;
         private bool TSOAbsolute = true;
 
-        public UIArchiveConfigExportDialog() : base(UIDialogStyle.Close, true)
+        private ArchiveConfiguration Config;
+        private ArchiveManifest Manifest;
+
+        public UIArchiveConfigExportDialog(ArchiveConfiguration config, ArchiveManifest manifest) : base(UIDialogStyle.Close, true)
         {
+            Config = config;
+            Manifest = manifest;
+
             Caption = GameFacade.Strings.GetString("f128", "36");
             var vbox = new UIVBoxContainer() { HorizontalAlignment = UIContainerHorizontalAlignment.Center };
 
@@ -66,7 +76,7 @@ namespace FSO.Client.UI.Archive
             Add(vbox);
 
             PathInput.SetSize(350, 25);
-            PathInput.CurrentText = "config.json";
+            PathInput.CurrentText = Path.GetFullPath("config.json");
 
             vbox.AutoSize();
             vbox.Position = new Vector2(20, 35);
@@ -77,6 +87,62 @@ namespace FSO.Client.UI.Archive
             {
                 UIScreen.RemoveDialog(this);
             };
+
+            ExportButton.OnButtonClick += Export;
+        }
+
+        private void Export(UIElement button)
+        {
+            var factory = new ArchiveServerFactory(Config, null);
+            factory.Prepare(Manifest, (success) =>
+            {
+                if (success)
+                {
+                    var json = ArchiveConfigExporter.BuildAndExport(Config, ArchiveAbsolute, TSOAbsolute);
+
+                    var path = PathInput.CurrentText;
+
+                    try
+                    {
+                        var ext = Path.GetExtension(path);
+
+                        if (ext == null)
+                        {
+                            // Assume the user gave a directory
+                            path = Path.Combine(path, "config.json");
+                        }
+
+                        // Ensure the directory exists
+                        Directory.CreateDirectory(Path.GetDirectoryName(path));
+
+                        {
+                            using var file = File.Open(path, FileMode.Create);
+                            using var writer = new StreamWriter(file);
+
+                            writer.Write(json);
+                        }
+
+                        bool clipboardSuccess = true;
+                        try
+                        {
+                            ClipboardHandler.Default.Set(path);
+                        }
+                        catch (Exception)
+                        {
+                            clipboardSuccess = false;
+                        }
+
+                        UIAlert.Alert(
+                            GameFacade.Strings.GetString("f128", "47"),
+                            GameFacade.Strings.GetString("f128", clipboardSuccess ? "45" : "43", [path]),
+                            true);
+                    }
+                    catch (Exception)
+                    {
+                        UIAlert.Alert(GameFacade.Strings.GetString("f128", "41"), GameFacade.Strings.GetString("f128", "42", [path]), true);
+                    }
+                }
+            });
         }
 
         private void CreateCheck(UIContainer target, string label, bool defaultValue, Action<bool> onChanged)
