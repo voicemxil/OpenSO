@@ -258,7 +258,7 @@ namespace FSO.Client.Utils
 
         private void StartWithConfig(Action<bool> onResult)
         {
-            if (Config.Flags.HasFlag(ArchiveConfigFlags.UPnP) || !Config.Flags.HasFlag(ArchiveConfigFlags.Offline))
+            if (Config.Flags.HasFlag(ArchiveConfigFlags.UPnP) && !Config.Flags.HasFlag(ArchiveConfigFlags.Offline))
             {
                 var alert = UIScreen.GlobalShowAlert(new UIAlertOptions
                 {
