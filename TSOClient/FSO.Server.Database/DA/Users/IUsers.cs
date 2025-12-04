@@ -14,6 +14,7 @@ namespace FSO.Server.Database.DA.Users
         User GetByUsername(string username);
         UserAuthenticate GetAuthenticationSettings(uint userId);
         PagedList<User> All(int offset = 0, int limit = 20, string orderBy = "register_date");
+        List<UserSummary> AllSummaries();
         uint Create(User user);
         void CreateAuth(UserAuthenticate auth);
         User GetByEmail(string email);

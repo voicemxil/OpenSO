@@ -102,4 +102,9 @@ namespace FSO.Server
         [Option('d', "donate", Default = false, HelpText = "Convert all objects to donated so they don't have to belong to roommates.")]
         public bool Donate { get; set; }
     }
+
+    [Verb("plugin-anonymize", HelpText = "Tool for reviewing and stripping potentially sensitive plugin data")]
+    public class PluginAnonymizeOptions
+    {
+    }
 }

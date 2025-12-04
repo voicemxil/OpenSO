@@ -25,7 +25,8 @@ namespace FSO.Server
             var options = new ProgramOptions();
             int result = Parser.Default.ParseArguments<
                 RunServerOptions, DatabaseInitOptions, ImportNhoodOptions, RestoreLotsOptions,
-                SqliteImportOptions, DataTrimOptions, ArchiveConvertOptions, ImportArchiveFeaturedOptions>(a2)
+                SqliteImportOptions, DataTrimOptions, ArchiveConvertOptions, ImportArchiveFeaturedOptions,
+                PluginAnonymizeOptions>(a2)
                 .MapResult(
                 (RunServerOptions opts) =>
                 {
@@ -65,6 +66,11 @@ namespace FSO.Server
                 (ImportArchiveFeaturedOptions opts) =>
                 {
                     toolInfo = new(typeof(ToolImportArchiveFeatured), opts);
+                    return 0;
+                },
+                (PluginAnonymizeOptions opts) =>
+                {
+                    toolInfo = new(typeof(ToolPluginAnonymize), opts);
                     return 0;
                 },
                 errs => 1

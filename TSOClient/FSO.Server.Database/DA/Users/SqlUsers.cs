@@ -74,6 +74,11 @@ namespace FSO.Server.Database.DA.Users
             return new PagedList<User>(results, offset, total);
         }
 
+        public List<UserSummary> AllSummaries()
+        {
+            return Context.Connection.Query<UserSummary>("SELECT u.*, count(a.avatar_id) AS avatar_count FROM fso_users u JOIN fso_avatars a ON u.user_id = a.user_id GROUP BY a.user_id").ToList();
+        }
+
         public uint Create(User user)
         {
             return Context.Connection.Query<uint>(Context.CompatLayer(

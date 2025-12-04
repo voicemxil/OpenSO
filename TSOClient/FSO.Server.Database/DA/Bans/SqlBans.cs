@@ -9,6 +9,11 @@ namespace FSO.Server.Database.DA.Bans
         {
         }
 
+        public List<DbBan> All()
+        {
+            return Context.Connection.Query<DbBan>("SELECT * FROM fso_ip_ban").ToList();
+        }
+
         public DbBan GetByIP(string ip)
         {
             return Context.Connection.Query<DbBan>("SELECT * FROM fso_ip_ban WHERE ip_address = @ip", new { ip = ip }).FirstOrDefault();

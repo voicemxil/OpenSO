@@ -261,5 +261,10 @@ namespace FSO.Server.Database.DA.Objects
 
             return true;
         }
+
+        public List<DbObject> GetByType(uint guid)
+        {
+            return Context.Connection.Query<DbObject>("SELECT * FROM fso_objects WHERE type = @guid", new { guid }).ToList();
+        }
     }
 }

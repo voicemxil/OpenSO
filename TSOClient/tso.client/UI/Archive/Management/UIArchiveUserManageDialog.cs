@@ -1,0 +1,166 @@
+﻿using FSO.Client.UI.Controls;
+using FSO.Client.UI.Framework;
+using FSO.Client.UI.Panels;
+using FSO.Server.Protocol.Embedded;
+using FSO.UI.Controls;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+
+namespace FSO.Client.UI.Archive.Management
+{
+    internal class UIArchiveUserManageDialog : UIDialog
+    {
+        private UIGenericTable UserTable;
+        private UITextBox SearchBox;
+        private UIButton IPBansButton;
+
+        private UIListBoxTextStyle ListBoxColors;
+        private Texture2D AdminActionsButtonTexture;
+
+        private List<ArchiveDbUser> Data;
+
+        public UIArchiveUserManageDialog() : base(UIDialogStyle.Close, true)
+        {
+            var gd = GameFacade.GraphicsDevice;
+
+            var ui = Content.Content.Get().CustomUI;
+            AdminActionsButtonTexture = ui.Get("archive_burgermenu.png").Get(gd);
+
+            Caption = GameFacade.Strings.GetString("f128", "48");
+            var vbox = new UIVBoxContainer() { HorizontalAlignment = UIContainerHorizontalAlignment.Center };
+
+            var searchContainer = new UIHBoxContainer() { VerticalAlignment = UIContainerVerticalAlignment.Middle };
+
+            searchContainer.Add(new UILabel()
+            {
+                Caption = GameFacade.Strings.GetString("f128", "64")
+            });
+
+            searchContainer.Add(SearchBox = new UITextBox() { });
+
+            vbox.Add(searchContainer);
+
+            vbox.Add(new UISpacer(1, 8));
+
+            vbox.Add(UserTable = new UIGenericTable([
+                new UITableColumn(GameFacade.Strings.GetString("f128", "49"), 250),
+                new UITableColumn(GameFacade.Strings.GetString("f128", "50"), 64),
+                new UITableColumn(GameFacade.Strings.GetString("f128", "51"), 20),
+                new UITableColumn("", 14),
+                ]));
+
+
+            var vbox2 = new UIVBoxContainer() { HorizontalAlignment = UIContainerHorizontalAlignment.Right };
+
+            vbox.Add(new UISpacer(1, 8));
+
+            vbox2.Add(IPBansButton = new UIButton()
+            {
+                Caption = GameFacade.Strings.GetString("f128", "56")
+            });
+
+            vbox2.AutoSize(); //TODO: somehow force horiz size from parent?
+
+            vbox.Add(vbox2);
+
+            Add(vbox);
+
+            vbox.AutoSize();
+            vbox.Position = new Vector2(20, 35);
+
+            SetSize((int)vbox.Size.X + 40, (int)vbox.Size.Y + 60);
+
+            CloseButton.OnButtonClick += (elem) =>
+            {
+                UIScreen.RemoveDialog(this);
+            };
+
+            SearchBox.OnChange += (elem) => UpdateUserTable();
+
+            Fetch();
+        }
+
+        private void Fetch()
+        {
+            // TODO
+        }
+
+        private string GetStatusIcon(ArchiveDbUserStatus status)
+        {
+            return "";
+        }
+
+        private void UpdateUserTable()
+        {
+            var query = (SearchBox.CurrentText ?? "").ToLower();
+
+            if (Data == null)
+            {
+                // Empty the list
+                UserTable.Items.Clear();
+            }
+            else
+            {
+                var myItems = Data
+                    .Where(x => x.Name.ToLower().Contains(query))
+                    .Select((ArchiveDbUser x) =>
+                    {
+                        var actionButton = new UIButton(AdminActionsButtonTexture);
+
+                        actionButton.OnButtonClick += (UIElement element) =>
+                        {
+                            OpenActions(element, x);
+                        };
+
+                        return new UIListBoxItem(x, new object[] { x.Name, "0", GetStatusIcon(x.Status), actionButton })
+                        {
+                            CustomStyle = ListBoxColors,
+                        };
+                    });
+
+                UserTable.Items.Clear();
+
+                UserTable.Items.AddRange(myItems);
+            }
+
+            UserTable.Items = UserTable.Items;
+            Invalidate();
+        }
+
+        private void ViewAvatars(ArchiveDbUser user)
+        {
+
+        }
+
+        private void ShowIP(ArchiveDbUser user)
+        {
+
+        }
+
+        private void BanUser(ArchiveDbUser user)
+        {
+
+        }
+
+        private void UnbanUser(ArchiveDbUser user)
+        {
+
+        }
+
+        private void OpenActions(UIElement anchor, ArchiveDbUser user)
+        {
+            int myLevel = 2;
+            var items = new List<UIContextMenuItem>();
+
+            if (myLevel > 0)
+            {
+                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "52"), () => { ViewAvatars(user); }));
+                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "53"), () => { ShowIP(user); }));
+                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "54"), () => { BanUser(user); }));
+                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "55"), () => { UnbanUser(user); }));
+            }
+
+            new UIContextMenu(anchor, items, this);
+        }
+    }
+}

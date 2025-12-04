@@ -52,3 +52,26 @@ If you use this on a different system, you will need to copy the archive data (u
 This path has been copied to your clipboard.^
 46 ^Can't export configuration without preparing the archive data first. Try running the server within the game client first.^
 47 ^Success^
+
+48 ^User List^
+49 ^Username^
+50 ^Avatar Count^
+51 ^Status^
+52 ^View Avatars^
+53 ^Show IP^
+54 ^Ban User^
+55 ^Unban User^
+
+56 ^IP Bans^
+
+57 ^Avatars owned by %s^
+58 ^Name^
+59 ^Lot^
+
+60 ^IP^
+61 ^Associated Accounts^
+62 ^Unban^
+63 ^Ban IP^
+
+64 ^Search: ^
+
