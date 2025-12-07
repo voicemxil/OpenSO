@@ -1,12 +1,13 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using FSO.Client.UI.Controls;
+using FSO.Server.Embedded;
 
 namespace FSO.Client.UI.Archive.Management
 {
-    internal class UIArchiveBanManageDialog
+    internal class UIArchiveBanManageDialog : UIDialog
     {
+        public UIArchiveBanManageDialog(ArchiveManagement management) : base(UIDialogStyle.Close, true)
+        {
+
+        }
     }
 }

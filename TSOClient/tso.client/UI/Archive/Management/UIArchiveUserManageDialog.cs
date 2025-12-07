@@ -1,6 +1,8 @@
 ﻿using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Panels;
+using FSO.Common.Utils;
+using FSO.Server.Embedded;
 using FSO.Server.Protocol.Embedded;
 using FSO.UI.Controls;
 using Microsoft.Xna.Framework;
@@ -10,6 +12,8 @@ namespace FSO.Client.UI.Archive.Management
 {
     internal class UIArchiveUserManageDialog : UIDialog
     {
+        private ArchiveManagement Management;
+
         private UIGenericTable UserTable;
         private UITextBox SearchBox;
         private UIButton IPBansButton;
@@ -19,8 +23,10 @@ namespace FSO.Client.UI.Archive.Management
 
         private List<ArchiveDbUser> Data;
 
-        public UIArchiveUserManageDialog() : base(UIDialogStyle.Close, true)
+        public UIArchiveUserManageDialog(ArchiveManagement management) : base(UIDialogStyle.Close, true)
         {
+            Management = management;
+
             var gd = GameFacade.GraphicsDevice;
 
             var ui = Content.Content.Get().CustomUI;
@@ -37,17 +43,21 @@ namespace FSO.Client.UI.Archive.Management
             });
 
             searchContainer.Add(SearchBox = new UITextBox() { });
+            SearchBox.SetSize(200, 25);
+
+            searchContainer.AutoSize();
 
             vbox.Add(searchContainer);
 
             vbox.Add(new UISpacer(1, 8));
 
             vbox.Add(UserTable = new UIGenericTable([
-                new UITableColumn(GameFacade.Strings.GetString("f128", "49"), 250),
-                new UITableColumn(GameFacade.Strings.GetString("f128", "50"), 64),
-                new UITableColumn(GameFacade.Strings.GetString("f128", "51"), 20),
+                new UITableColumn(GameFacade.Strings.GetString("f128", "49"), 128),
+                new UITableColumn(GameFacade.Strings.GetString("f128", "50"), 96),
+                new UITableColumn(GameFacade.Strings.GetString("f128", "51"), 48),
                 new UITableColumn("", 14),
-                ]));
+                ])
+            { Loading = true });
 
 
             var vbox2 = new UIVBoxContainer() { HorizontalAlignment = UIContainerHorizontalAlignment.Right };
@@ -63,10 +73,12 @@ namespace FSO.Client.UI.Archive.Management
 
             vbox.Add(vbox2);
 
-            Add(vbox);
+            DynamicOverlay.Add(vbox);
 
             vbox.AutoSize();
             vbox.Position = new Vector2(20, 35);
+
+            SearchBox.OnChange += (elem) => UpdateUserTable();
 
             SetSize((int)vbox.Size.X + 40, (int)vbox.Size.Y + 60);
 
@@ -75,19 +87,34 @@ namespace FSO.Client.UI.Archive.Management
                 UIScreen.RemoveDialog(this);
             };
 
-            SearchBox.OnChange += (elem) => UpdateUserTable();
+            IPBansButton.OnButtonClick += OpenIPBans;
 
             Fetch();
         }
 
+        private void OpenIPBans(UIElement button)
+        {
+            UIScreen.GlobalShowDialog(new UIArchiveBanManageDialog(Management), true);
+        }
+
         private void Fetch()
         {
-            // TODO
+            Task.Run(() =>
+            {
+                var users = Management.GetUsers();
+
+                GameThread.InUpdate(() =>
+                { 
+                    Data = users; 
+                    UserTable.Loading = false;
+                    UpdateUserTable();
+                });
+            });
         }
 
         private string GetStatusIcon(ArchiveDbUserStatus status)
         {
-            return "";
+            return status.ToString();
         }
 
         private void UpdateUserTable()
@@ -112,7 +139,7 @@ namespace FSO.Client.UI.Archive.Management
                             OpenActions(element, x);
                         };
 
-                        return new UIListBoxItem(x, new object[] { x.Name, "0", GetStatusIcon(x.Status), actionButton })
+                        return new UIListBoxItem(x, new object[] { x.Name, x.AvatarCount.ToString(), GetStatusIcon(x.Status), actionButton })
                         {
                             CustomStyle = ListBoxColors,
                         };
@@ -129,7 +156,7 @@ namespace FSO.Client.UI.Archive.Management
 
         private void ViewAvatars(ArchiveDbUser user)
         {
-
+            UIScreen.GlobalShowDialog(new UIArchiveAvatarManageDialog(Management, user), true);
         }
 
         private void ShowIP(ArchiveDbUser user)

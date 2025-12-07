@@ -1,12 +1,14 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
+﻿using FSO.Client.UI.Controls;
+using FSO.Server.Embedded;
+using FSO.Server.Protocol.Embedded;
 
 namespace FSO.Client.UI.Archive.Management
 {
-    internal class UIArchiveAvatarManageDialog
+    internal class UIArchiveAvatarManageDialog : UIDialog
     {
+        public UIArchiveAvatarManageDialog(ArchiveManagement management, ArchiveDbUser user) : base(UIDialogStyle.Close, true)
+        {
+
+        }
     }
 }

@@ -1,5 +1,6 @@
 ﻿using FSO.Client.Controllers;
 using FSO.Client.Model.Archive;
+using FSO.Client.UI.Archive.Management;
 using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Panels;
@@ -7,6 +8,7 @@ using FSO.Client.Utils;
 using FSO.Common;
 using FSO.Common.Rendering.Framework.Model;
 using FSO.Common.Utils;
+using FSO.Server.Embedded;
 using FSO.Server.Servers.Lot.Domain;
 using FSO.UI.Controls;
 using Microsoft.Xna.Framework;
@@ -197,10 +199,25 @@ namespace FSO.Client.UI.Archive
             StartButton.OnButtonClick += Start;
             CloseButton.OnButtonClick += Close;
             ExportButton.OnButtonClick += Export;
+            UsersButton.OnButtonClick += Users;
 
             ValidateInputs(NameInput);
 
             UpdateButtons();
+        }
+
+        private void Users(UIElement button)
+        {
+            var selected = SaveCombo.SelectedItem as ArchiveManifest;
+
+            var factory = new ArchiveServerFactory(Config, null);
+            factory.Prepare(selected, (success) =>
+            {
+                if (success)
+                {
+                    UIScreen.GlobalShowDialog(new UIArchiveUserManageDialog(new ArchiveManagement(factory.GetConfig())), true);
+                }
+            });
         }
 
         private void SelectSaveByName(string name)

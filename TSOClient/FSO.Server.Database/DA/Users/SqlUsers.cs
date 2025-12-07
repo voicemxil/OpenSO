@@ -76,7 +76,7 @@ namespace FSO.Server.Database.DA.Users
 
         public List<UserSummary> AllSummaries()
         {
-            return Context.Connection.Query<UserSummary>("SELECT u.*, count(a.avatar_id) AS avatar_count FROM fso_users u JOIN fso_avatars a ON u.user_id = a.user_id GROUP BY a.user_id").ToList();
+            return Context.Connection.Query<UserSummary>("SELECT u.*, count(a.avatar_id) AS avatar_count FROM fso_users u LEFT JOIN fso_avatars a ON u.user_id = a.user_id GROUP BY a.user_id").ToList();
         }
 
         public uint Create(User user)

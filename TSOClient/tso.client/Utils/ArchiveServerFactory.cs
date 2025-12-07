@@ -35,6 +35,11 @@ namespace FSO.Client.Utils
             return config;
         }
 
+        public ArchiveConfiguration GetConfig()
+        {
+            return Config;
+        }
+
         private bool ValidateData(ArchiveManifest manifest, out string dir)
         {
             // Database should exist, Data directory should exist.

@@ -20,7 +20,7 @@ namespace FSO.Client.UI.Archive.Management
 
     internal class UIGenericTable : UIContainer
     {
-        private const int ColumnLegendHeight = 16;
+        private const int ColumnLegendHeight = 20;
         private const int SliderWidth = 20;
 
         public List<UIListBoxItem> Items
@@ -35,8 +35,23 @@ namespace FSO.Client.UI.Archive.Management
             }
         }
 
+        public bool Loading
+        {
+            get
+            {
+                return _statusLabel.Visible;
+            }
+            set
+            {
+                _statusLabel.Visible = value; 
+            }
+        }
+
+        public override Vector2 Size { get; set; }
+
         private readonly UIImage _background;
         private readonly UIListBox _listBox;
+        private readonly UILabel _statusLabel;
         private readonly List<UITableColumn> _columns;
         private List<UILabel> _columnLabels;
 
@@ -68,17 +83,33 @@ namespace FSO.Client.UI.Archive.Management
                 UseChildElements = true,
             });
 
-            SetSize(_columns.Sum((col) => col.Width), 300);
-            PopulateColumnLabels();
+            var statusStyle = TextStyle.DefaultLabel.Clone();
+            statusStyle.Shadow = true;
+
+            Add(_statusLabel = new UILabel()
+            {
+                Caption = "Loading...",
+                Position = _listBox.Position,
+                Size = _listBox.Size,
+                Wrapped = true,
+                Alignment = TextAlignment.Center | TextAlignment.Middle,
+                CaptionStyle = statusStyle,
+            });
+
             _listBox.InitDefaultSlider();
+            SetSize(_columns.Sum((col) => col.Width) + SliderWidth + 20, 300);
+            PopulateColumnLabels();
         }
 
         public void SetSize(int width, int height)
         {
             _background.SetSize(width - SliderWidth, height - ColumnLegendHeight);
             _listBox.Size = _background.Size - new Vector2(20, 20);
+            _statusLabel.Size = _statusLabel.Size;
             _listBox.VisibleRows = (int)Math.Ceiling(_listBox.Height / _listBox.RowHeight);
             _listBox.PositionChildSlider();
+
+            Size = new Vector2(width, height);
         }
 
         private UIListBoxColumnCollection GenerateColumns()
