@@ -1,6 +1,7 @@
 ﻿using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Panels;
+using FSO.Common.Rendering.Framework.IO;
 using FSO.Common.Utils;
 using FSO.Server.Embedded;
 using FSO.Server.Protocol.Embedded;
@@ -161,33 +162,101 @@ namespace FSO.Client.UI.Archive.Management
 
         private void ShowIP(ArchiveDbUser user)
         {
-
+            try
+            {
+                ClipboardHandler.Default.Set(user.IP);
+            }
+            catch
+            {
+                // No error right now.
+            }
+            
+            UIAlert.Alert("", GameFacade.Strings.GetString("f128", "70", [user.Name, user.IP]), true);
         }
 
         private void BanUser(ArchiveDbUser user)
         {
+            UIAlert.Prompt(GameFacade.Strings.GetString("f128", "72", [user.Name]), (result, alert) =>
+            {
+                if (result)
+                {
+                    try
+                    {
+                        Management.BanUser((int)user.ID);
+                    }
+                    catch
+                    {
+                        UIAlert.Alert("", GameFacade.Strings.GetString("f128", "78"), true);
+                        return;
+                    }
 
+                    Fetch();
+                }
+            });
         }
 
         private void UnbanUser(ArchiveDbUser user)
         {
+            UIAlert.Prompt(GameFacade.Strings.GetString("f128", "71", [user.Name]), (result, alert) =>
+            {
+                if (result)
+                {
+                    try
+                    {
+                        Management.UnbanUser((int)user.ID);
+                    }
+                    catch
+                    {
+                        UIAlert.Alert("", GameFacade.Strings.GetString("f128", "78"), true);
+                        return;
+                    }
 
+                    Fetch();
+                }
+            });
+        }
+
+        private void DeleteUser(ArchiveDbUser user)
+        {
+            UIAlert.Prompt(GameFacade.Strings.GetString("f128", "73", [user.Name]), (result, alert) =>
+            {
+                if (result)
+                {
+                    try
+                    {
+                        Management.DeleteUser((int)user.ID);
+                    }
+                    catch
+                    {
+                        UIAlert.Alert("", GameFacade.Strings.GetString("f128", "78"), true);
+                        return;
+                    }
+
+                    Fetch();
+                }
+            });
         }
 
         private void OpenActions(UIElement anchor, ArchiveDbUser user)
         {
-            int myLevel = 2;
-            var items = new List<UIContextMenuItem>();
-
-            if (myLevel > 0)
+            var items = new List<UIContextMenuItem>
             {
-                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "52"), () => { ViewAvatars(user); }));
-                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "53"), () => { ShowIP(user); }));
-                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "54"), () => { BanUser(user); }));
+                new(GameFacade.Strings.GetString("f128", "52"), () => { ViewAvatars(user); }),
+                new(GameFacade.Strings.GetString("f128", "53"), () => { ShowIP(user); }),
+            };
+
+            if (user.Status == ArchiveDbUserStatus.Banned)
+            {
                 items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "55"), () => { UnbanUser(user); }));
             }
+            else
+            {
+                items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "54"), () => { BanUser(user); }));
+            }
+            
+            items.Add(new UIContextMenuItem(GameFacade.Strings.GetString("f128", "66"), () => { DeleteUser(user); }));
 
-            new UIContextMenu(anchor, items, this);
+            new UIContextMenu(anchor, items, UserTable);
         }
     }
 }

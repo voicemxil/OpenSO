@@ -8,5 +8,6 @@
 
         DbBan GetByClientId(string client_id);
         void Remove(uint user_id);
+        void RemoveByIp(string ip);
     }
 }

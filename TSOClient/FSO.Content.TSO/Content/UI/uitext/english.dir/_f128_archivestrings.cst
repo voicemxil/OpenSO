@@ -74,4 +74,24 @@ This path has been copied to your clipboard.^
 63 ^Ban IP^
 
 64 ^Search: ^
+65 ^Delete Avatar^
+66 ^Delete User^
+
+67 ^Enter an IPv4 address to ban.^
+68 ^Are you sure you want to unban IP %s? This will also unban any user accounts that last used this IP.^
+
+69 ^Are you sure you want to delete the sim "%s"? This will remove everything that they own, and might also delete properties if their removal leaves no roommates.^
+
+70 ^User "%s"'s IP is %s.\n\nIP has been copied to your clipboard.^
+71 ^Are you sure you want to unban the user "%s"? This will also unban the last IP that used this account.^
+72 ^Are you sure you want to ban the user "%s"? This will also ban the last IP that used this account.^
+73 ^Are you sure you want to delete the user "%s"? This will transfer any avatars they own to the archive user.^
+
+74 ^Transfer to User^
+75 ^Select a user to transfer the sim %s to.^
+76 ^Transfer^
+77 ^Are you sure you want to transfer the sim %s to %s? This may affect some user generated content belonging to this avatar.^
+
+78 ^An unknown error occurred.^
+
 

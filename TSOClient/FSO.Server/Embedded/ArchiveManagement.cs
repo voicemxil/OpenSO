@@ -60,6 +60,7 @@ namespace FSO.Server.Embedded
                 AvatarCount = summary.avatar_count,
                 Status = status,
                 Name = summary.display_name,
+                IP = summary.last_ip,
             };
         }
 
@@ -105,7 +106,14 @@ namespace FSO.Server.Embedded
         {
             using (var da = DAFactory.Get())
             {
-                var bans = da.Bans.All();
+                var avatars = da.Avatars.GetByUserId((uint)userId);
+
+                foreach (var ava in avatars)
+                {
+                    da.Avatars.UpdateUser(ava.avatar_id, 1); // TODO: better indicator for archive user?
+                }
+
+                da.Users.Delete((uint)userId);
             }
         }
 
@@ -113,6 +121,19 @@ namespace FSO.Server.Embedded
         {
             using (var da = DAFactory.Get())
             {
+                var user = da.Users.GetById((uint)userId);
+
+                if (user == null)
+                {
+                    return;
+                }
+
+                var existingBan = da.Bans.GetByIP(user.last_ip);
+
+                if (existingBan == null)
+                {
+                    BanIp(user.last_ip);
+                }
             }
         }
 
@@ -120,6 +141,15 @@ namespace FSO.Server.Embedded
         {
             using (var da = DAFactory.Get())
             {
+                var user = da.Users.GetById((uint)userId);
+
+                if (user == null)
+                {
+                    return;
+                }
+
+                da.Bans.Remove((uint)userId);
+                da.Bans.RemoveByIp(user.last_ip);
             }
         }
 
@@ -127,6 +157,8 @@ namespace FSO.Server.Embedded
         {
             using (var da = DAFactory.Get())
             {
+                // TODO: safety stuff (does sqlite properly cascade anything?)
+                da.Avatars.Delete((uint)avatarId);
             }
         }
 
@@ -134,6 +166,7 @@ namespace FSO.Server.Embedded
         {
             using (var da = DAFactory.Get())
             {
+                da.Avatars.UpdateUser((uint)avatarId, (uint)userId);
             }
         }
 
@@ -141,6 +174,17 @@ namespace FSO.Server.Embedded
         {
             using (var da = DAFactory.Get())
             {
+                var relatedUsers = da.Users.GetByLastIP(ip);
+
+                uint userId = 0;
+
+                foreach (var user in relatedUsers)
+                {
+                    da.Users.UpdateBanned(user.user_id, true);
+                    userId = user.user_id;
+                }
+
+                da.Bans.Add(ip, userId, "Archive management", 0, "");
             }
         }
 
@@ -148,6 +192,14 @@ namespace FSO.Server.Embedded
         {
             using (var da = DAFactory.Get())
             {
+                da.Bans.RemoveByIp(ip);
+
+                var users = da.Users.GetByLastIP(ip);
+
+                foreach (var user in users)
+                {
+                    da.Users.UpdateBanned(user.user_id, false);
+                }
             }
         }
 

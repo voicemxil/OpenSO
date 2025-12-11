@@ -35,6 +35,30 @@ namespace FSO.Client.UI.Archive.Management
             }
         }
 
+        public UIListBoxItem SelectedItem
+        {
+            get
+            {
+                return _listBox.SelectedItem;
+            }
+            set
+            {
+                _listBox.SelectedItem = value;
+            }
+        }
+
+        public int SelectedIndex
+        {
+            get
+            {
+                return _listBox.SelectedIndex;
+            }
+            set
+            {
+                _listBox.SelectedIndex = value;
+            }
+        }
+
         public bool Loading
         {
             get
@@ -48,6 +72,7 @@ namespace FSO.Client.UI.Archive.Management
         }
 
         public override Vector2 Size { get; set; }
+        public event ChangeDelegate OnChange;
 
         private readonly UIImage _background;
         private readonly UIListBox _listBox;
@@ -99,6 +124,13 @@ namespace FSO.Client.UI.Archive.Management
             _listBox.InitDefaultSlider();
             SetSize(_columns.Sum((col) => col.Width) + SliderWidth + 20, 300);
             PopulateColumnLabels();
+
+            _listBox.OnChange += _listBox_OnChange;
+        }
+
+        private void _listBox_OnChange(UIElement element)
+        {
+            OnChange?.Invoke(this);
         }
 
         public void SetSize(int width, int height)

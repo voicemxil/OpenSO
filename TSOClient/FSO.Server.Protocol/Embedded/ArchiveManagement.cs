@@ -15,6 +15,7 @@
         public int AvatarCount;
         public ArchiveDbUserStatus Status;
         public string Name;
+        public string IP;
     }
 
     public struct ArchiveDbAvatar

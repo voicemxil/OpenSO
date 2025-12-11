@@ -53,5 +53,10 @@ namespace FSO.Server.Database.DA.Bans
         {
             Context.Connection.Query("DELETE FROM fso_ip_ban WHERE user_id = @user_id", new { user_id = user_id });
         }
+
+        public void RemoveByIp(string ip)
+        {
+            Context.Connection.Query("DELETE FROM fso_ip_ban WHERE ip_address = @ip_address", new { ip_address = ip });
+        }
     }
 }
