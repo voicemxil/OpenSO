@@ -132,7 +132,7 @@ namespace FSO.Server.Database.DA.Avatars
             ).ToList();
         }
 
-        public void UpdateUser(uint id, string user_id)
+        public void UpdateUser(uint id, uint user_id)
         {
             Context.Connection.Query("UPDATE fso_avatars SET user_id = @user_id WHERE avatar_id = @id", new { id = id, user_id });
         }
