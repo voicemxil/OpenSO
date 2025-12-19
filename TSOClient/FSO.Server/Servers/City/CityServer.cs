@@ -14,14 +14,12 @@ using FSO.Server.Protocol.Voltron.Packets;
 using FSO.Server.Servers.City.Domain;
 using FSO.Server.Servers.City.Handlers;
 using FSO.Server.Servers.Shared.Handlers;
+using Mina.Core.Session;
 using Ninject;
 using NLog;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Security.Cryptography;
+using System.Text;
 
 namespace FSO.Server.Servers.City
 {
@@ -38,14 +36,22 @@ namespace FSO.Server.Servers.City
 
         private uint SessionUID;
 
-        protected override RequestClientSessionArchive ArchiveHandshake => new RequestClientSessionArchive()
+        protected override RequestClientSessionArchive ArchiveHandshake(IoSession session)
         {
-            ServerKey = Config.Archive.ServerKey,
-            ArchiveConfig = Config.Archive.Flags,
-            ShardId = (uint)Config.ID,
-            ShardName = ShardName,
-            ShardMap = ShardMap,
-        };
+            var nonce = Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
+
+            session.SetAttribute("ArchiveNonce", nonce);
+
+            return new RequestClientSessionArchive()
+            {
+                ServerKey = Config.Archive.ServerPublicKey.Replace('^','\n'),
+                Nonce = nonce,
+                ArchiveConfig = Config.Archive.Flags,
+                ShardId = (uint)Config.ID,
+                ShardName = ShardName,
+                ShardMap = ShardMap,
+            };
+        }
 
         public CityServer(CityServerConfiguration config, IKernel kernel) : base(config, kernel)
         {
@@ -142,24 +148,87 @@ namespace FSO.Server.Servers.City
             return name != null && name.Length > 0 && name.Length < 100;
         }
 
+        private RSA TryGetCrypto()
+        {
+            try
+            {
+                var rsa = RSA.Create();
+
+                rsa.ImportFromPem(Config.Archive.ServerKey.Replace('^', '\n'));
+
+                return rsa;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private string TryDecrypt(string enc)
+        {
+            try
+            {
+                var rsa = TryGetCrypto();
+
+                if (rsa == null)
+                {
+                    return null;
+                }
+
+                var encrypted = Convert.FromBase64String(enc);
+
+                var decrypted = rsa.Decrypt(encrypted, RSAEncryptionPadding.Pkcs1);
+
+                return Encoding.UTF8.GetString(decrypted);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private void HandleArchiveAuth(AriesSession session, RequestClientSessionResponse packet)
         {
             using (var da = DAFactory.Get())
             {
                 // Archive auth always starts as avatarless, but can be upgraded later
 
-                // Try and find by the provided ID (should be 32 chars)
+                // The "password" should be an encrypted nonce\clientID, base64 encoded. First step is trying to decrypt it.
+                // The note that client ID is different for each server.
 
-                if (packet.Password.Length != 32)
+                var password = TryDecrypt(packet.Password);
+
+                if (password == null)
                 {
-                    // Must be 32 character hash
+                    // Encryption failure.
+                    session.Close();
+                    return;
+                }
+
+                var nonceSplit = password.IndexOf('\\');
+                var nonce = nonceSplit == -1 ? null : password.Substring(0, nonceSplit);
+                var expectedNonce = (string)session.GetAttribute("ArchiveNonce");
+                if (expectedNonce == null || nonce != expectedNonce)
+                {
+                    // Nonce did not match (attempted replay?)
+                    session.Close();
+                    return;
+                }
+
+                var clientId = password.Substring(nonceSplit + 1);
+
+                // Try and find by the provided ID (should be 40 chars)
+
+                if (clientId.Length != 40)
+                {
+                    // Must be 40 character hash
                     session.Close();
                     return;
                 }
 
                 // TODO: check IP ban
 
-                var user = da.ArchiveUsers.GetByClientHash(packet.Password);
+                var user = da.ArchiveUsers.GetByClientHash(clientId);
                 var ip = (session.IoSession.RemoteEndPoint as IPEndPoint).Address.ToString();
 
                 bool forceAdmin = ip == "127.0.0.1";
@@ -172,7 +241,7 @@ namespace FSO.Server.Servers.City
 
                     var newUser = new ArchiveUser()
                     {
-                        username = packet.Password,
+                        username = clientId,
                         user_state = Database.DA.Users.UserState.email_confirm,
                         email = "",
                         is_admin = forceAdmin,
@@ -195,6 +264,14 @@ namespace FSO.Server.Servers.City
                 else
                 {
                     da.Users.UpdateConnectIP(user.user_id, ip);
+                }
+
+                if (user.is_banned)
+                {
+                    // TODO: text from cst
+                    session.Write(new AnnouncementMsgPDU() { SenderID = "??cst:11", Subject = "Banned", Message = "Your user account/IP has been banned from this server. Contact the host to have the ban removed." });
+                    session.Close();
+                    return;
                 }
 
                 // Try and update the display name.

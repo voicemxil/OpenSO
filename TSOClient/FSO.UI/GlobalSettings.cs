@@ -31,11 +31,6 @@ namespace FSO.Client
                     {
                         defaultInstance.ArchiveClientGUID = GenerateGUID();
                     }
-
-                    if (defaultInstance.ArchiveServerGUID == "")
-                    {
-                        defaultInstance.ArchiveServerGUID = GenerateGUID();
-                    }
                 }
                 return defaultInstance;
             }
@@ -189,7 +184,6 @@ namespace FSO.Client
         public bool EnableTransitions { get; set; }
 
 
-        public string ArchiveServerGUID { get; set; }
         public string ArchiveClientGUID { get; set; }
 
         public static int TARGET_COMPAT_STATE = 2;

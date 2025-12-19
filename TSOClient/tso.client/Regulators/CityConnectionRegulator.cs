@@ -269,6 +269,22 @@ namespace FSO.Client.Regulators
         {
         }
 
+        private static RSA TryGetCrypto(string publicKey)
+        {
+            try
+            {
+                var rsa = RSA.Create();
+
+                rsa.ImportFromPem(publicKey);
+
+                return rsa;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         private ShardSelectorServletResponse LastSettings;
 
         protected override void OnBeforeTransition(RegulatorState oldState, RegulatorState newState, object data)
@@ -345,7 +361,9 @@ namespace FSO.Client.Regulators
                 case "RequestClientSessionArchive":
                     var serverRequest = data as RequestClientSessionArchive;
 
-                    if (serverRequest.ServerKey.Length != 36 && ArchiveSettings == null)
+                    var rsa = TryGetCrypto(serverRequest.ServerKey);
+
+                    if (rsa == null || ArchiveSettings == null)
                     {
                         Disconnect();
                     }
@@ -369,11 +387,17 @@ namespace FSO.Client.Regulators
                         };
 
                         ArchiveConfig = serverRequest.ArchiveConfig;
-                        ArchiveToken = ArchiveHash(GlobalSettings.Default.ArchiveClientGUID, serverRequest.ServerKey);
+
+                        // Our ID for this server is derived from our client GUID - we don't send it directly.
+                        var archiveUserID = ArchiveHash(GlobalSettings.Default.ArchiveClientGUID, serverRequest.ServerKey);
+
+                        // It's encrypted with the server's public key, so only the owner of this public key should be able to decrypt the id we use for their server.
+                        ArchiveToken = Convert.ToBase64String(rsa.Encrypt(Encoding.UTF8.GetBytes($"{serverRequest.Nonce}\\{archiveUserID}"), RSAEncryptionPadding.Pkcs1));
 
                         Client.Write(new RequestClientSessionResponse
                         {
                             User = ArchiveSettings.DisplayName,
+                            Unknown = 40,
                             Password = ArchiveToken,
                         });
                     }
@@ -495,6 +519,7 @@ namespace FSO.Client.Regulators
                         {
                             User = CurrentShard.AvatarID,
                             Password = ArchiveToken,
+                            Unknown = 40,
                             Unknown2 = 1
                         });
                     }
