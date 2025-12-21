@@ -17,6 +17,7 @@
     <PublishReadyToRun>true</PublishReadyToRun>
     <TieredPGO>true</TieredPGO>
     <ApplicationDefaultFont>Segoe UI, 8.25pt</ApplicationDefaultFont>
+	<ForceDesignerDpiUnaware>true</ForceDesignerDpiUnaware>
   </PropertyGroup>
 
   <ItemGroup>
