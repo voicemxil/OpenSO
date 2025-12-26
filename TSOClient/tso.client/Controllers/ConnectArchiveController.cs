@@ -32,6 +32,7 @@ namespace FSO.Client.Controllers
         public LoadAvatarByIDResponse AvatarData;
 
         private ConnectArchiveMode LastMode;
+        private ArchiveAvatarSelectCode LastSelectCode = ArchiveAvatarSelectCode.Success;
 
         public ShardSelectorServletRequest Shard => CityConnectionRegulator.CurrentShard;
 
@@ -186,6 +187,7 @@ namespace FSO.Client.Controllers
                         break;
                     case "ArchiveConnect":
                         //4  ^Starting engines^                 # City is Selected...
+                        LastSelectCode = ArchiveAvatarSelectCode.Success;
                         View.SetSandboxVisibility(false);
                         ShowMainDialog(null);
                         View.SetProgress((1.0f / 14.0f) * 100, 4);
@@ -207,10 +209,23 @@ namespace FSO.Client.Controllers
 
                         ShowMainDialog(select);
 
+                        if (LastSelectCode != ArchiveAvatarSelectCode.Success)
+                        {
+                            select.ShowSelectionError(LastSelectCode);
+                            LastSelectCode = ArchiveAvatarSelectCode.Success;
+                        }
+
                         break;
                     case "ArchiveSelectAvatar":
                         View.SetProgressArchive((5.5f / 14.0f) * 100, "Selecting avatar");
                         ShowMainDialog(null);
+                        break;
+
+                    case "ArchiveSelectedAvatar":
+                        if (data is ArchiveAvatarSelectResponse sel)
+                        {
+                            LastSelectCode = sel.Code;
+                        }
                         break;
 
                     case "AskForAvatarData":

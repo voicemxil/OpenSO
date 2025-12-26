@@ -111,5 +111,9 @@ If you're the user of this display name, you should either copy the configuratio
 90 ^Encryption Failure^
 91 ^Your client didn't respond correctly to the encryption challenge. Not sure how you'd get here.^
 
-
-
+100 ^Unable to select Avatar^
+101 ^The specified avatar was not found. Maybe it was just deleted?^
+102 ^You don't have permission to play as this avatar.^
+103 ^This avatar is currently in use by a client with the same ID (likely yourself), and the server was unable to fully disconnect the avatar to give it to this client. Please try again later.^
+104 ^This avatar is currently in use by another user. Please try again later.^
+105 ^An unknown error occurred while selecting that avatar.^

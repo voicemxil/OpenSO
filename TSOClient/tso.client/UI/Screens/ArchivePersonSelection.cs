@@ -463,6 +463,19 @@ namespace FSO.Client.UI.Screens
             };
             ShowDialog(cityPicker, true);
         }
+
+        public void ShowSelectionError(ArchiveAvatarSelectCode code)
+        {
+            UIAlert alert = null;
+            alert = GlobalShowAlert(new UIAlertOptions()
+            {
+                Title = GameFacade.Strings.GetString("f128", "100"),
+                Message = GameFacade.Strings.GetString("f128", (100 + (int)code).ToString()) ,
+                Buttons = UIAlertButton.Ok(x => {
+                    RemoveDialog(alert);
+                }),
+            }, true);
+        }
     }
 
     public class ArchivePersonSlot
