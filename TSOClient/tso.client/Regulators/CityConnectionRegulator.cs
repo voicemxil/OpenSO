@@ -624,16 +624,25 @@ namespace FSO.Client.Regulators
                 GameThread.InUpdate(() =>
                 {
                     var msg = (AnnouncementMsgPDU)message;
-                    UIAlert alert = null;
-                    alert = UIScreen.GlobalShowAlert(new UIAlertOptions()
+
+                    if (msg.Badge == 255)
                     {
-                        Title = GameFacade.Strings.GetString("195", "30") + GameFacade.CurrentCityName,
-                        Message = GameFacade.Strings.GetString("195", "28") + msg.SenderID.Substring(2) + "\r\n"
-                        + GameFacade.Strings.GetString("195", "29") + msg.Subject + "\r\n"
-                        + msg.Message,
-                        Buttons = UIAlertButton.Ok((btn) => UIScreen.RemoveDialog(alert)),
-                        Alignment = TextAlignment.Left
-                    }, true);
+                        // This message replaces the network error message when we disconnect.
+                        FSOFacade.Controller.FatalErrorMessage(msg);
+                    }
+                    else
+                    {
+                        UIAlert alert = null;
+                        alert = UIScreen.GlobalShowAlert(new UIAlertOptions()
+                        {
+                            Title = GameFacade.Strings.GetString("195", "30") + GameFacade.CurrentCityName,
+                            Message = GameFacade.Strings.GetString("195", "28") + msg.SenderID.Substring(2) + "\r\n"
+                            + GameFacade.Strings.GetString("195", "29") + msg.Subject + "\r\n"
+                            + msg.Message,
+                            Buttons = UIAlertButton.Ok((btn) => UIScreen.RemoveDialog(alert)),
+                            Alignment = TextAlignment.Left
+                        }, true);
+                    }
                 });
             }
             else if (message is GlobalTuningUpdate)

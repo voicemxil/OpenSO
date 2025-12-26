@@ -94,4 +94,21 @@ This path has been copied to your clipboard.^
 
 78 ^An unknown error occurred.^
 
+79 ^^
+
+80 ^Banned^
+81 ^Your user account/IP has been banned from this server. Contact the host to have the ban removed.^
+82 ^Invalid Name^
+83 ^The provided display name is invalid. It may be too long, short, or contain invalid characters.^
+84 ^Display Name Taken^
+85 ^The provided display name is already in use. Please choose another one.
+If you're the user of this display name, you should either copy the configuration ini files from the installation you previously used to log into this server, or join with another display name and get the server owner to migrate any avatars to your new account.^
+86 ^Invalid Client ID^
+87 ^The server couldn't read your client ID. This may be a problem with the server or client key configuration.^
+88 ^Encryption Failure^
+89 ^The client and server were unable to exchange authentication keys. The public/private key configuration on the server may be incorrect.^
+90 ^Encryption Failure^
+91 ^Your client didn't respond correctly to the encryption challenge. Not sure how you'd get here.^
+
+
 

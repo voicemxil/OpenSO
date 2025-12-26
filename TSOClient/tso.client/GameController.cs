@@ -40,6 +40,9 @@ namespace FSO.Client
         private UIDialog ShutdownDialog;
         private uint? ArchiveLotId;
 
+        private UIAlert FatalAlert;
+        private int FatalAlertPriority;
+
         public GameController(IKernel kernel)
         {
             this.Kernel = kernel;
@@ -340,6 +343,7 @@ namespace FSO.Client
 
         public void Disconnect()
         {
+            FatalAlertPriority = 0;
             Disconnect(false);
         }
 
@@ -367,19 +371,51 @@ namespace FSO.Client
             FatalError(title, desc);
         }
 
+        public void FatalErrorMessage(AnnouncementMsgPDU pdu)
+        {
+            var sender = pdu.SenderID.Length > 2 ? pdu.SenderID.Substring(2) : "";
+
+            if (sender.StartsWith("cst:"))
+            {
+                var cstId = sender.Substring(4);
+                if (int.TryParse(cstId, out int cstNum)) {
+
+                    var title = GameFacade.Strings.GetString("f128", cstNum.ToString());
+                    var desc = GameFacade.Strings.GetString("f128", (cstNum + 1).ToString());
+                    FatalError(title, desc, 1);
+                    return;
+                }
+            }
+            else
+            {
+                FatalError(pdu.Subject, pdu.Message, 1);
+            }
+        }
+
         /// <summary>
         /// When something goes very wrong, e.g. the server connection drops
         /// This method should be used. The game controller will tell the user
         /// and then work to clean everything up
         /// </summary>
-        public void FatalError(string errorTitle, string errorMessage){
+        public void FatalError(string errorTitle, string errorMessage, int alertPriority = 0){
             if (ShutdownDialog != null)
             {
                 // If the game is shutting down, don't show any errors.
                 return;
             }
 
-            var alert = UIScreen.GlobalShowAlert(new UI.Controls.UIAlertOptions {
+            if (alertPriority < FatalAlertPriority && FatalAlert?.Parent == UIScreen.Current)
+            {
+                return;
+            }
+
+            if (FatalAlert != null)
+            {
+                UIScreen.RemoveDialog(FatalAlert);
+            }
+
+            FatalAlertPriority = alertPriority;
+            FatalAlert = UIScreen.GlobalShowAlert(new UI.Controls.UIAlertOptions {
                 Message = errorMessage,
                 Title = errorTitle,
                 Buttons = UIAlertButton.Ok(x => Disconnect())

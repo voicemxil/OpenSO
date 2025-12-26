@@ -201,6 +201,7 @@ namespace FSO.Server.Servers.City
                 if (password == null)
                 {
                     // Encryption failure.
+                    session.Write(new AnnouncementMsgPDU(true) { SenderID = "??cst:90", Subject = "Encryption Failure", Message = "" });
                     session.Close();
                     return;
                 }
@@ -211,6 +212,7 @@ namespace FSO.Server.Servers.City
                 if (expectedNonce == null || nonce != expectedNonce)
                 {
                     // Nonce did not match (attempted replay?)
+                    session.Write(new AnnouncementMsgPDU(true) { SenderID = "??cst:88", Subject = "Encryption Failure", Message = "" });
                     session.Close();
                     return;
                 }
@@ -222,6 +224,7 @@ namespace FSO.Server.Servers.City
                 if (clientId.Length != 40)
                 {
                     // Must be 40 character hash
+                    session.Write(new AnnouncementMsgPDU(true) { SenderID = "??cst:86", Subject = "Invalid Client ID", Message = "" });
                     session.Close();
                     return;
                 }
@@ -268,8 +271,7 @@ namespace FSO.Server.Servers.City
 
                 if (user.is_banned)
                 {
-                    // TODO: text from cst
-                    session.Write(new AnnouncementMsgPDU() { SenderID = "??cst:11", Subject = "Banned", Message = "Your user account/IP has been banned from this server. Contact the host to have the ban removed." });
+                    session.Write(new AnnouncementMsgPDU(true) { SenderID = "??cst:80", Subject = "Banned", Message = "" });
                     session.Close();
                     return;
                 }
@@ -278,6 +280,7 @@ namespace FSO.Server.Servers.City
 
                 if (!ValidDisplayName(packet.User))
                 {
+                    session.Write(new AnnouncementMsgPDU(true) { SenderID = "??cst:82", Subject = "Invalid Name", Message = "" });
                     session.Close();
                     return;
                 }
@@ -289,7 +292,7 @@ namespace FSO.Server.Servers.City
 
                     if (otherUser != null)
                     {
-                        // TODO: report username is taken
+                        session.Write(new AnnouncementMsgPDU(true) { SenderID = "??cst:84", Subject = "Display Name Taken", Message = "" });
                         session.Close();
                         return;
                     }
