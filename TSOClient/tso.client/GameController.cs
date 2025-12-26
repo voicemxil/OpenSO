@@ -341,13 +341,18 @@ namespace FSO.Client
             });
         }
 
+        private bool InCity => CurrentController is CoreGameScreenController ||
+            CurrentController is ConnectCASController ||
+            CurrentController is ConnectCityController ||
+            CurrentController is PersonSelectionEditController;
+
         public void Disconnect()
         {
-            FatalAlertPriority = 0;
-            Disconnect(false);
+            Disconnect(!InCity);
         }
 
         public void Disconnect(bool toLogin){
+            FatalAlertPriority = 0;
             ChangeState<TransitionScreen, DisconnectController>((view, controller) =>
             {
                 controller.Disconnect((forceLogin) => HandleDisconnect(forceLogin || toLogin), toLogin);
