@@ -72,6 +72,11 @@ namespace FSO.Server.Database.DA
 
         public string CompatLayer(string sql, string updateKey = null)
         {
+            if (sql.StartsWith("INSERT IGNORE"))
+            {
+                sql = "INSERT OR " + sql.Substring("INSERT ".Length);
+            }
+
             sql = sql.Replace("LAST_INSERT_ID()", "last_insert_rowid()");
             sql = sql.Replace("NOW()", "CURRENT_TIMESTAMP");
 

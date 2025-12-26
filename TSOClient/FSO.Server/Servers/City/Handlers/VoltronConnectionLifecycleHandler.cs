@@ -45,7 +45,8 @@ namespace FSO.Server.Servers.City.Handlers
 
         public async void SessionClosed(IAriesSession session)
         {
-            if (!(session is IVoltronSession)) {
+            if (!(session is IVoltronSession))
+            {
                 return;
             }
 
@@ -54,7 +55,8 @@ namespace FSO.Server.Servers.City.Handlers
 
             if (voltronSession.IsAnonymous) return;
 
-            Liveness.EnqueueChange(() => {
+            Liveness.EnqueueChange(() =>
+            {
                 //unenroll in voltron group, mark as offline in data service.
                 //since this can happen async make sure our session hasnt been reopened before trying to delete its claim
                 if (Sessions.GetByAvatarId(voltronSession.AvatarId)?.Connected == true) return;
@@ -121,15 +123,21 @@ namespace FSO.Server.Servers.City.Handlers
             });
 
             //CAS, don't hydrate the user
-            if (voltronSession.IsAnonymous){
+            if (voltronSession.IsAnonymous)
+            {
                 return;
             }
 
+            await AssignAvatar(voltronSession);
+        }
+
+        public async Task AssignAvatar(IVoltronSession voltronSession)
+        {
             //New avatar, enroll in voltron group
             var avatar = await DataService.Get<Avatar>(voltronSession.AvatarId); //can throw?
             //Mark as online
             avatar.Avatar_IsOnline = true;
-            VoltronSessions.Enroll(newSession);
+            VoltronSessions.Enroll(voltronSession);
             Events.UserJoined(voltronSession);
             Neigh.UserJoined(voltronSession);
             TuningDomain.UserJoined(voltronSession);

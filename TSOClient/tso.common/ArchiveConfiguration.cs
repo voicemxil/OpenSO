@@ -50,6 +50,21 @@ namespace FSO.Common
 
         // Runtime
         public IDisposable[] Disposables;
+        public EventConfig? Events;
+
+        public void LoadEvents()
+        {
+            // Try and load associated event config
+            var eventPath = Path.Combine(Path.GetDirectoryName(ArchiveDataDirectory), "events.json");
+
+            try
+            {
+                var eventJson = File.ReadAllText(eventPath);
+
+                Events = EventConfig.FromJson(eventJson);
+            }
+            catch { }
+        }
     }
 
     public class ClientArchiveConfiguration : IniConfig
@@ -77,7 +92,9 @@ namespace FSO.Common
             return Guid.NewGuid().ToString();
         }
 
-        public ClientArchiveConfiguration(string path) : base(path) { }
+        public ClientArchiveConfiguration(string path) : base(path)
+        {
+        }
 
         private Dictionary<string, string> _DefaultValues = new Dictionary<string, string>()
         {
@@ -120,6 +137,8 @@ namespace FSO.Common
         public ushort CityPort { get; set; }
         public ushort LotPort { get; set; }
         public float GameScale { get; set; } = 1;
+
+        public EventConfig? Events;
 
         public ArchiveConfiguration ToHostConfig()
         {

@@ -1,10 +1,4 @@
 ﻿using FSO.Common;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace FSO.Server.Embedded
 {
@@ -27,6 +21,7 @@ namespace FSO.Server.Embedded
                 GameLocation = FSO.Content.Content.Get().BasePath,
                 Secret = Guid.NewGuid().ToString(),
                 Archive = config,
+                Events = config.Events,
                 SimNFS = config.ArchiveDataDirectory,
                 Database = new Database.DatabaseConfiguration()
                 {

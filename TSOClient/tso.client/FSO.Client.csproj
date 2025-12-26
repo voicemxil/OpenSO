@@ -126,9 +126,12 @@
     <Content Include="Content\UI\hints\english.dir\ui_nhood_rules.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <None Include="Content\ArchiveCities\FreeSO Archive\archive.ini">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+	  <None Include="Content\ArchiveCities\FreeSO Archive\archive.ini">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
+	  <None Include="Content\ArchiveCities\FreeSO Archive\events.json">
+		  <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+	  </None>
     <None Include="Resources\Icon.bmp" />
     <None Include="Resources\ico256.fw.png" />
   </ItemGroup>

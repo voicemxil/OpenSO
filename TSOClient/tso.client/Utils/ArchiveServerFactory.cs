@@ -216,6 +216,7 @@ namespace FSO.Client.Utils
             if (ValidateData(manifest, out string dir))
             {
                 Config.ArchiveDataDirectory = dir;
+                Config.LoadEvents();
                 onResult(true);
             }
             else

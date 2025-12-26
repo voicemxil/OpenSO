@@ -1,6 +1,7 @@
 ﻿using FSO.Common.DataService.Framework;
 using FSO.Common.Utils;
 using FSO.Server.Common;
+using FSO.Server.Database.DA;
 using FSO.Server.DataService;
 using FSO.Server.Domain;
 using FSO.Server.Protocol.Electron.Packets;
@@ -140,6 +141,20 @@ namespace FSO.Server
             Servers = new List<AbstractServer>();
             CityServers = new List<CityServer>();
             Kernel.Bind<IServerNFSProvider>().ToConstant(new ServerNFSProvider(Config.SimNFS));
+
+            if (Config.Events.HasValue)
+            {
+                LOG.Info("Scheduling events");
+
+                try
+                {
+                    EventGenerator.GenerateEvents(Kernel.Get<IDAFactory>(), Config.Events.Value);
+                }
+                catch (Exception e)
+                {
+                    LOG.Warn($"Unable to schedule events - may be in an incomplete state.", e);
+                }
+            }
 
             if (Config.Services.UserApi != null &&
                 Config.Services.UserApi.Enabled)

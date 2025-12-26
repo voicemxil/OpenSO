@@ -46,6 +46,9 @@ namespace FSO.Server
         /// </summary>
         [JsonProperty("updateID")]
         public int? UpdateID;
+
+        [JsonProperty("events")]
+        public EventConfig? Events; // If this is present, the server automatically schedules events on start.
     }
 
 

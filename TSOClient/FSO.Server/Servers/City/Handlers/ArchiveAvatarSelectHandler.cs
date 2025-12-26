@@ -152,6 +152,10 @@ namespace FSO.Server.Servers.City.Handlers
                         da.Avatars.UpdateModerationLevel(avatarId, (int)vSession2.ModerationLevel);
                         vSession2.AvatarId = avatarId;
                         vSession2.AvatarClaimId = claim.Value;
+
+                        var lifecycle = Kernel.Get<VoltronConnectionLifecycleHandler>();
+
+                        await lifecycle.AssignAvatar(vSession2);
                     }
                     else
                     {
