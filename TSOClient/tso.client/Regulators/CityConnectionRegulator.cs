@@ -499,7 +499,10 @@ namespace FSO.Client.Regulators
                 case "UnexpectedDisconnect":
                     if (ReestablishAttempt > 0 || !CanReestablish)
                     {
-                        FSOFacade.Controller.FatalNetworkError(23);
+                        GameThread.InUpdate(() =>
+                        {
+                            FSOFacade.Controller.FatalNetworkError(23);
+                        });
                     }
                     else
                     {
