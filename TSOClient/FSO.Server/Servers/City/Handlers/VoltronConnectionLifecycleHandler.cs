@@ -53,6 +53,12 @@ namespace FSO.Server.Servers.City.Handlers
             IVoltronSession voltronSession = (IVoltronSession)session;
             VoltronSessions.UnEnroll(session);
 
+            // TODO: If the user wasn't verified, then only admins need to know.
+            if (Context.Config.Archive != null && voltronSession.IsAuthenticated)
+            {
+                Context.BroadcastUserList(false);
+            }
+
             if (voltronSession.IsAnonymous) return;
 
             Liveness.EnqueueChange(() =>
@@ -89,10 +95,6 @@ namespace FSO.Server.Servers.City.Handlers
                     db.AvatarClaims.Delete(voltronSession.AvatarClaimId, Context.Config.Call_Sign);
                 }
             });
-
-            // Update the user list.
-            // TODO: If the user wasn't verified, then only admins need to know.
-            Context?.BroadcastUserList(false);
         }
 
         public void SessionCreated(IAriesSession session)

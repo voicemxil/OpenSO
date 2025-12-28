@@ -110,6 +110,8 @@ If you're the user of this display name, you should either copy the configuratio
 89 ^The client and server were unable to exchange authentication keys. The public/private key configuration on the server may be incorrect.^
 90 ^Encryption Failure^
 91 ^Your client didn't respond correctly to the encryption challenge. Not sure how you'd get here.^
+92 ^Verification Rejected^
+93 ^An admin or moderator has rejected your verification request.^
 
 100 ^Unable to select Avatar^
 101 ^The specified avatar was not found. Maybe it was just deleted?^

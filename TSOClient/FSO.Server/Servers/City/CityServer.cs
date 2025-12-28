@@ -3,6 +3,7 @@ using FSO.Server.Common;
 using FSO.Server.Database.DA;
 using FSO.Server.Database.DA.ArchiveUsers;
 using FSO.Server.Database.DA.AvatarClaims;
+using FSO.Server.Database.DA.Bans;
 using FSO.Server.Database.DA.Hosts;
 using FSO.Server.Domain;
 using FSO.Server.Framework;
@@ -269,7 +270,9 @@ namespace FSO.Server.Servers.City
                     da.Users.UpdateConnectIP(user.user_id, ip);
                 }
 
-                if (user.is_banned)
+                var ipBan = da.Bans.GetByIP(ip);
+
+                if (user.is_banned || ipBan != null)
                 {
                     session.Write(new AnnouncementMsgPDU(true) { SenderID = "??cst:80", Subject = "Banned", Message = "" });
                     session.Close();
