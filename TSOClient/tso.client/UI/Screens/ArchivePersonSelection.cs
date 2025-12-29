@@ -47,6 +47,7 @@ namespace FSO.Client.UI.Screens
 
         public LoginRegulator LoginRegulator;
         public UIButton CASButton { get; set; }
+        public UIButton AcceptButton { get; set; }
 
         public UITextBox SearchBox;
         public UIListBox AvatarListBox;
@@ -262,6 +263,8 @@ namespace FSO.Client.UI.Screens
             CreditsButton.OnButtonClick += new ButtonClickDelegate(CreditsButton_OnButtonClick);
             m_ExitButton.OnButtonClick += new ButtonClickDelegate(m_ExitButton_OnButtonClick);
             CASButton.OnButtonClick += OpenCAS;
+            AcceptButton.OnButtonClick += AcceptSelection;
+            AcceptButton.Disabled = true;
             SearchBox.OnChange += (elem) =>
             {
                 RefreshList();
@@ -286,9 +289,15 @@ namespace FSO.Client.UI.Screens
             });
         }
 
+        private void AcceptSelection(UIElement button)
+        {
+            SelectAvatar(button, false);
+        }
+
         private void ChangedSelectedAvatar(UIElement element)
         {
             PersonSlot.AvatarButton.Disabled = AvatarListBox.SelectedItem == null;
+            AcceptButton.Disabled = PersonSlot.AvatarButton.Disabled;
 
             if (PersonSlot.AvatarButton.Disabled)
             {
