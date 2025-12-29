@@ -82,7 +82,9 @@ This path has been copied to your clipboard.^
 
 69 ^Are you sure you want to delete the sim "%s"? This will remove everything that they own, and might also delete properties if their removal leaves no roommates.^
 
-70 ^User "%s"'s IP is %s.\n\nIP has been copied to your clipboard.^
+70 ^User "%s"'s IP is %s.
+
+IP has been copied to your clipboard.^
 71 ^Are you sure you want to unban the user "%s"? This will also unban the last IP that used this account.^
 72 ^Are you sure you want to ban the user "%s"? This will also ban the last IP that used this account.^
 73 ^Are you sure you want to delete the user "%s"? This will transfer any avatars they own to the archive user.^
@@ -112,6 +114,11 @@ If you're the user of this display name, you should either copy the configuratio
 91 ^Your client didn't respond correctly to the encryption challenge. Not sure how you'd get here.^
 92 ^Verification Rejected^
 93 ^An admin or moderator has rejected your verification request.^
+
+96 ^This client is already hosting a server. Please select an option:^
+97 ^User Management^
+98 ^Close Server^
+99 ^Join Server^
 
 100 ^Unable to select Avatar^
 101 ^The specified avatar was not found. Maybe it was just deleted?^

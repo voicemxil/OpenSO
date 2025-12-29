@@ -23,6 +23,7 @@ using FSO.UI.Model;
 using MSDFData;
 using FSO.Server.Embedded;
 using FSO.Client.UI.Archive;
+using FSO.Common;
 
 namespace FSO.Client
 {
@@ -514,6 +515,38 @@ namespace FSO.Client
             }
 
             return true;
+        }
+
+        public bool HasServer()
+        {
+            return Server != null;
+        }
+
+        public void CloseServer(Action callback)
+        {
+            if (Server != null)
+            {
+                if (ShutdownDialog == null)
+                {
+                    ShutdownDialog = new UIArchiveServerStatusDialog(false, Server, () => {
+                        UIScreen.RemoveDialog(ShutdownDialog);
+                        ShutdownDialog = null;
+                        Server = null; 
+                        callback();
+                    });
+
+                    UIScreen.GlobalShowDialog(ShutdownDialog, true);
+
+                    return;
+                }
+            }
+
+            callback();
+        }
+
+        public ArchiveConfiguration GetServerConfig()
+        {
+            return Server?.Config;
         }
 
         public void StartDebugTools()
