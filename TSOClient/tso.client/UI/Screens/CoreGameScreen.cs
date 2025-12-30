@@ -655,6 +655,7 @@ namespace FSO.Client.UI.Screens
                     Buttons = new UIAlertButton[]
                     {
                     new UIAlertButton(UIAlertButtonType.Yes, (btn) => {
+                        controller.ReconnectTransition = null;
                         controller.ReconnectLotID = id;
                         vm?.SendCommand(new VMNetSimLeaveCmd());
                         RemoveDialog(SwitchLotDialog); SwitchLotDialog = null; }),

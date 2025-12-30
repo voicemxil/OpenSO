@@ -138,6 +138,7 @@ namespace FSO.Client.Controllers
             {
                 JoinLotRegulator.JoinLot(id, transition);
                 ReconnectLotID = 0;
+                ReconnectTransition = transition;
             }
             else if (lot == id)
             {
@@ -157,6 +158,7 @@ namespace FSO.Client.Controllers
             {
                 JoinLotRegulator.JoinLot(id, transition);
                 ReconnectLotID = 0;
+                ReconnectTransition = null;
             }
             else
             {
