@@ -419,7 +419,7 @@ namespace FSO.SimAntics.Primitives
                     }
                 case VMGenericTSOCallMode.FSOGoToLotIDTemp01:
                     {
-                        if (context.Caller.PersistID == context.VM.MyUID)
+                        if (context.Caller.PersistID == context.VM.MyUID && context.VM.Ready)
                         {
                             uint idLow = (uint)context.Thread.TempRegisters[0];
                             uint idHigh = (uint)context.Thread.TempRegisters[1] << 16;

@@ -605,7 +605,7 @@ namespace FSO.Server.Servers.Lot.Domain
 
         public bool TryJoin(IVoltronSession session)
         {
-            if (Container.IsAvatarOnLot(session.AvatarId))
+            if (Container.IsAvatarOnLot(session.AvatarId, _Visitors))
             {
                 session.Write(new FSOVMProtocolMessage(true, "11", "12"));
                 return false; //already on the lot.
