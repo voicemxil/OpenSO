@@ -21,6 +21,7 @@ using FSO.SimAntics.NetPlay.Drivers;
 using FSO.SimAntics.NetPlay.Model;
 using FSO.SimAntics.NetPlay.Model.Commands;
 using FSO.SimAntics.Utils;
+using FSO.LotView;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Input;
 using System;
@@ -506,11 +507,6 @@ namespace FSO.Client.UI.Screens
             LotControl = new UILotControl(vm, World);
             this.AddAt(0, LotControl);
 
-            var time = DateTime.UtcNow;
-            var tsoTime = TSOTime.FromUTC(time);
-
-            vm.Context.Clock.Hours = tsoTime.Item1;
-            vm.Context.Clock.Minutes = tsoTime.Item2;
             if (m_ZoomLevel > 3)
             {
                 World.Visible = false;
@@ -580,6 +576,17 @@ namespace FSO.Client.UI.Screens
             }
             vm.MyUID = myState.PersistID;
             ZoomLevel = 1;
+            
+            var time = DateTime.UtcNow;
+            var tsoTime = TSOTime.FromUTC(time);
+
+            vm.Context.Clock.Hours = tsoTime.Item1;
+            vm.Context.Clock.Minutes = tsoTime.Item2;
+            
+            if (LotView.WorldConfig.Current.SurroundingLots > 0)
+            {
+                SimAntics.Utils.VMLotTerrainRestoreTools.RestoreSurroundings(vm, vm.HollowAdj);
+            }
 
             AssetStreaming.BeginStreaming(AssetStreamingMode.Lot);
             while (!World.Preload(GameFacade.GraphicsDevice))

@@ -7,10 +7,11 @@ using Microsoft.Xna.Framework.Graphics;
 using FSO.Common.Rendering.Framework.IO;
 using FSO.Common.Rendering.Framework.Model;
 using FSO.Common.Utils;
+using Microsoft.Xna.Framework.Input;
 
 namespace FSO.Client.UI.Controls
 {
-    public class UIListBox : UIElement
+    public class UIListBox : UIElement, IFocusableUI
     {
         private UIMouseEventRef MouseHandler;
         public event ChangeDelegate OnChange;
@@ -21,15 +22,13 @@ namespace FSO.Client.UI.Controls
 
         public bool AllowDisabledSelection = false;
         public bool Mask = false;
+        private bool IsFocused;
 
         public UIListBox()
         {
             MouseHandler = this.ListenForMouse(new Rectangle(0, 0, 10, 10), OnMouseEvent);
             RowHeight = 16;
         }
-
-
-
 
         #region Fields
 
@@ -274,6 +273,18 @@ namespace FSO.Client.UI.Controls
                 }
             }
 
+            if (IsFocused)
+            {
+                if (state.NewKeys.Contains(Keys.Up) && Items.Count > 0) 
+                    InternalSelect((m_SelectedRow < 0 ? Items.Count - 1 : (m_SelectedRow - 1 + Items.Count) % Items.Count));
+
+                if (state.NewKeys.Contains(Keys.Down) && Items.Count > 0) 
+                    InternalSelect((m_SelectedRow + 1) % Items.Count);
+
+                if (SelectedItem != null && state.NewKeys.Contains(Keys.Enter)) 
+                    OnDoubleClick?.Invoke(this);
+            }
+
             if (m_MouseOver)
             {
                 var overRow = GetRowUnderMouse(state);
@@ -313,6 +324,7 @@ namespace FSO.Client.UI.Controls
                         /** Cant deselect once selected **/
                         InternalSelect(row);
                     }
+                    GameFacade.Screens.inputManager.SetFocus(this);
                     break;
             }
         }
@@ -347,6 +359,15 @@ namespace FSO.Client.UI.Controls
         {
             Invalidate();
             m_SelectedRow = index;
+            
+            // Ensure selection is visible
+            if (index < ScrollOffset && index != -1)
+                ScrollOffset = index;
+            else if (index >= ScrollOffset + NumVisibleRows)
+                ScrollOffset = index - NumVisibleRows + 1;
+            
+            if (m_Slider != null)
+                m_Slider.Value = ScrollOffset;
 
             if (OnChange != null)
             {
@@ -636,6 +657,10 @@ namespace FSO.Client.UI.Controls
             base.Removed();
         }
 
+        public void OnFocusChanged(FocusEvent newFocus)
+        {
+            IsFocused = newFocus == FocusEvent.FocusIn;
+        }
     }
 
     public class UIListBoxColumn
