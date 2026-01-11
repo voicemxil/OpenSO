@@ -95,13 +95,20 @@ namespace FSO.Client.UI.Archive.Management
             _background.SetSize(180, 300);
             Add(_background);
 
+            var textStyle = new UIListBoxTextStyle(searchFont)
+            {
+                SelectedColor = Color.Black,
+                HighlightedColor = new Color(255, 255, 255),
+                DisabledColor = new Color(150, 150, 150)
+            };
+
             Add(_listBox = new UIListBox()
             {
                 Position = _background.Position + new Vector2(10, 10),
                 Mask = true,
                 Columns = GenerateColumns(),
                 RowHeight = 20,
-                FontStyle = searchFont,
+                TextStyle = textStyle,
                 SelectionFillColor = new Color(250, 200, 140),
                 ScrollbarImage = GetTexture(0x31000000001),
                 ScrollbarGutter = 12,

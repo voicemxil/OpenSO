@@ -152,7 +152,7 @@
             "phoneglobals.iff:0:0": 516,
             "phoneglobals.iff:0:1": 1
           },
-          "enableTimed": true
+          "enableTimed": false
         },
         {
           "name": "lot-fructose",
@@ -288,23 +288,23 @@
           "enableTimed": false
         },
         {
-          "name": "candy",
-          "label": "Candy & Zombies",
-          "category": "Extras",
-          "tuning": {
-            "global.iff:44:3": 1
-          },
-          "enableTimed": true
-        },
-        {
           "name": "deadworld",
           "label": "Dead World",
-          "category": "Extras",
+          "category": "Weather & Extras",
           "unique": "weather",
           "tuning": {
             "city:0:0": 2,
             "city:0:2": 2,
             "special:0:2": 0.01
+          },
+          "enableTimed": true
+        },
+        {
+          "name": "candy",
+          "label": "Candy & Zombies",
+          "category": "Weather & Extras",
+          "tuning": {
+            "global.iff:44:3": 1
           },
           "enableTimed": true
         }
@@ -329,9 +329,20 @@
           "enableTimed": true
         },
         {
+          "name": "snowfall",
+          "label": "Snowfall",
+          "category": "Weather & Extras",
+          "unique": "weather",
+          "tuning": {
+            "global.iff:44:6": 1,
+            "city:0:0": 0
+          },
+          "enableTimed": true
+        },
+        {
           "name": "snowball",
           "label": "Snowball Fights",
-          "category": "Extras",
+          "category": "Weather & Extras",
           "tuning": {
             "global.iff:44:4": 1
           },
@@ -340,7 +351,7 @@
         {
           "name": "tree",
           "label": "Christmas Tree",
-          "category": "Extras",
+          "category": "Weather & Extras",
           "tuning": {
             "global.iff:44:5": 1
           },
@@ -354,17 +365,6 @@
           "enableTimed": true,
           "startDate": "18-12",
           "endDate": "26-12"
-        },
-        {
-          "name": "snowfall",
-          "label": "Snowfall",
-          "category": "Extras",
-          "unique": "weather",
-          "tuning": {
-            "global.iff:44:6": 1,
-            "city:0:0": 0
-          },
-          "enableTimed": true
         }
       ]
     }

@@ -65,6 +65,23 @@ namespace FSO.Common
             }
             catch { }
         }
+
+        public void SaveEvents()
+        {
+            if (Events == null)
+            {
+                return;
+            }
+
+            // Try and save associated event config
+            var eventPath = Path.Combine(Path.GetDirectoryName(ArchiveDataDirectory), "events.json");
+
+            try
+            {
+                File.WriteAllText(eventPath, Events.Value.ToJson());
+            }
+            catch { }
+        }
     }
 
     public class ClientArchiveConfiguration : IniConfig
