@@ -74,8 +74,9 @@ namespace FSO.Server.Servers.City.Handlers
                     var shared = da.Avatars.GetSummaryByUserId(1);
                     var sharedAvatars = shared.Select(ToArchiveAvatar).ToArray();
 
-                    // TODO: database
-                    var recentAvatars = sharedAvatars.Where(x => x.Name == "burglar cop").Select(x => x.AvatarId).ToArray();
+                    // Can't cache this obviously
+                    var mostRecent = da.ArchiveRecents.AvatarsByUser((int)session.UserId, 5);
+                    var recentAvatars = mostRecent.Select(x => (uint)x).ToArray();
 
                     session.Write(new ArchiveAvatarsResponse()
                     {
