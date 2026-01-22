@@ -135,9 +135,10 @@ namespace FSO.HIT
                 }
             }
 
+            var timeDiff = 1f / FSOEnvironment.RefreshRate;
             for (int i = 0; i < FSCPlayers.Count; i++)
             {
-                FSCPlayers[i].Tick(1/60f);
+                FSCPlayers[i].Tick(timeDiff);
             }
         }
 

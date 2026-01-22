@@ -1,9 +1,6 @@
-﻿using System;
-using System.Collections.Generic;
-using FSO.Files.HIT;
+﻿using FSO.Files.HIT;
 using FSO.Files.XA;
 using Microsoft.Xna.Framework.Audio;
-using System.IO;
 
 namespace FSO.HIT
 {
@@ -88,47 +85,67 @@ namespace FSO.HIT
 
         private void RestartFSC()
         {
-            if (fsc.RandomJumpPoints.Count == 0) CurrentPosition = 0;
-            else
-            {
-                CurrentPosition = fsc.RandomJumpPoints[new Random().Next(fsc.RandomJumpPoints.Count)];
-            }
+            CurrentPosition = 0;
+            LoopCount = -1;
         }
 
         private void NextNote()
         {
             if (LoopCount == -1)
             {
-                var note = fsc.Notes[CurrentPosition++];
-                if (note.Rand || CurrentPosition >= fsc.Notes.Count)
+                var noteColumn = fsc.NoteColumns[CurrentPosition++];
+
+                if (CurrentPosition >= fsc.NoteColumns.Length)
                 {
-                    RestartFSC(); //current random segment ended. jump to another.
-                    note = fsc.Notes[CurrentPosition];
+                    // Loops back to the start.
+                    CurrentPosition = 0;
                 }
-                if (note.Filename != "NONE")
+
+                LoopCount = (short)(Math.Max(-1, noteColumn.Max(x => x.Loop) - 2));
+
+                // Evaluate all of the notes, and see which we can play.
+
+                int y = 0;
+                foreach (var note in noteColumn)
                 {
-                    bool play;
-                    if (note.Prob > 0) play = (new Random().Next(16) < note.Prob);
-                    else play = true;
-
-                    if (play)
+                    if (note.Filename != null && note.Filename != "NONE")
                     {
-                        float volume = (note.Volume / 1024.0f) * (fsc.MasterVolume / 1024.0f) * Volume * HITVM.Get().GetMasterVolume(Model.HITVolumeGroup.AMBIENCE);
-                        var sound = LoadSound(note.Filename);
+                        bool play;
+                        if (note.Prob > 0) play = (Random.Shared.Next(100) < note.Prob);
+                        else play = true;
 
-                        if (sound != null)
+                        bool exceedsMax = SoundEffects.Count >= fsc.Max;
+
+                        if (play && !exceedsMax)
                         {
-                            var instance = sound.CreateInstance();
-                            instance.Volume = volume;
-                            instance.Pan = (note.LRPan / 512.0f) - 1;
-                            instance.Play();
+                            float noteVolume = (note.Volume / 1024.0f);
+                            if (note.RandomVolume)
+                            {
+                                // Maybe this should allow for volumes closer to 0, but that didn't feel right.
+                                noteVolume *= Random.Shared.NextSingle() * 0.75f + 0.25f;
+                            }
+                            float volume = noteVolume * (fsc.MasterVolume / 1024.0f) * Volume * HITVM.Get().GetMasterVolume(Model.HITVolumeGroup.AMBIENCE);
+                            var sound = LoadSound(note.Filename);
 
-                            SoundEffects.Add(instance);
+                            if (sound != null)
+                            {
+                                var instance = sound.CreateInstance();
+                                instance.Volume = volume;
+
+                                float notePan = note.RandomPan ? (Random.Shared.Next(1000) / 500f - 1) : (note.LRPan / 512.0f - 1);
+                                float pitchRange = note.pitchH - note.pitchL;
+                                float pitch = (pitchRange != 0) ? Random.Shared.NextSingle() * pitchRange + note.pitchL : 0f;
+                                instance.Pitch = pitch;
+                                instance.Pan = notePan;
+                                instance.Play();
+
+                                SoundEffects.Add(instance);
+                            }
                         }
                     }
-                    LoopCount = (short)(note.Loop - 1);
-                }
 
+                    y++;
+                }
             }
             else LoopCount--;
         }
