@@ -370,6 +370,44 @@ namespace FSO.LotView
             return ray;
         }
 
+        public float CameraGroundDistance()
+        {
+            //Cameras.Position.Y;
+
+            if (CameraMode != CameraRenderMode._3D)
+            {
+                // Use the zoom level and precise zoom to estimate camera height
+
+                int zoomDist = 3;
+
+                switch (Zoom)
+                {
+                    case WorldZoom.Near:
+                        zoomDist = 0;
+                        break;
+                    case WorldZoom.Medium:
+                        zoomDist = 1;
+                        break;
+                    case WorldZoom.Far:
+                        zoomDist = 3;
+                        break;
+                }
+
+                // TODO: alter with smooth zoom
+                return 15 + zoomDist * 40 * (1 / PreciseZoom);
+            }
+            else
+            {
+                float dist = Math.Max(0, Camera.Position.Y);
+                if (CameraMode == CameraRenderMode._3D && Cameras.ExternalTransitionActive())
+                {
+                    float pct = (float)Math.Pow(Cameras.GetExternalTransition().Percent, 10);
+                    dist = 500 * pct + dist * (1 - pct);
+                }
+                return dist;
+            }
+        }
+
         public Vector2 Project2DCenterTile(Vector3 pos)
         {
             var ray = CameraRayAtScreenPos(WorldSpace.WorldPx / 2);

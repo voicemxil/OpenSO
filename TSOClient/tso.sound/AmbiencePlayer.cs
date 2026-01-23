@@ -1,6 +1,5 @@
 ﻿using FSO.Files.XA;
 using Microsoft.Xna.Framework.Audio;
-using System.IO;
 using FSO.HIT.Model;
 
 namespace FSO.HIT
@@ -12,7 +11,7 @@ namespace FSO.HIT
         private SoundEffect sfx;
         private SoundEffectInstance inst;
 
-        public AmbiencePlayer(Ambience amb)
+        public AmbiencePlayer(Ambience amb, float volume = 1f)
         {
             if (amb.Loop)
             {
@@ -23,7 +22,7 @@ namespace FSO.HIT
 
                 inst = sfx.CreateInstance();
                 inst.IsLooped = true;
-                inst.Volume = HITVM.Get().GetMasterVolume(HITVolumeGroup.AMBIENCE);
+                inst.Volume = volume * HITVM.Get().GetMasterVolume(HITVolumeGroup.AMBIENCE);
                 inst.Play();
                 HITVM.Get().AmbLoops.Add(inst);
 
@@ -32,8 +31,44 @@ namespace FSO.HIT
             else
             {
                 fsc = HITVM.Get().PlayFSC(FSO.Content.Content.Get().GetPath(amb.Path));
-                fsc.SetVolume(0.33f); //may need tweaking
+                fsc.SetVolume(volume * 0.33f); //may need tweaking
                 fscMode = true;
+            }
+        }
+
+        public void SetVolume(float volume)
+        {
+            if (fscMode)
+            {
+                fsc.SetVolume(volume * 0.33f);
+            }
+            else
+            {
+                inst.Volume = volume * HITVM.Get().GetMasterVolume(HITVolumeGroup.AMBIENCE);
+            }
+        }
+
+        public void Pause()
+        {
+            if (fscMode)
+            {
+                fsc.Pause();
+            }
+            else
+            {
+                inst.Pause();
+            }
+        }
+
+        public void Resume()
+        {
+            if (fscMode)
+            {
+                fsc.Resume();
+            }
+            else
+            {
+                inst.Resume();
             }
         }
 

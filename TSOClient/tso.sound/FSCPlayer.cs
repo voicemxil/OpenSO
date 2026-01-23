@@ -6,6 +6,34 @@ namespace FSO.HIT
 {
     public class FSCPlayer
     {
+        private struct FSCNoteInstance : IDisposable
+        {
+            public SoundState State => Instance.State;
+            public readonly SoundEffectInstance Instance;
+            public readonly float Volume;
+
+            public FSCNoteInstance(SoundEffectInstance instance, float volume)
+            {
+                Instance = instance;
+                Volume = volume;
+            }
+
+            public void Pause()
+            {
+                Instance.Pause();
+            }
+
+            public void Resume()
+            {
+                Instance.Resume();
+            }
+
+            public void Dispose()
+            {
+                Instance.Dispose();
+            }
+        }
+
         /// <summary>
         /// A Class to play FSC sequences. Bundled in with the HIT engine because it wouldn't really go anywhere else. :I
         /// </summary>
@@ -18,7 +46,8 @@ namespace FSO.HIT
         private string BaseDir;
         private float BeatLength;
         private float Volume = 1;
-        private List<SoundEffectInstance> SoundEffects;
+        private List<FSCNoteInstance> SoundEffects;
+        private bool Paused;
 
         private Dictionary<string, SoundEffect> SoundCache;
 
@@ -27,7 +56,7 @@ namespace FSO.HIT
             this.fsc = fsc;
             this.BaseDir = basedir;
             SoundCache = new Dictionary<string, SoundEffect>();
-            SoundEffects = new List<SoundEffectInstance>();
+            SoundEffects = new List<FSCNoteInstance>();
 
             BeatLength = 60.0f / fsc.Tempo;
             RestartFSC();
@@ -41,14 +70,44 @@ namespace FSO.HIT
         public void SetVolume(float volume)
         {
             Volume = volume;
+            RecalculateVolume();
         }
 
         public void RecalculateVolume()
         {
-
+            foreach (var inst in SoundEffects)
+            {
+                inst.Instance.Volume = GetFinalVolume(inst.Volume);
+            }
         }
 
-        public void Tick(float time) {
+        public void Pause()
+        {
+            Paused = true;
+
+            foreach (var inst in SoundEffects)
+            {
+                inst.Pause();
+            }
+        }
+
+        public void Resume()
+        {
+            Paused = false;
+
+            foreach (var inst in SoundEffects)
+            {
+                inst.Resume();
+            }
+        }
+
+        public void Tick(float time)
+        {
+            if (Paused)
+            {
+                return;
+            }
+
             for (int i = 0; i < SoundEffects.Count; i++) //dispose and remove sound effect instances that are finished
             {
                 if (SoundEffects[i].State != SoundState.Playing)
@@ -89,6 +148,11 @@ namespace FSO.HIT
             LoopCount = -1;
         }
 
+        private float GetFinalVolume(float volume)
+        {
+            return volume * Volume * HITVM.Get().GetMasterVolume(Model.HITVolumeGroup.AMBIENCE);
+        }
+
         private void NextNote()
         {
             if (LoopCount == -1)
@@ -124,13 +188,13 @@ namespace FSO.HIT
                                 // Maybe this should allow for volumes closer to 0, but that didn't feel right.
                                 noteVolume *= Random.Shared.NextSingle() * 0.75f + 0.25f;
                             }
-                            float volume = noteVolume * (fsc.MasterVolume / 1024.0f) * Volume * HITVM.Get().GetMasterVolume(Model.HITVolumeGroup.AMBIENCE);
+                            float volume = noteVolume * (fsc.MasterVolume / 1024.0f);
                             var sound = LoadSound(note.Filename);
 
                             if (sound != null)
                             {
                                 var instance = sound.CreateInstance();
-                                instance.Volume = volume;
+                                instance.Volume = GetFinalVolume(volume);
 
                                 float notePan = note.RandomPan ? (Random.Shared.Next(1000) / 500f - 1) : (note.LRPan / 512.0f - 1);
                                 float pitchRange = note.pitchH - note.pitchL;
@@ -139,7 +203,7 @@ namespace FSO.HIT
                                 instance.Pan = notePan;
                                 instance.Play();
 
-                                SoundEffects.Add(instance);
+                                SoundEffects.Add(new FSCNoteInstance(instance, volume));
                             }
                         }
                     }

@@ -274,6 +274,7 @@ namespace FSO.SimAntics
                 forward.Normalize();
                 listener.Forward = forward;
                 Context.World.State.SimSpeed = Math.Max(0, SpeedMultiplier);
+                Context.Ambience.SetVolumeWithGroundDistance(Context.World.State.CameraGroundDistance());
             }
 
             if (LastFrameSpeed != SpeedMultiplier)
@@ -284,8 +285,16 @@ namespace FSO.SimAntics
                     allSounds.AddRange(ent.SoundThreads.Select(x => x.Sound));
                 }
 
-                if (SpeedMultiplier < 1 && SpeedMultiplier > -2 && LastFrameSpeed >= 1) allSounds.ForEach((x) => x.Pause()); 
-                else if (SpeedMultiplier >= 1 && LastFrameSpeed < 1) allSounds.ForEach((x) => x.Resume());
+                if (SpeedMultiplier < 1 && SpeedMultiplier > -2 && LastFrameSpeed >= 1)
+                {
+                    Context.Ambience.Pause();
+                    allSounds.ForEach((x) => x.Pause());
+                }
+                else if (SpeedMultiplier >= 1 && LastFrameSpeed < 1)
+                {
+                    Context.Ambience.Resume();
+                    allSounds.ForEach((x) => x.Resume());
+                }
                 LastFrameSpeed = SpeedMultiplier;
             }
 
