@@ -274,7 +274,11 @@ namespace FSO.SimAntics
                 forward.Normalize();
                 listener.Forward = forward;
                 Context.World.State.SimSpeed = Math.Max(0, SpeedMultiplier);
-                Context.Ambience.SetVolumeWithGroundDistance(Context.World.State.CameraGroundDistance());
+                if (Context.World.Visible && Context.World.FrameCounter != 0)
+                {
+                    Context.Ambience.SetVolumeWithCameraInfo(Context.World.State.CameraInfo());
+                }
+                Context.Ambience.Tick(this);
             }
 
             if (LastFrameSpeed != SpeedMultiplier)
@@ -968,7 +972,8 @@ namespace FSO.SimAntics
                     }
                 });
             }
-            
+
+            Context.Ambience.InitAutoBase(this);
             Context.UpdateTSOBuildableArea();
             Tuning = input.Tuning;
             UpdateTuning();

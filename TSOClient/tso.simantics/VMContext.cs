@@ -67,7 +67,7 @@ namespace FSO.SimAntics
 
             if (oldContext == null)
             {
-                this.Ambience = new VMAmbientSound();
+                this.Ambience = VMAmbientSound.TryTransition();
             } else
             {
                 this.Ambience = oldContext.Ambience;
@@ -1566,7 +1566,7 @@ namespace FSO.SimAntics
             {
                 Architecture = Architecture.Save(),
                 Clock = Clock.Save(),
-                Ambience = new VMAmbientSoundMarshal { ActiveBits = Ambience.ActiveBits },
+                Ambience = new VMAmbientSoundMarshal { ActiveBits = (ulong)Ambience.UserBits },
                 RandomSeed = RandomSeed
             };
         }
@@ -1577,7 +1577,7 @@ namespace FSO.SimAntics
             Architecture = new VMArchitecture(input.Architecture, this, Blueprint);
             Clock = new VMClock(input.Clock);
 
-            for (int i=0; i<VMAmbientSound.SoundByBitField.Count; i++) Ambience.SetAmbience((byte)i, (input.Ambience.ActiveBits&((ulong)1<<i)) > 0);
+            Ambience.SetUserBits(input.Ambience.ActiveBits);
 
             if (VM.UseWorld)
             {

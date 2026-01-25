@@ -13,6 +13,18 @@ using FSO.LotView.Utils.Camera;
 
 namespace FSO.LotView
 {
+    public struct WorldStateCameraInfo
+    {
+        public readonly float GroundDistance;
+        public readonly bool IsIndoors;
+
+        public WorldStateCameraInfo(float groundDistance, bool isIndoors)
+        {
+            GroundDistance = groundDistance;
+            IsIndoors = isIndoors;
+        }
+    }
+
     /// <summary>
     /// Holds state information retaining to world.
     /// </summary>
@@ -370,10 +382,8 @@ namespace FSO.LotView
             return ray;
         }
 
-        public float CameraGroundDistance()
+        public WorldStateCameraInfo CameraInfo()
         {
-            //Cameras.Position.Y;
-
             if (CameraMode != CameraRenderMode._3D)
             {
                 // Use the zoom level and precise zoom to estimate camera height
@@ -394,17 +404,21 @@ namespace FSO.LotView
                 }
 
                 // TODO: alter with smooth zoom
-                return 15 + zoomDist * 40 * (1 / PreciseZoom);
+                return new WorldStateCameraInfo(15 + zoomDist * 40 * (1 / PreciseZoom), false);
             }
             else
             {
-                float dist = Math.Max(0, Camera.Position.Y);
+                var pos = Camera.Position;
+                float dist = Math.Max(0, pos.Y - (Cameras.ActiveCamera as CameraController3D)?.CamHeight ?? 0);
                 if (CameraMode == CameraRenderMode._3D && Cameras.ExternalTransitionActive())
                 {
                     float pct = (float)Math.Pow(Cameras.GetExternalTransition().Percent, 10);
                     dist = 500 * pct + dist * (1 - pct);
                 }
-                return dist;
+
+                var tilePos = pos / WorldSpace.WorldUnitsPerTile;
+                tilePos = new Vector3(tilePos.X, tilePos.Z, tilePos.Y);
+                return new WorldStateCameraInfo(dist, World.Architecture.Blueprint.IsIndoorsPrecise(tilePos));
             }
         }
 

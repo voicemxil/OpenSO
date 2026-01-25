@@ -600,6 +600,11 @@ namespace FSO.Client.UI.Screens
                 if (ZoomLevel < 4) ZoomLevel = 5;
             }
 
+            if (localTransition)
+            {
+                vm.Context.Ambience.BeginTransition();
+            }
+
             vm.Context.Ambience.Kill();
             foreach (var ent in vm.Entities) { //stop object sounds
                 var threads = ent.SoundThreads;

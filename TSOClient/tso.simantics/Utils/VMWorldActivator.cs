@@ -100,7 +100,7 @@ namespace FSO.SimAntics.Utils
             {
                 foreach (var obj in model.Sounds)
                 {
-                    VM.Context.Ambience.SetAmbience(VM.Context.Ambience.GetAmbienceFromGUID(obj.ID), (obj.On == 1));
+                    VM.Context.Ambience.SetUserAmbience(VM.Context.Ambience.GetAmbienceFromGUID(obj.ID), (obj.On == 1));
                     
                     
                 }

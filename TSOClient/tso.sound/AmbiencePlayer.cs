@@ -11,8 +11,16 @@ namespace FSO.HIT
         private SoundEffect sfx;
         private SoundEffectInstance inst;
 
+        private float PositionalVolume;
+        public float Volume { get; private set; }
+        private float TargetVolume;
+        private float VolumeChangeSpeed;
+
         public AmbiencePlayer(Ambience amb, float volume = 1f)
         {
+            Volume = volume;
+            PositionalVolume = volume;
+
             if (amb.Loop)
             {
                 byte[] data = new XAFile(FSO.Content.Content.Get().GetPath(amb.Path)).DecompressedData;
@@ -36,16 +44,74 @@ namespace FSO.HIT
             }
         }
 
-        public void SetVolume(float volume)
+        private void UpdateVolume()
         {
             if (fscMode)
             {
-                fsc.SetVolume(volume * 0.33f);
+                fsc.SetVolume(Volume * PositionalVolume * 0.33f);
             }
             else
             {
-                inst.Volume = volume * HITVM.Get().GetMasterVolume(HITVolumeGroup.AMBIENCE);
+                inst.Volume = Volume * PositionalVolume * HITVM.Get().GetMasterVolume(HITVolumeGroup.AMBIENCE);
             }
+        }
+
+        public void SetPositionalVolume(float volume)
+        {
+            PositionalVolume = volume;
+            UpdateVolume();
+        }
+
+        public void SetVolume(float volume)
+        {
+            Volume = volume;
+
+            UpdateVolume();
+
+            TargetVolume = volume;
+            VolumeChangeSpeed = 0;
+        }
+
+        public void SetVolume(float volume, float transitionDuration)
+        {
+            if (transitionDuration == 0)
+            {
+                SetVolume(volume);
+                return;
+            }
+
+            TargetVolume = volume;
+            VolumeChangeSpeed = (volume - Volume) / transitionDuration;
+        }
+
+        public bool TickVolume(float delta)
+        {
+            if (Volume == TargetVolume)
+            {
+                return true;
+            }
+
+            var below = Volume < TargetVolume;
+
+            Volume += VolumeChangeSpeed * delta;
+
+            var newBelow = Volume < TargetVolume;
+
+            if (below != newBelow)
+            {
+                Volume = TargetVolume;
+                VolumeChangeSpeed = 0;
+
+                return true;
+            }
+
+            return false;
+        }
+
+
+        public bool HasTransition()
+        {
+            return VolumeChangeSpeed != 0;
         }
 
         public void Pause()

@@ -535,6 +535,20 @@ namespace FSO.LotView.Model
             return false;
         }
 
+        public bool IsIndoorsPrecise(Vector3 pos)
+        {
+            var terrainHeight = InterpAltitude(pos);
+            var effectiveHeight = pos.Z - terrainHeight;
+
+            int floor = (int)Math.Floor(effectiveHeight / 2.95f);
+            if (floor < 0 || floor >= Stories)
+            {
+                return false;
+            }
+
+            return IsIndoorsPrecise(new Vector2(pos.X, pos.Y), floor);
+        }
+
         private byte[] GrassMask;
         public byte[] GetGrassMask()
         {

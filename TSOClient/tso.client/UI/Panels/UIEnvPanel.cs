@@ -404,7 +404,7 @@ namespace FSO.Client.UI.Panels
                     var name = col[i];
 
                     var snd = amb.GetAmbienceFromName(name);
-                    if (snd != null) ActiveBtns[j].Selected = amb.ActiveSounds.ContainsKey(amb.GetAmbienceFromGUID(snd.Value.GUID));
+                    if (snd != null) ActiveBtns[j].Selected = ((ulong)amb.UserBits & (1ul << (int)amb.GetAmbienceFromGUID(snd.Value.GUID))) != 0;
                 }
                 j++;
             }
