@@ -16,6 +16,8 @@ namespace FSO.Content
     /// </summary>
     public class Audio : IAudioProvider
     {
+        private const bool TRACE_MISSING = false;
+
         private Content ContentManager;
         public bool Initialized;
 
@@ -257,7 +259,7 @@ namespace FSO.Content
                     return dat; //either wav or mp3.
                 }
             }
-            else
+            else if (TRACE_MISSING)
                 Debug.WriteLine("Couldn't find sound!");
             return null;
         }
@@ -332,7 +334,7 @@ namespace FSO.Content
                         {
                             return TracksByBackupId[fallback];
                         }
-                        else
+                        else if (TRACE_MISSING)
                         {
                             Debug.WriteLine("Couldn't find track: " + value + ", with alternative " + fallback);
                         }
