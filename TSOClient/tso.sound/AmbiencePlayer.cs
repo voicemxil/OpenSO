@@ -1,6 +1,7 @@
-﻿using FSO.Files.XA;
-using Microsoft.Xna.Framework.Audio;
+﻿using FSO.Content;
+using FSO.Files.XA;
 using FSO.HIT.Model;
+using Microsoft.Xna.Framework.Audio;
 
 namespace FSO.HIT
 {
@@ -15,6 +16,7 @@ namespace FSO.HIT
         public float Volume { get; private set; }
         private float TargetVolume;
         private float VolumeChangeSpeed;
+        private bool DisposeLoop;
 
         public AmbiencePlayer(Ambience amb, float volume = 1f)
         {
@@ -23,10 +25,7 @@ namespace FSO.HIT
 
             if (amb.Loop)
             {
-                byte[] data = new XAFile(FSO.Content.Content.Get().GetPath(amb.Path)).DecompressedData;
-                var stream = new MemoryStream(data);
-                sfx = SoundEffect.FromStream(stream);
-                stream.Close();
+                sfx = GetLoopSfx(amb.Path);
 
                 inst = sfx.CreateInstance();
                 inst.IsLooped = true;
@@ -38,9 +37,32 @@ namespace FSO.HIT
             }
             else
             {
+                var content = FSO.Content.Content.Get();
+
                 fsc = HITVM.Get().PlayFSC(FSO.Content.Content.Get().GetPath(amb.Path));
-                fsc.SetVolume(volume * 0.33f); //may need tweaking
+                fsc.SetVolume(volume); //may need tweaking
                 fscMode = true;
+            }
+        }
+
+        private SoundEffect GetLoopSfx(string path)
+        {
+            var content = FSO.Content.Content.Get();
+
+            if (content.TS1)
+            {
+                DisposeLoop = false;
+                return content.Audio.GetSFX(new Files.HIT.Patch() { Filename = Path.GetFileName(path) });
+            }
+            else
+            {
+                DisposeLoop = true;
+                var data = new XAFile(FSO.Content.Content.Get().GetPath(path)).DecompressedData;
+                var stream = new MemoryStream(data);
+                var sfx = SoundEffect.FromStream(stream);
+                stream.Close();
+
+                return sfx;
             }
         }
 
@@ -48,7 +70,7 @@ namespace FSO.HIT
         {
             if (fscMode)
             {
-                fsc.SetVolume(Volume * PositionalVolume * 0.33f);
+                fsc.SetVolume(Volume * PositionalVolume);
             }
             else
             {
@@ -138,6 +160,14 @@ namespace FSO.HIT
             }
         }
 
+        public void SetLoopingNote(float note)
+        {
+            if (fscMode)
+            {
+                fsc.SetLoopingNote(note);
+            }
+        }
+
         public void Kill()
         {
             if (fscMode) HITVM.Get().StopFSC(fsc);
@@ -146,7 +176,11 @@ namespace FSO.HIT
                 inst.Stop();
                 inst.Dispose();
                 HITVM.Get().AmbLoops.Remove(inst);
-                sfx.Dispose();
+
+                if (DisposeLoop)
+                {
+                    sfx.Dispose();
+                }
             }
         }
     }

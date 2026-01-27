@@ -53,6 +53,9 @@ namespace FSO.SimAntics.Engine
         AnimalsNightBirds = 1ul << 36,
         PeopleGym = 1ul << 37,
         PeopleGhost = 1ul << 38,
+
+        TS1Ambience = 1 << 0,
+        TS1NightLoop = 1 << 1
     }
 
     public class VMAmbientSound
@@ -86,7 +89,7 @@ namespace FSO.SimAntics.Engine
         private static VMAmbientSound ToTransition;
 
         public static bool ForceDisable;
-        public static Dictionary<uint, Ambience> AmbienceByGUID = new Dictionary<uint, Ambience>() //may want to load this from ambience.ini in future...
+        private static Dictionary<uint, Ambience> TSOAmbienceByGUID = new Dictionary<uint, Ambience>() //may want to load this from ambience.ini in future...
         {
             {0x3dd887a6, new Ambience("sounddata/ambience/daybirds/daybirds.fsc", false)},
             {0x3dd887aa, new Ambience("sounddata/ambience/explosions/explosions.fsc", false)},
@@ -132,7 +135,7 @@ namespace FSO.SimAntics.Engine
             {0x1e0bc2b5, new Ambience("sounddata/ambience/loops/wind_lp.xa", true)}
         };
 
-        public static List<VMCategorisedAmb> SoundByBitField = new List<VMCategorisedAmb>() {
+        private static List<VMCategorisedAmb> TSOSoundByBitField = new List<VMCategorisedAmb>() {
             new VMCategorisedAmb(0x3dd887a6, 0, "AnimalsSongBirds"),
             new VMCategorisedAmb(0x3dd887aa, 1, "MechanicalExplosions"),
             new VMCategorisedAmb(0x7dd887ad, 0, "AnimalsFarm"),
@@ -176,6 +179,24 @@ namespace FSO.SimAntics.Engine
             new VMCategorisedAmb(0xa9b9653e, 3, "PeopleGhost")
         };
 
+        private static Dictionary<uint, Ambience> TS1AmbienceByGUID = new Dictionary<uint, Ambience>()
+        {
+            {0x00000001, new Ambience("sounddata/outdoors/sim_amb.fsc", false)},
+
+            //Loops
+
+            {0x00000002, new Ambience("sounddata/outdoors/nite_loop.xa", true)},
+        };
+
+        private static List<VMCategorisedAmb> TS1SoundByBitField = new List<VMCategorisedAmb>() {
+            new VMCategorisedAmb(0x00000001, 0, "TS1Ambience", 2f),
+            new VMCategorisedAmb(0x00000002, 1, "TS1NightLoop", 0.6f),
+        };
+
+        public Dictionary<uint, Ambience> AmbienceByGUID => TS1 ? TS1AmbienceByGUID : TSOAmbienceByGUID;
+        public List<VMCategorisedAmb> SoundByBitField => TS1 ? TS1SoundByBitField : TSOSoundByBitField;
+
+
         public Dictionary<byte, AmbiencePlayer> ActiveSounds;
         public VMAmbientSoundType UserBits;
         public VMAmbientSoundType ActiveBits;
@@ -183,7 +204,6 @@ namespace FSO.SimAntics.Engine
         public long LastTimestamp = Stopwatch.GetTimestamp();
 
         private VMAmbientSoundType AutoBaseBits;
-        private VMAmbientSoundType AutoTempBits;
         private TerrainType BaseTerrain = TerrainType.GRASS;
         private bool Paused;
         private int UserCount;
@@ -219,7 +239,7 @@ namespace FSO.SimAntics.Engine
 
         public void InitAutoBase(VM vm)
         {
-            AutoBaseBits = 0;
+            AutoBaseBits = TS1 ? VMAmbientSoundType.TS1Ambience : 0;
 
             if (vm.PlatformState is VMTSOLotState lot)
             {
@@ -261,14 +281,24 @@ namespace FSO.SimAntics.Engine
 
         public VMAmbientSoundType EvaluateAutoAmbience(VM vm)
         {
+            var clock = vm.Context.Clock;
+
             if (TS1)
             {
-                return 0;
+                float dayPct = (clock.Hours + clock.Minutes / 60f) / 24f;
+                bool isNightTS1 = clock.Hours > 18 || clock.Hours < 6;
+
+                if (ActiveSounds.TryGetValue(0, out var basePlayer))
+                {
+                    basePlayer.SetLoopingNote(dayPct);
+                }
+
+                return AutoBaseBits | (isNightTS1 ? VMAmbientSoundType.TS1NightLoop : 0);
             }
 
             var tempBits = AutoBaseBits;
 
-            bool isNight = vm.Context.Clock.Hours > 20 || vm.Context.Clock.Hours < 6;
+            bool isNight = clock.Hours > 20 || clock.Hours < 6;
 
             if (isNight)
             {
@@ -494,19 +524,20 @@ namespace FSO.SimAntics.Engine
                         ActiveSounds.Add(id, player);
                         if (!instant)
                         {
-                            player.SetVolume(1, AmbienceTransitionTime);
+                            player.SetVolume(cat.Volume, AmbienceTransitionTime);
                         }
                     }
                 }
                 else if (VM.UseWorld)
                 {
+                    var cat = SoundByBitField[id];
                     if (instant)
                     {
-                        player.SetVolume(1);
+                        player.SetVolume(cat.Volume);
                     }
                     else
                     {
-                        player.SetVolume(1, AmbienceTransitionTime);
+                        player.SetVolume(cat.Volume, AmbienceTransitionTime);
                     }
                 }
             }
@@ -554,12 +585,18 @@ namespace FSO.SimAntics.Engine
         public uint GUID;
         public byte Category;
         public string Name;
+        public float Volume;
 
-        public VMCategorisedAmb(uint guid, byte cat, string name)
+        public VMCategorisedAmb(uint guid, byte cat, string name, float volume)
         {
             GUID = guid;
             Category = cat;
             Name = name;
+            Volume = volume;
+        }
+
+        public VMCategorisedAmb(uint guid, byte cat, string name) : this(guid, cat, name, cat == 4 ? 0.8f : 0.33f)
+        {
         }
     }
 }

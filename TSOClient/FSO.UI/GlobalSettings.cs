@@ -60,7 +60,7 @@ namespace FSO.Client
             { "FXVolume", "10"},
             { "MusicVolume", "10"},
             { "VoxVolume", "10"},
-            { "AmbienceVolume", "1"},
+            { "AmbienceVolume", "8"},
             { "StartupPath", ""},
             { "DocumentsPath", ""},
             { "Windowed", "true"},

@@ -416,6 +416,11 @@ namespace FSO.Content
             return new Patch(id);
         }
 
+        public FSC GetFSC(string path)
+        {
+            return new FSC(path);
+        }
+
         /// <summary>
         /// Compiles the radio stations in the game to a list of AudioReference instances.
         /// </summary>
