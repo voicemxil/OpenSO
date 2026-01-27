@@ -359,12 +359,24 @@ namespace FSO.SimAntics
                     if (rcs != null)
                     {
                         var vp = VisualPosition * 3f;
-                        var delta = rcs.Camera.Target - new Vector3(vp.X, vp.Z, vp.Y);
-                        delta.Z /= 3f;
-                        //volume = 4f / delta.Length();
-                        volume = 1.5f - delta.Length() / 40f;
-                        volume *= (10 / ((rcs.Zoom3D * rcs.Zoom3D) + 10));
-                        volume *= worldState.PreciseZoom;
+                        Vector3 delta;
+                        if (rcs is CameraControllerFP)
+                        {
+                            delta = rcs.Camera.Position - new Vector3(vp.X, vp.Z, vp.Y);
+                            delta.Z /= 3f;
+                            //volume = 4f / delta.Length();
+                            volume = 1.5f - delta.Length() / 40f;
+                            volume *= worldState.PreciseZoom;
+                        }
+                        else
+                        {
+                            delta = rcs.Camera.Target - new Vector3(vp.X, vp.Z, vp.Y);
+                            delta.Z /= 3f;
+                            //volume = 4f / delta.Length();
+                            volume = 1.5f - delta.Length() / 40f;
+                            volume *= (10 / ((rcs.Zoom3D * rcs.Zoom3D) + 10));
+                            volume *= worldState.PreciseZoom;
+                        }
 
                         //Calculate 3D sound
                         if (SoundThreads[i].Pan)

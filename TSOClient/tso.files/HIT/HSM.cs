@@ -1,11 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.RegularExpressions;
 
 namespace FSO.Files.HIT
 {
     public class HSM
     {
+        private static Regex CamelCaseRegex = new Regex("([a-z])([A-Z])");
+
         /// <summary>
         /// HSM is a plaintext format that names various HIT constants including subroutine locations.
         /// </summary>
@@ -28,6 +31,7 @@ namespace FSO.Files.HIT
         public HSM(string Filepath)
         {
             ReadFile(File.Open(Filepath, FileMode.Open, FileAccess.Read, FileShare.Read));
+            Console.WriteLine("^ " + Filepath);
         }
 
         private void ReadFile(Stream stream)
@@ -41,10 +45,36 @@ namespace FSO.Files.HIT
                 string[] Values = line.Split(' ');
 
                 var name = Values[0].ToLowerInvariant();
-                if (!Constants.ContainsKey(name)) Constants.Add(name, Convert.ToInt32(Values[1])); //the repeats are just labels for locations (usually called gotit)
+                var normalName = NormalizeCase(Values[0]).ToLowerInvariant();
+                var value = Convert.ToInt32(Values[1]);
+                Constants[name] = value; //the repeats are just labels for locations (usually called gotit)
+                if (name != normalName)
+                {
+                    Constants[normalName] = value;
+                }
             }
 
             io.Close();
+        }
+
+        private string NormalizeCase(string value)
+        {
+            var matches = CamelCaseRegex.Matches(value);
+
+            int addedChars = 0;
+
+            foreach (Match match in matches)
+            {
+                value = value.Substring(0, match.Index + addedChars + 1) + '_' + value.Substring(match.Index + addedChars + 1, value.Length - (match.Index + addedChars + 1));
+                addedChars++;
+            }
+
+            if (addedChars > 0)
+            {
+                Console.WriteLine(value);
+            }
+
+            return value;
         }
     }
 }

@@ -440,7 +440,7 @@ namespace FSO.SimAntics
             if (context.VM.EODHost != null) context.VM.EODHost.ForceDisconnect(this);
         }
 
-        private void HandleTimePropsEvent(TimePropertyListItem tp)
+        private void HandleTimePropsEvent(TimePropertyListItem tp, bool primaryAnimation)
         {
             VMAvatar avatar = this;
             var evt = tp.Properties["xevt"];
@@ -468,23 +468,15 @@ namespace FSO.SimAntics
             var owner = this;
             if (UseWorld && soundevt != null && owner.SoundThreads.FirstOrDefault(x => x.Name == soundevt) == null)
             {
-                var thread = FSO.HIT.HITVM.Get().PlaySoundEvent(soundevt);
-                if (thread != null)
+                PlayTimepropsSound(soundevt);
+            }
+
+            if (UseWorld)
+            {
+                var footstep = tp.Properties["footstep"];
+                if (footstep != null && primaryAnimation && GetPersonData(VMPersonDataVariable.IsGhost) == 0)
                 {
-
-                    if (thread is HITThread) SubmitHITVars((HITThread)thread);
-
-                    if (!thread.AlreadyOwns(owner.ObjectID)) thread.AddOwner(owner.ObjectID);
-
-                    var entry = new VMSoundEntry()
-                    {
-                        Sound = thread,
-                        Pan = true,
-                        Zoom = true,
-                    };
-                    owner.SoundThreads.Add(entry);
-                    owner.Thread?.Context?.VM?.SoundEntities?.Add(this);
-                    owner.TickSounds();
+                    PlayTimepropsSound(VMFootsteps.GetFootstepEvent(Thread.Context.VM, this));
                 }
             }
 
@@ -502,6 +494,29 @@ namespace FSO.SimAntics
                 var apr = (VM.UseWorld) ? FSO.Content.Content.Get().AvatarAppearances.Get(undress + ".apr") : null;
                 avatar.BoundAppearances.Remove(undress);
                 if (VM.UseWorld && apr != null) avatar.Avatar.RemoveAccessory(apr);
+            }
+        }
+
+        private void PlayTimepropsSound(string soundevt)
+        {
+            var owner = this;
+            var thread = FSO.HIT.HITVM.Get().PlaySoundEvent(soundevt);
+            if (thread != null)
+            {
+
+                if (thread is HITThread) SubmitHITVars((HITThread)thread);
+
+                if (!thread.AlreadyOwns(owner.ObjectID)) thread.AddOwner(owner.ObjectID);
+
+                var entry = new VMSoundEntry()
+                {
+                    Sound = thread,
+                    Pan = true,
+                    Zoom = true,
+                };
+                owner.SoundThreads.Add(entry);
+                owner.Thread?.Context?.VM?.SoundEntities?.Add(this);
+                owner.TickSounds();
             }
         }
 
@@ -541,6 +556,7 @@ namespace FSO.SimAntics
             //animation update for avatars
             VMAvatar avatar = this;
             float totalWeight = 0f;
+            float maxWeight = Animations.Count > 0 ? Animations.Max(x => x.Weight) : 0;
             foreach (var state in Animations)
             {
                 totalWeight += state.Weight;
@@ -564,7 +580,7 @@ namespace FSO.SimAntics
                             timeProps.RemoveAt(0);
                             i--;
 
-                            HandleTimePropsEvent(tp);
+                            HandleTimePropsEvent(tp, state.Weight == maxWeight);
                         }
                     }
                     else
@@ -578,7 +594,8 @@ namespace FSO.SimAntics
                             }
 
                             timeProps.RemoveAt(timeProps.Count - 1);
-                            HandleTimePropsEvent(tp);
+                            Console.WriteLine(currentTime);
+                            HandleTimePropsEvent(tp, state.Weight == maxWeight);
                         }
                     }
                 }
@@ -588,6 +605,7 @@ namespace FSO.SimAntics
                 {
                     if (state.Loop)
                     {
+                        state.ResetTimeProps();
                         if (state.PlayingBackwards) state.CurrentFrame += state.Anim.NumFrames;
                         else state.CurrentFrame -= state.Anim.NumFrames;
                     }

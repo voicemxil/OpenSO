@@ -323,6 +323,21 @@ namespace FSO.Files.Formats.IFF
             return default(T);
         }
 
+        public string GetLabel<T>(ushort id)
+        {
+            Type typeofT = typeof(T);
+            if (ByChunkId.ContainsKey(typeofT))
+            {
+                var lookup = ByChunkId[typeofT];
+                if (lookup.TryGetValue(id, out var chunk))
+                {
+                    return (chunk as IffChunk)?.ChunkLabel;
+                }
+            }
+
+            return null;
+        }
+
         public List<IffChunk> ListAll()
         {
             var result = new List<IffChunk>();
