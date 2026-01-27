@@ -251,7 +251,7 @@ namespace FSO.HIT
             {
                 foreach (var sound in SoundCache.Values)
                 {
-                    sound.Dispose();
+                    sound?.Dispose();
                 }
             }
         }
