@@ -1,4 +1,6 @@
-﻿using FSO.Content.Model;
+﻿using FSO.Common;
+using FSO.Content;
+using FSO.Content.Model;
 using FSO.HIT;
 using FSO.LotView;
 using FSO.LotView.Model;
@@ -188,6 +190,7 @@ namespace FSO.SimAntics.Engine
 
         private float VolumeDuck = 1f;
         private float TargetVolumeDuck = 1f;
+        private bool TS1;
 
         /// <summary>
         /// Handles ambient sound in lots.
@@ -197,6 +200,7 @@ namespace FSO.SimAntics.Engine
         {
             UserCount = 1;
             ActiveSounds = new Dictionary<byte, AmbiencePlayer>();
+            TS1 = Content.Content.Get().TS1;
         }
 
         public static VMAmbientSound TryTransition()
@@ -257,6 +261,11 @@ namespace FSO.SimAntics.Engine
 
         public VMAmbientSoundType EvaluateAutoAmbience(VM vm)
         {
+            if (TS1)
+            {
+                return 0;
+            }
+
             var tempBits = AutoBaseBits;
 
             bool isNight = vm.Context.Clock.Hours > 20 || vm.Context.Clock.Hours < 6;
