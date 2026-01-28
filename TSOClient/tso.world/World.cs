@@ -918,7 +918,6 @@ namespace FSO.LotView
                         continue;
                     }
 
-                    Console.WriteLine(subPos.Value - nextWorld.GlobalPosition);
                     return subPos.Value - nextWorld.GlobalPosition;
                 }
             }

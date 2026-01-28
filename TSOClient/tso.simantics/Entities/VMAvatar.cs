@@ -594,7 +594,6 @@ namespace FSO.SimAntics
                             }
 
                             timeProps.RemoveAt(timeProps.Count - 1);
-                            Console.WriteLine(currentTime);
                             HandleTimePropsEvent(tp, state.Weight == maxWeight);
                         }
                     }

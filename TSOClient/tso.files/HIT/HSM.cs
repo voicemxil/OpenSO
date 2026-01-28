@@ -31,7 +31,6 @@ namespace FSO.Files.HIT
         public HSM(string Filepath)
         {
             ReadFile(File.Open(Filepath, FileMode.Open, FileAccess.Read, FileShare.Read));
-            Console.WriteLine("^ " + Filepath);
         }
 
         private void ReadFile(Stream stream)
@@ -67,11 +66,6 @@ namespace FSO.Files.HIT
             {
                 value = value.Substring(0, match.Index + addedChars + 1) + '_' + value.Substring(match.Index + addedChars + 1, value.Length - (match.Index + addedChars + 1));
                 addedChars++;
-            }
-
-            if (addedChars > 0)
-            {
-                Console.WriteLine(value);
             }
 
             return value;
