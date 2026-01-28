@@ -49,15 +49,12 @@ namespace FSO.SimAntics.NetPlay
             {
                 if (DesyncCooldown == 0)
                 {
-                    System.Console.WriteLine("DESYNC - Requested state from host");
+                    System.Console.WriteLine($"[{CurrentTick}] DESYNC - Requested state from host");
                     if (DesyncTick == 0) DesyncTick = CurrentTick - 1;
                     vm.SendCommand(new VMRequestResyncCmd());
                     DesyncCooldown = 30 * 30;
                 }
-                else
-                {
-                    System.Console.WriteLine("WARN - DESYNC - Expected " + tick.RandomSeed + ", was at " + vm.Context.RandomSeed);
-                }
+                System.Console.WriteLine($"[{CurrentTick}] WARN - DESYNC - Expected " + tick.RandomSeed + ", was at " + vm.Context.RandomSeed);
             }
 
             if (RecordStream != null) RecordTick(tick);
@@ -68,7 +65,8 @@ namespace FSO.SimAntics.NetPlay
             {
                 if (cmd.Command is VMStateSyncCmd && ((VMStateSyncCmd)cmd.Command).Run)
                 {
-                    if (LastTick + 1 != tick.TickID) System.Console.WriteLine("Jump to tick " + tick.TickID);
+                    if (LastTick + 1 != tick.TickID) System.Console.WriteLine("Jump to tick " + tick.TickID + " from " + LastTick);
+                    LastTick = tick.TickID;
                     if (!(this is VMFSORDriver)) doTick = false; //something weird here. this can break loading from saves casually - but must not be active for resyncs.
                     //disable just for fsor playback
                 }
@@ -85,10 +83,10 @@ namespace FSO.SimAntics.NetPlay
                 }
             }
 
-            if (tick.TickID < LastTick) System.Console.WriteLine("Tick wrong! Got " + tick.TickID + ", Missed " + ((int)tick.TickID - (LastTick + 1)));
+            if (tick.TickID < LastTick + 1) System.Console.WriteLine("Tick wrong (duplicate/early)! Got " + tick.TickID + ", Missed " + ((int)tick.TickID - (LastTick + 1)));
             else if (doTick && vm.Context.Ready)
             {
-                if (tick.TickID > LastTick + 1) System.Console.WriteLine("Tick wrong! Got " + tick.TickID + ", Missed " + ((int)tick.TickID - (LastTick + 1)));
+                if (tick.TickID > LastTick + 1) System.Console.WriteLine("Tick wrong (skipped)! Got " + tick.TickID + ", Missed " + ((int)tick.TickID - (LastTick + 1)));
                 vm.Trace?.NewTick(tick.TickID);
                 vm.InternalTick(tick.TickID);
                 if (DesyncCooldown > 0) DesyncCooldown--;

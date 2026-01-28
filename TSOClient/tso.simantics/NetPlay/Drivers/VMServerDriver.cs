@@ -1,13 +1,7 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using FSO.SimAntics.NetPlay.Model;
-using System.IO;
+﻿using FSO.SimAntics.NetPlay.Model;
 using FSO.SimAntics.NetPlay.Model.Commands;
 using FSO.SimAntics.NetPlay.SandboxMode;
-using System.Threading;
 using FSO.SimAntics.Engine.TSOTransaction;
-using System.Threading.Tasks;
 
 namespace FSO.SimAntics.NetPlay.Drivers
 {
@@ -30,6 +24,9 @@ namespace FSO.SimAntics.NetPlay.Drivers
 
         private Dictionary<uint, VMNetClient> Clients;
 
+        //runtime variable that contains what clients a tick should be broadcast to.
+        private HashSet<VMNetClient> BroadcastClients = [];
+
         private HashSet<VMNetClient> ClientsToDC;
         private HashSet<VMNetClient> ClientsToSync;
         //a subset of ClientsToSync which we should NOT send intermediate ticks to. (since they don't have the lot yet)
@@ -47,7 +44,7 @@ namespace FSO.SimAntics.NetPlay.Drivers
         private List<byte[]> TicksSinceSync;
 
         public event VMServerBroadcastHandler OnTickBroadcast;
-        public delegate void VMServerBroadcastHandler(VMNetMessage msg, HashSet<VMNetClient> ignore);
+        public delegate void VMServerBroadcastHandler(VMNetMessage msg, HashSet<VMNetClient> clients);
 
         public event VMServerDirectHandler OnDirectMessage;
         public delegate void VMServerDirectHandler(VMNetClient target, VMNetMessage msg);
@@ -148,6 +145,11 @@ namespace FSO.SimAntics.NetPlay.Drivers
             SyncSerializing = true;
             TicksSinceSync = new List<byte[]>(); //start saving a history.
 
+            // This was advanced after we created the broadcats tick. The sync is an _alternative_ for the broadcast,
+            // and we should follow up by sending ticks that sequentially happen after it.
+            var tick = TickID - 1;
+
+            //Console.WriteLine($"[{tick}] Serializing tick with {string.Join(';', TickBuffer.Select(x => string.Join(',', x.Commands.Select(x => x.Type.ToString()))))}");
             var state = vm.Save(); //must be saved on lot thread. we can serialize elsewhere tho.
             var statecmd = new VMStateSyncCmd { State = state };
             if (vm.Trace != null)
@@ -161,7 +163,7 @@ namespace FSO.SimAntics.NetPlay.Drivers
                         new VMNetTick {
                             Commands = new List<VMNetCommand> { cmd },
                             RandomSeed = 0, //will be restored by client from cmd
-                            TickID = TickID
+                            TickID = tick
                         }
                     }
             };
@@ -336,8 +338,14 @@ namespace FSO.SimAntics.NetPlay.Drivers
 
             if (FastTick || TickBuffer.Count >= TicksPerPacket)
             {
+                BroadcastClients.Clear();
+                lock (Clients)
+                    BroadcastClients.UnionWith(Clients.Values);
+
                 lock (ClientsToSync)
                 {
+                    BroadcastClients.ExceptWith(NewClients);
+
                     SendTickBuffer();
                     SendState(vm);
 
@@ -381,7 +389,8 @@ namespace FSO.SimAntics.NetPlay.Drivers
                 }
             }
 
-            Broadcast(new VMNetMessage(VMNetMessageType.BroadcastTick, data), NewClients);
+            //Console.WriteLine($"Sending tick with {string.Join(';', TickBuffer.Select(x => "[" + (x.TickID) + "] " + string.Join(',', x.Commands.Select(x => x.Type.ToString()))))}");
+            Broadcast(new VMNetMessage(VMNetMessageType.BroadcastTick, data), BroadcastClients);
 
             TickBuffer.Clear();
         }
@@ -425,9 +434,9 @@ namespace FSO.SimAntics.NetPlay.Drivers
             if (OnDirectMessage != null) OnDirectMessage(client, message);
         }
 
-        private void Broadcast(VMNetMessage message, HashSet<VMNetClient> ignore)
+        private void Broadcast(VMNetMessage message, HashSet<VMNetClient> clients)
         {
-            if (OnTickBroadcast != null) OnTickBroadcast(message, ignore);
+            if (OnTickBroadcast != null) OnTickBroadcast(message, clients);
         }
 
         private void DropClient(VMNetClient client)

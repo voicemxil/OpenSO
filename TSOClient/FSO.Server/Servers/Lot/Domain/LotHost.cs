@@ -402,14 +402,14 @@ namespace FSO.Server.Servers.Lot.Domain
             }
         }
 
-        public void Broadcast(HashSet<uint> ignoreIDs, params object[] messages)
+        public void Broadcast(HashSet<uint> clientIDs, params object[] messages)
         {
             //TODO: Make this more efficient
             lock (_Visitors)
             {
                 foreach (var visitor in _Visitors.Values)
                 {
-                    if (ignoreIDs.Contains(visitor.AvatarId)) continue;
+                    if (clientIDs != null && !clientIDs.Contains(visitor.AvatarId)) continue;
                     try
                     {
                         visitor.Write(messages);

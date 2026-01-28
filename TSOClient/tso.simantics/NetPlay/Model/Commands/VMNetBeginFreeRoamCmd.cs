@@ -1,5 +1,4 @@
 ﻿using FSO.Common.Model;
-using System.IO;
 
 namespace FSO.SimAntics.NetPlay.Model.Commands
 {
@@ -18,6 +17,8 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
             {
                 return false;
             }
+
+            avatar.Thread.Interrupt = true;
 
             // Starts leaving lot, but the player will disconnect a lot earlier.
             avatar.UserLeaveLot(false);

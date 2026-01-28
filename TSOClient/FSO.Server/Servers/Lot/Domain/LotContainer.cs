@@ -989,10 +989,10 @@ namespace FSO.Server.Servers.Lot.Domain
             Host.Send(target.PersistID, packet);
         }
 
-        private void TickBroadcast(VMNetMessage msg, HashSet<VMNetClient> ignore)
+        private void TickBroadcast(VMNetMessage msg, HashSet<VMNetClient> clients)
         {
-            HashSet<uint> ignoreIDs = new HashSet<uint>(ignore.Select(x => x.PersistID));
-            Host.Broadcast(ignoreIDs, new FSOVMTickBroadcast() { Data = msg.Data });
+            HashSet<uint> clientIDs = new HashSet<uint>(clients.Select(x => x.PersistID));
+            Host.Broadcast(clientIDs, new FSOVMTickBroadcast() { Data = msg.Data });
         }
 
         private void DereferenceLot()
@@ -1089,7 +1089,7 @@ namespace FSO.Server.Servers.Lot.Domain
                             //no roommates are here, so all visitors must be kicked out.
                             if (preTickAvatars.Count > 0)
                             {
-                                Host.Broadcast(new HashSet<uint>(), new FSOVMProtocolMessage(true, "21", "22"));
+                                Host.Broadcast(null, new FSOVMProtocolMessage(true, "21", "22"));
                             }
                             foreach (var avatar in preTickAvatars)
                             {
@@ -1346,8 +1346,6 @@ namespace FSO.Server.Servers.Lot.Domain
                                 RoutingLotTilePosY = destY,
                                 RoutingTargetLocation = location
                             };
-
-                            ava.Thread.Interrupt = true;
 
                             SaveAvatar(ava, () =>
                             {
