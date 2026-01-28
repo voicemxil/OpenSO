@@ -1594,7 +1594,7 @@ namespace FSO.Server.Servers.Lot.Domain
                     db.Avatars.UpdateAvatarLotSave(pid, dbState);
                     if (jobLevel != null) db.Avatars.UpdateAvatarJobLevel(jobLevel);
 
-                    postSave();
+                    postSave?.Invoke();
                 }
             });
         }
