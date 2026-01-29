@@ -30,6 +30,7 @@ using FSO.LotView.Utils.Camera;
 using FSO.Client.UI.Archive;
 using FSO.Common.Model;
 using FSO.Common.Domain.Realestate;
+using FSO.LotView.Components;
 
 namespace FSO.Client.UI.Screens
 {
@@ -792,6 +793,15 @@ namespace FSO.Client.UI.Screens
                     if (World.State.Zoom != lastState.Zoom) World.State.Zoom = lastState.Zoom;
                     World.State.PreciseZoom = lastState.PreciseZoom;
                     World.State.CenterTile = lastState.CenterTile - new Vector2(info.RelativeChangeX * (TransitionWorld.Architecture.Blueprint.Width - 2), info.RelativeChangeY * (TransitionWorld.Architecture.Blueprint.Height - 2));
+                    if (lastWorld.State.ScrollAnchor != null)
+                    {
+                        var myOldAvatar = TransitionVM?.GetAvatarByPersist(TransitionVM.MyUID);
+
+                        if (lastWorld.State.ScrollAnchor == myOldAvatar.WorldUI)
+                        {
+                            World.State.ScrollAnchor = myAvatar.WorldUI as AvatarComponent;
+                        }
+                    }
                 }
 
                 // TODO: shift camera height by surrounding lot height?
