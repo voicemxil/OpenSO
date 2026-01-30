@@ -31,6 +31,7 @@ using FSO.Client.UI.Archive;
 using FSO.Common.Model;
 using FSO.Common.Domain.Realestate;
 using FSO.LotView.Components;
+using FSO.Client.Rendering;
 
 namespace FSO.Client.UI.Screens
 {
@@ -76,6 +77,7 @@ namespace FSO.Client.UI.Screens
 
         public VM VisualVM => TransitionVM ?? vm;
         public World VisualWorld => TransitionWorld ?? World;
+        public VisualSurroundPuppets SurroundPuppets { get; private set; }
 
         public bool InLot
         {
@@ -325,6 +327,8 @@ namespace FSO.Client.UI.Screens
 
             var status = new UINetStatusTray();
             Add(status);
+
+            SurroundPuppets = new(this);
         }
 
         public override void GameResized()
@@ -518,6 +522,8 @@ namespace FSO.Client.UI.Screens
         public override void PreDraw(UISpriteBatch batch)
         {
             base.PreDraw(batch);
+            SurroundPuppets?.PreDraw();
+
             if (vm != null)
             {
                 if (vm.FSOVAsyncLoading) { }

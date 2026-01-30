@@ -356,10 +356,10 @@ namespace FSO.Client.Regulators
                         });
                 }
 
-                if (message is FSOVMSurroundPuppets)
+                if (message is FSOVMSurroundPuppets puppets)
                 {
                     GameThread.InUpdate(() => {
-                        (UIScreen.Current as CoreGameScreen)?.SurroundPuppets?.Process(message);
+                        (UIScreen.Current as CoreGameScreen)?.SurroundPuppets?.Process(puppets);
                     });
                 }
             }

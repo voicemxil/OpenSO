@@ -1,6 +1,8 @@
 ﻿using FSO.Client.UI.Screens;
+using FSO.Common.Domain.Realestate;
 using FSO.Common.Model;
 using FSO.LotView.Components;
+using FSO.LotView.Model;
 using FSO.Server.Protocol.Electron.Packets;
 using FSO.Vitaboy;
 using Microsoft.Xna.Framework;
@@ -13,9 +15,33 @@ namespace FSO.Client.Rendering
         private SurroundPuppet Puppet;
         private ulong StartTimestamp;
 
-        private Avatar TargetAvatar;
+        private SimAvatar TargetAvatar;
         private AvatarComponent TargetAvatarComponent;
         private Dictionary<string, Animation> AnimByName;
+
+        private Blueprint LastBp;
+        private bool ReloadPuppet = false;
+        private Vector3 LotOffset;
+
+        private uint LotLocation;
+
+        public VisualSurroundPuppet(uint lotLocation)
+        {
+            LotLocation = lotLocation;
+        }
+
+        private void RecalculateOffset(uint parentLocation)
+        {
+            var loc = MapCoordinates.Unpack(LotLocation).ToPoint();
+            var parent = MapCoordinates.Unpack(parentLocation).ToPoint();
+
+            var relative = LotTransitionInfo.RelativeChangeCityToLot(loc - parent);
+
+            var width = LastBp.Width;
+            var height = LastBp.Height;
+
+            LotOffset = new Vector3(relative.X * (width - 2), relative.Y * (height - 2), 0);
+        }
 
         public void SetPuppet(SurroundPuppet puppet, ulong startTimestamp)
         {
@@ -23,26 +49,46 @@ namespace FSO.Client.Rendering
 
             if (puppet.Delta.HasFlag(SurroundPuppetDelta.BodyInfo))
             {
-                // reload the puppet
-
-                var ava = new SimAvatar(Content.Content.Get().AvatarSkeletons.Get(puppet.SkeletonName));
-                ava.Appearance = (AppearanceType)puppet.SkinTone;
-                ava.Head = FSO.Content.Content.Get().AvatarOutfits.Get(puppet.HeadOutfit);
-                ava.Body = FSO.Content.Content.Get().AvatarOutfits.Get(puppet.BodyOutfit);
-                ava.Handgroup = ava.Body;
+                ReloadPuppet = true;
             }
-
-            TargetAvatarComponent = new()
-            {
-                Avatar = TargetAvatar
-            };
         }
 
-        public void Predraw(ulong renderTimestamp)
+        public void PreDraw(uint parentLocation, Blueprint bp, ulong renderTimestamp)
         {
+            if ((bp != LastBp || ReloadPuppet || TargetAvatar == null) && bp != null)
+            {
+                if (TargetAvatar == null)
+                {
+                    TargetAvatar = new SimAvatar(Content.Content.Get().AvatarSkeletons.Get(Puppet.SkeletonName));
+                }
+
+                TargetAvatar.Appearance = (AppearanceType)Puppet.SkinTone;
+                TargetAvatar.Head = FSO.Content.Content.Get().AvatarOutfits.Get(Puppet.HeadOutfit);
+                TargetAvatar.Body = FSO.Content.Content.Get().AvatarOutfits.Get(Puppet.BodyOutfit);
+                TargetAvatar.Handgroup = TargetAvatar.Body;
+
+                if (bp != LastBp || TargetAvatarComponent == null)
+                {
+                    LastBp?.RemoveAvatar(TargetAvatarComponent);
+
+                    TargetAvatarComponent = new()
+                    {
+                        Avatar = TargetAvatar
+                    };
+
+                    bp.AddAvatar(TargetAvatarComponent);
+
+                    LastBp = bp;
+
+                    RecalculateOffset(parentLocation);
+                }
+
+                LastBp = bp;
+            }
+
             if (TargetAvatar != null)
             {
-                // Update the avatar's position and based on the process.
+                // Update the avatar's position and animation based on the frame timing.
                 float fraction = (renderTimestamp - StartTimestamp) / ((float)Stopwatch.Frequency / 30f);
 
                 float totalWeight = 0f;
@@ -67,13 +113,13 @@ namespace FSO.Client.Rendering
                 var pos = Puppet.VisualPositionStart;
                 var vel = Puppet.Velocity;
                 TargetAvatar.ReloadSkeleton();
-                TargetAvatarComponent.Position = new Vector3(pos.X, pos.Y, pos.Z) + fraction * new Vector3(vel.X, vel.Y, vel.Z);
+                TargetAvatarComponent.Position = new Vector3(pos.X, pos.Y, pos.Z) + fraction * new Vector3(vel.X, vel.Y, vel.Z) + LotOffset;
                 TargetAvatarComponent.RadianDirection = (double)(pos.W - Puppet.Velocity.W * fraction);
             }
         }
     }
 
-    internal class VisualSurroundPuppets
+    public class VisualSurroundPuppets
     {
         private CoreGameScreen Screen;
         private Dictionary<uint, Dictionary<uint, VisualSurroundPuppet>> LotIdToPuppet = [];
@@ -83,15 +129,18 @@ namespace FSO.Client.Rendering
             Screen = screen;
         }
 
-        public void Predraw()
+        public void PreDraw()
         {
             // Try update animation and position for any surround puppets
+
+            uint parentLocation = Screen.VisualVM.TSOState.LotID;
+            Blueprint bp = Screen.VisualVM.Context.Blueprint;
 
             foreach (var lot in LotIdToPuppet)
             {
                 foreach (var puppet in lot.Value)
                 {
-                    puppet.Value.Predraw(0);
+                    puppet.Value.PreDraw(parentLocation, bp, 0);
                 }
             }
         }
@@ -112,7 +161,7 @@ namespace FSO.Client.Rendering
                     {
                         if (!puppets.TryGetValue(puppet.PersistID, out var visualPuppet))
                         {
-                            visualPuppet = new VisualSurroundPuppet();
+                            visualPuppet = new VisualSurroundPuppet(lotData.LotLocation);
                             puppets[puppet.PersistID] = visualPuppet;
                         }
 
