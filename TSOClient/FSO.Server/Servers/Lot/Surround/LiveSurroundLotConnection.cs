@@ -17,8 +17,8 @@ namespace FSO.Server.Servers.Lot.Surround
         private readonly HashSet<uint> ExpectedAvatars = [];
 
         private Lock QueueLock = new();
-        private Queue<SurroundPuppetLotTick> TickQueue = [];
-        private SurroundPuppetLotTick? LastTick;
+        private Queue<SurroundPuppetLot> TickQueue = [];
+        private SurroundPuppetLot? LastTick;
 
         private uint TickID;
         private int AdjacencyCount;
@@ -72,16 +72,16 @@ namespace FSO.Server.Servers.Lot.Surround
                 PuppetData.Remove(id);
             }
 
-            var tick = new SurroundPuppetLotTick()
+            var tick = new SurroundPuppetLot()
             {
-                TickID = TickID,
+                LotLocation = LotLocation,
                 Puppets = PuppetData.Values.ToArray()
             };
 
             QueueTick(tick);
         }
 
-        private void QueueTick(SurroundPuppetLotTick tick)
+        private void QueueTick(SurroundPuppetLot tick)
         {
             lock (QueueLock)
             {
@@ -98,7 +98,7 @@ namespace FSO.Server.Servers.Lot.Surround
             }
         }
 
-        public SurroundPuppetLotTick? PullTick()
+        public SurroundPuppetLot? PullTick()
         {
             lock (QueueLock)
             {
@@ -154,7 +154,7 @@ namespace FSO.Server.Servers.Lot.Surround
             // Without deltas for the host
             if (NewPlayersCopy.Count > 0)
             {
-                var noDelta = new FSOVMSurroundPuppets() { Lots = broadcast.Lots, NewPlayer = true };
+                var noDelta = new FSOVMSurroundPuppets() { Ticks = broadcast.Ticks, NewPlayer = true };
                 LotHost.Broadcast(NewPlayersCopy, noDelta);
             }
         }

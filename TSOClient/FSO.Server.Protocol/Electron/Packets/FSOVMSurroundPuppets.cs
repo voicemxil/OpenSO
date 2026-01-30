@@ -5,20 +5,20 @@ using Mina.Core.Buffer;
 
 namespace FSO.Server.Protocol.Electron.Packets
 {
-    public struct SurroundPuppetLotTick
+    public struct SurroundPuppetTick
     {
         public uint TickID;
-        public SurroundPuppet[] Puppets;
-
-        // Runtime only
-        // If this is true, the tick is outdated and shouldn't be sent to anyone who doesn't need an initial state.
-        public bool Outdated;
+        public SurroundPuppetLot[] Lots;
     }
 
     public struct SurroundPuppetLot
     {
         public uint LotLocation;
-        public SurroundPuppetLotTick[] Ticks;
+        public SurroundPuppet[] Puppets;
+
+        // Runtime only
+        // If this is true, the tick is outdated and shouldn't be sent to anyone who doesn't need an initial state.
+        public bool Outdated;
     }
 
     public class FSOVMSurroundPuppets : AbstractElectronPacket
@@ -29,49 +29,49 @@ namespace FSO.Server.Protocol.Electron.Packets
         private const int MAX_ANIMATIONS = 10;
         private const int MAX_APPEARANCES = 512;
 
-        public SurroundPuppetLot[] Lots;
+        public SurroundPuppetTick[] Ticks;
 
         // Runtime only
         public bool NewPlayer;
 
         public override void Deserialize(IoBuffer input, ISerializationContext context)
         {
-            int lotCount = input.GetInt32();
-            if (lotCount > MAX_LOTS)
+            int tickCount = input.GetInt32();
+            if (tickCount > MAX_TICKS)
             {
-                throw new Exception($"Invalid puppet lot count {lotCount}");
+                throw new Exception($"Invalid puppet lot count {tickCount}");
             }
 
-            Lots = new SurroundPuppetLot[lotCount];
+            Ticks = new SurroundPuppetTick[tickCount];
 
-            for (int i = 0; i < Lots.Length; i++)
+            for (int i = 0; i < Ticks.Length; i++)
             {
-                Lots[i] = new SurroundPuppetLot()
+                Ticks[i] = new SurroundPuppetTick()
                 {
-                    LotLocation = input.GetUInt32()
+                    TickID = input.GetUInt32()
                 };
 
-                int tickCount = input.GetInt32();
+                int lotCount = input.GetInt32();
 
-                if (tickCount > MAX_TICKS)
+                if (lotCount > MAX_LOTS)
                 {
-                    throw new Exception($"Invalid tick count {tickCount}");
+                    throw new Exception($"Invalid tick count {lotCount}");
                 }
 
-                var ticks = new SurroundPuppetLotTick[tickCount];
+                var lots = new SurroundPuppetLot[lotCount];
 
-                for (int j = 0; j < tickCount; j++)
+                for (int j = 0; j < lotCount; j++)
                 {
-                    var tick = new SurroundPuppetLotTick()
+                    var lot = new SurroundPuppetLot()
                     {
-                        TickID = input.GetUInt32()
+                        LotLocation = input.GetUInt32()
                     };
 
                     int puppetCount = input.GetInt32();
 
                     if (puppetCount > MAX_CHARACTERS)
                     {
-                        throw new Exception($"Invalid character count {tickCount}");
+                        throw new Exception($"Invalid character count {lotCount}");
                     }
 
                     var puppets = new SurroundPuppet[puppetCount];
@@ -81,12 +81,12 @@ namespace FSO.Server.Protocol.Electron.Packets
                         puppets[k] = ReadPuppet(input);
                     }
 
-                    tick.Puppets = puppets;
+                    lot.Puppets = puppets;
 
-                    ticks[j] = tick;
+                    lots[j] = lot;
                 }
 
-                Lots[i].Ticks = ticks;
+                Ticks[i].Lots = lots;
             }
         }
 
@@ -169,27 +169,27 @@ namespace FSO.Server.Protocol.Electron.Packets
 
         public override void Serialize(IoBuffer output, ISerializationContext context)
         {
-            output.PutInt32(Lots.Length);
+            output.PutInt32(Ticks.Length);
 
-            foreach (ref var lot in Lots.AsSpan())
+            foreach (ref var tick in Ticks.AsSpan())
             {
-                output.PutUInt32(lot.LotLocation);
+                output.PutUInt32(tick.TickID);
 
-                var tickCount = NewPlayer ? lot.Ticks.Length : lot.Ticks.Count(x => !x.Outdated);
+                var tickCount = NewPlayer ? tick.Lots.Length : tick.Lots.Count(x => !x.Outdated);
 
                 output.PutInt32(tickCount);
 
-                foreach (ref var tick in lot.Ticks.AsSpan())
+                foreach (ref var lot in tick.Lots.AsSpan())
                 {
-                    if (!NewPlayer && tick.Outdated)
+                    if (!NewPlayer && lot.Outdated)
                     {
                         continue;
                     }
 
-                    output.PutUInt32(tick.TickID);
-                    output.PutInt32(tick.Puppets.Length);
+                    output.PutUInt32(lot.LotLocation);
+                    output.PutInt32(lot.Puppets.Length);
 
-                    foreach (ref var puppet in tick.Puppets.AsSpan())
+                    foreach (ref var puppet in lot.Puppets.AsSpan())
                     {
                         WritePuppet(output, ref puppet);
                     }

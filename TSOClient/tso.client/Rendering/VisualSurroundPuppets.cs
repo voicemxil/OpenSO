@@ -5,6 +5,7 @@ using FSO.LotView.Components;
 using FSO.LotView.Model;
 using FSO.Server.Protocol.Electron.Packets;
 using FSO.Vitaboy;
+using JWT.Builder;
 using Microsoft.Xna.Framework;
 using System.Diagnostics;
 
@@ -16,7 +17,7 @@ namespace FSO.Client.Rendering
         private readonly uint LotLocation;
 
         private SurroundPuppet Puppet;
-        private ulong StartTimestamp;
+        private long StartTimestamp;
 
         private SimAvatar TargetAvatar;
         private AvatarComponent TargetAvatarComponent;
@@ -47,7 +48,7 @@ namespace FSO.Client.Rendering
             LotOffset = new Vector3(relative.X * (width - 2), relative.Y * (height - 2), 0);
         }
 
-        public void SetPuppet(SurroundPuppet puppet, ulong startTimestamp)
+        public void SetPuppet(SurroundPuppet puppet, long startTimestamp)
         {
             Puppet.ApplyDelta(puppet);
 
@@ -55,9 +56,11 @@ namespace FSO.Client.Rendering
             {
                 ReloadPuppet = true;
             }
+
+            StartTimestamp = startTimestamp;
         }
 
-        public void PreDraw(uint parentLocation, Blueprint bp, ulong renderTimestamp)
+        public void PreDraw(uint parentLocation, Blueprint bp, long renderTimestamp)
         {
             if ((bp != LastBp || ReloadPuppet || TargetAvatar == null) && bp != null)
             {
@@ -138,14 +141,27 @@ namespace FSO.Client.Rendering
 
     public class VisualSurroundPuppets
     {
-        private CoreGameScreen Screen;
-        private Dictionary<uint, Dictionary<uint, VisualSurroundPuppet>> LotIdToPuppet = [];
-        private Blueprint LastBp;
+        private const int QUEUE_LENGTH_MAX = 3;
+        private const int QUEUE_LENGTH_RESET = 1;
+
+        private readonly CoreGameScreen Screen;
+        private readonly Dictionary<uint, Dictionary<uint, VisualSurroundPuppet>> LotIdToPuppet = [];
+
         private readonly HashSet<uint> ExpectedAvatars = [];
+        private readonly HashSet<uint> ExpectedLots = [];
+
+        private readonly Queue<SurroundPuppetTick> TickQueue = [];
+        private readonly long TickRate;
+
+        private Blueprint LastBp;
+        private bool Instant = false;
+
+        private long LastTimestamp;
 
         public VisualSurroundPuppets(CoreGameScreen screen)
         {
             Screen = screen;
+            TickRate = Stopwatch.Frequency / 30;
         }
 
         private Point CalculateOffset(uint parentLocation, uint lotLocation)
@@ -158,7 +174,11 @@ namespace FSO.Client.Rendering
 
         public void PreDraw()
         {
+            RunTicks();
+
             // Try update animation and position for any surround puppets
+
+            var renderTimestamp = Stopwatch.GetTimestamp();
 
             var vm = Screen.VisualVM;
 
@@ -191,74 +211,180 @@ namespace FSO.Client.Rendering
 
                 foreach (var puppet in lot.Value)
                 {
-                    puppet.Value.PreDraw(parentLocation, bp, 0);
+                    puppet.Value.PreDraw(parentLocation, bp, renderTimestamp);
                 }
             }
 
             if (lotIdsToDelete != null)
             {
-                foreach (var id in lotIdsToDelete)
-                {
-                    if (LotIdToPuppet.TryGetValue(id, out var puppets))
-                    {
-                        foreach (var puppet in puppets)
-                        {
-                            puppet.Value.Dispose();
-                        }
-
-                        LotIdToPuppet.Remove(id);
-                    }
-                }
+                DeleteLots(lotIdsToDelete);
             }
 
             LastBp = bp;
         }
 
-        public void Process(FSOVMSurroundPuppets message)
+        private void RunTicks()
         {
             uint myID = Screen.VisualVM?.MyUID ?? 0;
 
-            foreach (var lotData in message.Lots)
+            var now = Stopwatch.GetTimestamp();
+
+            int ticksToRun = Instant ? TickQueue.Count : (int)((now - LastTimestamp) / TickRate);
+
+            if (ticksToRun >= TickQueue.Count)
             {
-                if (!LotIdToPuppet.TryGetValue(lotData.LotLocation, out var puppets))
+                ticksToRun = TickQueue.Count;
+                Instant = true;
+            }
+
+            if (TickQueue.Count > QUEUE_LENGTH_MAX && ticksToRun < TickQueue.Count - 1)
+            {
+                // Try and catch up a little
+                ticksToRun++;
+                Instant = true;
+            }
+
+            for (int i = 0; i < ticksToRun; i++)
+            {
+                var tick = TickQueue.Dequeue();
+
+                if (Instant)
                 {
-                    puppets = new Dictionary<uint, VisualSurroundPuppet>();
-                    LotIdToPuppet[lotData.LotLocation] = puppets;
+                    LastTimestamp = Stopwatch.GetTimestamp();
+                }
+                else
+                {
+                    LastTimestamp += TickRate;
                 }
 
-                foreach (var tick in lotData.Ticks)
+                ProcessTick(myID, tick);
+            }
+
+            Instant = false;
+        }
+
+        private void DeleteLots<T>(T lots) where T : IEnumerable<uint>
+        {
+            foreach (var id in lots)
+            {
+                if (LotIdToPuppet.TryGetValue(id, out var puppets))
+                {
+                    foreach (var puppet in puppets)
+                    {
+                        puppet.Value.Dispose();
+                    }
+
+                    LotIdToPuppet.Remove(id);
+                }
+            }
+        }
+
+        private void ProcessTick(uint myID, SurroundPuppetTick tick)
+        {
+            ExpectedLots.Clear();
+            ExpectedLots.UnionWith(LotIdToPuppet.Keys);
+
+            foreach (ref var lot in tick.Lots.AsSpan())
+            {
+                if (!LotIdToPuppet.TryGetValue(lot.LotLocation, out var puppets))
+                {
+                    puppets = new Dictionary<uint, VisualSurroundPuppet>();
+                    LotIdToPuppet[lot.LotLocation] = puppets;
+                }
+
+                ExpectedAvatars.Clear();
+                ExpectedAvatars.UnionWith(puppets.Keys);
+
+                foreach (var puppet in lot.Puppets)
+                {
+                    if (puppet.PersistID == myID)
+                    {
+                        // You can't see a puppet of yourself...
+                        continue;
+                    }
+
+                    if (!puppets.TryGetValue(puppet.PersistID, out var visualPuppet))
+                    {
+                        visualPuppet = new VisualSurroundPuppet(this, lot.LotLocation);
+                        puppets[puppet.PersistID] = visualPuppet;
+                    }
+
+                    visualPuppet.SetPuppet(puppet, LastTimestamp);
+
+                    ExpectedAvatars.Remove(puppet.PersistID);
+                }
+
+                foreach (var toRemove in ExpectedAvatars)
+                {
+                    if (puppets.TryGetValue(toRemove, out var visualPuppet))
+                    {
+                        visualPuppet.Dispose();
+                        puppets.Remove(toRemove);
+                    }
+                }
+            }
+
+            DeleteLots(ExpectedLots);
+        }
+
+        public bool ProcessInstantly(in SurroundPuppetTick tick)
+        {
+            ExpectedLots.Clear();
+            ExpectedLots.UnionWith(LotIdToPuppet.Keys);
+
+            foreach (ref var lot in tick.Lots.AsSpan())
+            {
+                if (LotIdToPuppet.TryGetValue(lot.LotLocation, out var puppets))
                 {
                     ExpectedAvatars.Clear();
                     ExpectedAvatars.UnionWith(puppets.Keys);
 
-                    foreach (var puppet in tick.Puppets)
+                    foreach (ref var puppet in lot.Puppets.AsSpan())
                     {
-                        if (puppet.PersistID == myID)
+                        if (puppets.TryGetValue(puppet.PersistID, out var visual))
                         {
-                            // You can't see a puppet of yourself...
-                            continue;
+                            // Check for changes that require instant playback?
                         }
-
-                        if (!puppets.TryGetValue(puppet.PersistID, out var visualPuppet))
+                        else
                         {
-                            visualPuppet = new VisualSurroundPuppet(this, lotData.LotLocation);
-                            puppets[puppet.PersistID] = visualPuppet;
+                            // New avatar
+                            return true;
                         }
-
-                        visualPuppet.SetPuppet(puppet, 0);
 
                         ExpectedAvatars.Remove(puppet.PersistID);
                     }
 
-                    foreach (var toRemove in ExpectedAvatars)
-                    {
-                        if (puppets.TryGetValue(toRemove, out var visualPuppet))
-                        {
-                            visualPuppet.Dispose();
-                            puppets.Remove(toRemove);
-                        }
-                    }
+                    // Deleted avatar (ignore)
+                    // ExpectedAvatars.Count > 0
                 }
+                else
+                {
+                    // New lot
+                    return true;
+                }
+
+                ExpectedLots.Remove(lot.LotLocation);
+            }
+
+            // If any lot is deleted
+            return ExpectedLots.Count > 0;
+        }
+
+        private void EnqueueTick(in SurroundPuppetTick tick)
+        {
+            TickQueue.Enqueue(tick);
+
+            if (ProcessInstantly(tick))
+            {
+                Instant = true;
+            }
+        }
+
+        public void Process(FSOVMSurroundPuppets message)
+        {
+            foreach (var tick in message.Ticks)
+            {
+                EnqueueTick(tick);
             }
         }
         

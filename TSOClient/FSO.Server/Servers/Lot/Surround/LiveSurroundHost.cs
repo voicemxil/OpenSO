@@ -13,6 +13,8 @@ namespace FSO.Server.Servers.Lot.Surround
         private long LastTick;
         private bool Active = true;
 
+        private uint TickID = 0;
+
         private readonly Dictionary<uint, SurroundPuppetLot?> EvaluatedLots = [];
 
         public LiveSurroundHost()
@@ -76,13 +78,7 @@ namespace FSO.Server.Servers.Lot.Surround
                         {
                             if (!evaluatedLots.TryGetValue(adj.LotLocation, out SurroundPuppetLot? value))
                             {
-                                var tick = adj.PullTick();
-
-                                value = new SurroundPuppetLot()
-                                {
-                                    LotLocation = adj.LotLocation,
-                                    Ticks = tick.HasValue ? [tick.Value] : []
-                                };
+                                var lot = adj.PullTick();
 
                                 evaluatedLots[adj.LotLocation] = value;
                             }
@@ -93,12 +89,20 @@ namespace FSO.Server.Servers.Lot.Surround
                             }
                         }
 
-                        puppets.Lots = [.. lots];
+                        puppets.Ticks = [
+                            new SurroundPuppetTick()
+                            {
+                                TickID = TickID,
+                                Lots = [.. lots]
+                            }
+                        ];
 
                         conn.Broadcast(puppets);
                     }
                 }
             }
+
+            TickID++;
         }
 
         public LiveSurroundLotConnection Connect(uint location, ILotHost lotHost)
