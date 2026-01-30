@@ -133,8 +133,15 @@ namespace FSO.Client.Rendering
         {
             // Try update animation and position for any surround puppets
 
-            uint parentLocation = Screen.VisualVM.TSOState.LotID;
-            Blueprint bp = Screen.VisualVM.Context.Blueprint;
+            var vm = Screen.VisualVM;
+
+            if (vm == null)
+            {
+                return;
+            }
+
+            uint parentLocation = vm.TSOState.LotID;
+            Blueprint bp = vm.Context.Blueprint;
 
             foreach (var lot in LotIdToPuppet)
             {
