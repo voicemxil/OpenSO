@@ -18,6 +18,7 @@ using FSO.Server.Framework.Voltron;
 using FSO.Server.Protocol.Electron.Packets;
 using FSO.Server.Protocol.Gluon.Model;
 using FSO.Server.Servers.City.Domain;
+using FSO.Server.Servers.Lot.Surround;
 using FSO.SimAntics;
 using FSO.SimAntics.Engine;
 using FSO.SimAntics.Marshals;
@@ -93,6 +94,8 @@ namespace FSO.Server.Servers.Lot.Domain
         private ManualResetEvent LotActive = new ManualResetEvent(false);
         private bool ActiveYet;
         private Queue<Action> LotThreadActions = new Queue<Action>();
+
+        private LiveSurroundLotConnection SurroundConnection;   
 
         private bool AllowGuestOpening => Config.Archive != null && Config.Archive.Flags.HasFlag(FSO.Common.ArchiveConfigFlags.AllOpenable);
 
@@ -730,6 +733,12 @@ namespace FSO.Server.Servers.Lot.Domain
         {
             LOG.Info("Resetting VM for lot with dbid = " + Context.DbId);
             VMGlobalLink = Kernel.Get<LotServerGlobalLink>();
+            if (AllowGuestOpening && !JobLot)
+            {
+                var host = Kernel.Get<LiveSurroundHost>();
+                SurroundConnection = host.Connect(LotPersist.location, Host);
+            }
+
             VMDriver = new VMServerDriver(VMGlobalLink);
             VMDriver.TicksPerPacket = Config.Tick_Rate_Divider;
             VMDriver.OnTickBroadcast += TickBroadcast;
@@ -1129,6 +1138,8 @@ namespace FSO.Server.Servers.Lot.Domain
                         Host.UpdateActiveVisitRecords();
                     }
 
+                    SurroundConnection?.SubmitTick(Lot, false);
+
                     if (AllowGuestOpening && !JobLot)
                     {
                         TickFreeRoam();
@@ -1443,6 +1454,7 @@ namespace FSO.Server.Servers.Lot.Domain
         public void AvatarJoin(IVoltronSession session)
         {
             LotActive.WaitOne(); //wait til we're active at least
+            SurroundConnection?.AvatarJoin(session.AvatarId);
             using (var da = DAFactory.Get())
             {
                 ClientCount++;
@@ -1869,12 +1881,17 @@ namespace FSO.Server.Servers.Lot.Domain
                 }
             }
 
+            SurroundConnection?.Dispose();
+            SurroundConnection = null;
+
             Host.Shutdown();
         }
 
         //Run on the background thread
         public void AvatarLeave(IVoltronSession session)
         {
+            SurroundConnection?.AvatarLeave(session.AvatarId);
+
             //Exit lot, Persist the avatars data, remove avatar lock
             LOG.Info("Avatar "+session.AvatarId+" left lot "+Context.DbId);
 

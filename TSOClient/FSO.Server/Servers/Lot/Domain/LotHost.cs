@@ -863,7 +863,7 @@ namespace FSO.Server.Servers.Lot.Domain
     public interface ILotHost
     {
         void Send(uint avatarID, params object[] messages);
-        void Broadcast(HashSet<uint> ignoreIDs, params object[] messages);
+        void Broadcast(HashSet<uint> clientIDs, params object[] messages);
         void DropClient(uint avatarID);
         void InBackground(Callback cb);
         void ReleaseDbAvatarClaim(IVoltronSession session);

@@ -22,6 +22,7 @@ using FSO.SimAntics.Engine;
 using FSO.SimAntics.Primitives;
 using FSO.SimAntics.Model.Platform;
 using FSO.SimAntics.Model.TS1Platform;
+using FSO.Common.Model;
 
 namespace FSO.SimAntics
 {
@@ -128,10 +129,11 @@ namespace FSO.SimAntics
             get { return _SkinTone; }
         }
 
+        private Vector3 _ServerVisualPosition;
         public override Vector3 VisualPosition
         {
-            get { return (UseWorld) ? ((AvatarComponent)WorldUI).StoredPosition : new Vector3(); }
-            set { if (UseWorld) WorldUI.Position = value; }
+            get { return (UseWorld) ? ((AvatarComponent)WorldUI).StoredPosition : _ServerVisualPosition; }
+            set { if (UseWorld) WorldUI.Position = value; else _ServerVisualPosition = value; }
         }
         public override float RadianDirection
         {
@@ -1193,6 +1195,22 @@ namespace FSO.SimAntics
                 if (content.TS1) decimateMul = 2;
             }
             return (store > 0 && ico != null)?TextureUtils.Decimate(ico, gd, (1<<(2-store)) * decimateMul, false):ico;
+        }
+
+        public SurroundPuppet GetSurroundPuppet()
+        {
+            return new SurroundPuppet()
+            {
+                PersistID = PersistID,
+                SkinTone = (uint)SkinTone,
+                BodyOutfit = BodyOutfit.ID,
+                HeadOutfit = HeadOutfit.ID,
+                SkeletonName = Avatar.Skeleton.Name,
+                VisualPositionStart = new Vector4(VisualPositionStart ?? VisualPosition, (float)RadianDirection),
+                Velocity = new Vector4(VisualPositionStart == null ? new Vector3() : Velocity, (float)TurnVelocity),
+                Appearances = BoundAppearances.Count == 0 ? [] : [.. BoundAppearances],
+                Animations = [.. Animations.Select(x => new SurroundPuppetAnimation(x.Anim.Name, x.CurrentFrame, x.Speed, x.Weight, x.EndReached, x.PlayingBackwards, x.Loop))]
+            };
         }
 
         #region VM Marshalling Functions

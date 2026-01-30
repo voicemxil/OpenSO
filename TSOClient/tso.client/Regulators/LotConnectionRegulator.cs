@@ -1,4 +1,6 @@
 ﻿using FSO.Client.UI.Controls;
+using FSO.Client.UI.Framework;
+using FSO.Client.UI.Screens;
 using FSO.Common.DataService;
 using FSO.Common.Model;
 using FSO.Common.Utils;
@@ -352,6 +354,13 @@ namespace FSO.Client.Regulators
                         }
                         UIAlert.Alert(msg.Title, msg.Message, true);
                         });
+                }
+
+                if (message is FSOVMSurroundPuppets)
+                {
+                    GameThread.InUpdate(() => {
+                        (UIScreen.Current as CoreGameScreen)?.SurroundPuppets?.Process(message);
+                    });
                 }
             }
         }
