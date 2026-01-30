@@ -131,6 +131,7 @@ namespace FSO.Client.Rendering
         private CoreGameScreen Screen;
         private Dictionary<uint, Dictionary<uint, VisualSurroundPuppet>> LotIdToPuppet = [];
         private Blueprint LastBp;
+        private readonly HashSet<uint> ExpectedAvatars = [];
 
         public VisualSurroundPuppets(CoreGameScreen screen)
         {
@@ -215,6 +216,9 @@ namespace FSO.Client.Rendering
 
                 foreach (var tick in lotData.Ticks)
                 {
+                    ExpectedAvatars.Clear();
+                    ExpectedAvatars.UnionWith(puppets.Keys);
+
                     foreach (var puppet in tick.Puppets)
                     {
                         if (!puppets.TryGetValue(puppet.PersistID, out var visualPuppet))
@@ -224,6 +228,17 @@ namespace FSO.Client.Rendering
                         }
 
                         visualPuppet.SetPuppet(puppet, 0);
+
+                        ExpectedAvatars.Remove(puppet.PersistID);
+                    }
+
+                    foreach (var toRemove in ExpectedAvatars)
+                    {
+                        if (puppets.TryGetValue(toRemove, out var visualPuppet))
+                        {
+                            visualPuppet.Dispose();
+                            puppets.Remove(toRemove);
+                        }
                     }
                 }
             }

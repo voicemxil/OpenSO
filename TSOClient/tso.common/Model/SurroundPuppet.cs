@@ -123,7 +123,7 @@ namespace FSO.Common.Model
 
             if ((delta & SurroundPuppetDelta.Animation) != 0)
             {
-                if ((delta & SurroundPuppetDelta.Animation) == SurroundPuppetDelta.Animation || puppet.Animations.Length != Animations.Length)
+                if ((delta & SurroundPuppetDelta.Animation) == SurroundPuppetDelta.Animation || puppet.Animations.Length != (Animations?.Length ?? 0))
                 {
                     Animations = puppet.Animations;
                 }
