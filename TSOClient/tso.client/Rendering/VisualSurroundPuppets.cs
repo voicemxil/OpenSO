@@ -59,7 +59,7 @@ namespace FSO.Client.Rendering
             {
                 if (TargetAvatar == null)
                 {
-                    TargetAvatar = new SimAvatar(Content.Content.Get().AvatarSkeletons.Get(Puppet.SkeletonName));
+                    TargetAvatar = new SimAvatar(Content.Content.Get().AvatarSkeletons.Get(Puppet.SkeletonName+".skel"));
                 }
 
                 TargetAvatar.Appearance = (AppearanceType)Puppet.SkinTone;
@@ -103,7 +103,7 @@ namespace FSO.Client.Rendering
 
                         if (!AnimByName.TryGetValue(state.Name, out var anim))
                         {
-                            anim = Content.Content.Get().AvatarAnimations.Get(state.Name);
+                            anim = Content.Content.Get().AvatarAnimations.Get(state.Name + ".anim");
                         }
 
                         Animator.RenderFrame(TargetAvatar, anim, (int)visualFrame, visualFrame % 1, state.Weight / totalWeight);

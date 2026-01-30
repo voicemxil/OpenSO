@@ -229,7 +229,7 @@ namespace FSO.Server.Protocol.Electron.Packets
             {
                 output.PutInt32(puppet.Animations.Length);
 
-                foreach (ref var animation in puppet.Animations.AsSpan()[..MAX_ANIMATIONS])
+                foreach (ref var animation in puppet.Animations.AsSpan())
                 {
                     if (delta.HasFlag(SurroundPuppetDelta.AnimationNames))
                     {
@@ -250,7 +250,7 @@ namespace FSO.Server.Protocol.Electron.Packets
             {
                 output.PutInt32(puppet.Appearances.Length);
 
-                foreach (ref var appearance in puppet.Appearances.AsSpan()[..MAX_APPEARANCES])
+                foreach (ref var appearance in puppet.Appearances.AsSpan())
                 {
                     output.PutPascalVLCString(appearance);
                 }

@@ -103,7 +103,8 @@ namespace FSO.Common.Model
 
         public void ApplyDelta(SurroundPuppet puppet)
         {
-            if (Delta.HasFlag(SurroundPuppetDelta.BodyInfo))
+            var delta = puppet.Delta;
+            if (delta.HasFlag(SurroundPuppetDelta.BodyInfo))
             {
                 PersistID = puppet.PersistID;
                 SkinTone = puppet.SkinTone;
@@ -112,15 +113,15 @@ namespace FSO.Common.Model
                 SkeletonName = puppet.SkeletonName;
             }
 
-            if (Delta.HasFlag(SurroundPuppetDelta.Position))
+            if (delta.HasFlag(SurroundPuppetDelta.Position))
             {
                 VisualPositionStart = puppet.VisualPositionStart;
                 Velocity = puppet.Velocity;
             }
 
-            if ((Delta & SurroundPuppetDelta.Animation) != 0)
+            if ((delta & SurroundPuppetDelta.Animation) != 0)
             {
-                if ((Delta & SurroundPuppetDelta.Animation) == SurroundPuppetDelta.Animation || puppet.Animations.Length != Animations.Length)
+                if ((delta & SurroundPuppetDelta.Animation) == SurroundPuppetDelta.Animation || puppet.Animations.Length != Animations.Length)
                 {
                     Animations = puppet.Animations;
                 }
@@ -133,7 +134,7 @@ namespace FSO.Common.Model
 
                         string animName = anim.Name;
 
-                        if (Delta.HasFlag(SurroundPuppetDelta.AnimationNames))
+                        if (delta.HasFlag(SurroundPuppetDelta.AnimationNames))
                         {
                             animName = deltaAnim.Name;
                         }
@@ -143,7 +144,7 @@ namespace FSO.Common.Model
                         float animWeight = anim.Weight;
                         SurroundPuppetAnimationFlags animFlags = anim.Flags;
 
-                        if (Delta.HasFlag(SurroundPuppetDelta.AnimationState))
+                        if (delta.HasFlag(SurroundPuppetDelta.AnimationState))
                         {
                             animCurrentFrame = deltaAnim.CurrentFrame;
                             animSpeed = deltaAnim.Speed;
@@ -156,7 +157,7 @@ namespace FSO.Common.Model
                 }
             }
 
-            if (Delta.HasFlag(SurroundPuppetDelta.Appearances))
+            if (delta.HasFlag(SurroundPuppetDelta.Appearances))
             {
                 Appearances = puppet.Appearances;
             }

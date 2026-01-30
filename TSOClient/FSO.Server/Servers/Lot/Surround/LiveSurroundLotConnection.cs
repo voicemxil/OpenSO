@@ -57,6 +57,10 @@ namespace FSO.Server.Servers.Lot.Surround
                 {
                     puppet.CalculateDelta(in existing);
                 }
+                else
+                {
+                    puppet.Delta = SurroundPuppetDelta.All;
+                }
 
                 PuppetData[puppet.PersistID] = puppet;
             }
