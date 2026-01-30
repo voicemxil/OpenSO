@@ -83,7 +83,7 @@ namespace FSO.Server.Protocol.Electron.Packets
 
                     tick.Puppets = puppets;
 
-                    ticks[i] = tick;
+                    ticks[j] = tick;
                 }
 
                 Lots[i].Ticks = ticks;
