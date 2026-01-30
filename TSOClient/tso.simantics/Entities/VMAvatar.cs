@@ -1201,6 +1201,7 @@ namespace FSO.SimAntics
         {
             return new SurroundPuppet()
             {
+                Delta = KillTimeout != -1 ? SurroundPuppetDelta.Leaving : 0,
                 PersistID = PersistID,
                 SkinTone = (uint)SkinTone,
                 BodyOutfit = BodyOutfit.ID,

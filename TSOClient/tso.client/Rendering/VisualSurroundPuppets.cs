@@ -12,6 +12,9 @@ namespace FSO.Client.Rendering
 {
     class VisualSurroundPuppet : IDisposable
     {
+        private readonly VisualSurroundPuppets Parent;
+        private readonly uint LotLocation;
+
         private SurroundPuppet Puppet;
         private ulong StartTimestamp;
 
@@ -23,10 +26,11 @@ namespace FSO.Client.Rendering
         private bool ReloadPuppet = false;
         private Vector3 LotOffset;
 
-        private uint LotLocation;
+        public bool IsLeaving => Puppet.Delta.HasFlag(SurroundPuppetDelta.Leaving);
 
-        public VisualSurroundPuppet(uint lotLocation)
+        public VisualSurroundPuppet(VisualSurroundPuppets parent, uint lotLocation)
         {
+            Parent = parent;
             LotLocation = lotLocation;
         }
 
@@ -114,9 +118,12 @@ namespace FSO.Client.Rendering
 
                 var pos = Puppet.VisualPositionStart;
                 var vel = Puppet.Velocity;
+                bool visible = Puppet.Delta.HasFlag(SurroundPuppetDelta.Leaving) ? !Parent.IsPresentElsewhere(Puppet.PersistID) : true;
+
                 TargetAvatar.ReloadSkeleton();
                 TargetAvatarComponent.Position = new Vector3(pos.X, pos.Y, pos.Z) + fraction * new Vector3(vel.X, vel.Y, vel.Z) + LotOffset;
                 TargetAvatarComponent.RadianDirection = (double)(pos.W - Puppet.Velocity.W * fraction);
+                TargetAvatarComponent.Visible = visible;
             }
         }
 
@@ -206,6 +213,8 @@ namespace FSO.Client.Rendering
 
         public void Process(FSOVMSurroundPuppets message)
         {
+            uint myID = Screen.VisualVM?.MyUID ?? 0;
+
             foreach (var lotData in message.Lots)
             {
                 if (!LotIdToPuppet.TryGetValue(lotData.LotLocation, out var puppets))
@@ -221,9 +230,15 @@ namespace FSO.Client.Rendering
 
                     foreach (var puppet in tick.Puppets)
                     {
+                        if (puppet.PersistID == myID)
+                        {
+                            // You can't see a puppet of yourself...
+                            continue;
+                        }
+
                         if (!puppets.TryGetValue(puppet.PersistID, out var visualPuppet))
                         {
-                            visualPuppet = new VisualSurroundPuppet(lotData.LotLocation);
+                            visualPuppet = new VisualSurroundPuppet(this, lotData.LotLocation);
                             puppets[puppet.PersistID] = visualPuppet;
                         }
 
@@ -242,6 +257,28 @@ namespace FSO.Client.Rendering
                     }
                 }
             }
+        }
+        
+        public bool IsPresentElsewhere(uint pid)
+        {
+            var vm = Screen.VisualVM;
+            if (vm.Ready && !vm.FSOVAsyncLoading && vm.GetObjectByPersist(pid) != null)
+            {
+                return true;
+            }
+
+            foreach (var lot in LotIdToPuppet)
+            {
+                foreach (var puppet in lot.Value)
+                {
+                    if (!puppet.Value.IsLeaving)
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
         }
     }
 }

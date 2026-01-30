@@ -7,8 +7,8 @@ namespace FSO.Server.Servers.Lot.Surround
 {
     internal class LiveSurroundLotConnection : IDisposable
     {
-        private const int QUEUE_LENGTH_MAX = 4;
-        private const int QUEUE_LENGTH_RESET = 2;
+        private const int QUEUE_LENGTH_MAX = 3;
+        private const int QUEUE_LENGTH_RESET = 1;
 
         private readonly LiveSurroundHost Host;
         private readonly ILotHost LotHost;
