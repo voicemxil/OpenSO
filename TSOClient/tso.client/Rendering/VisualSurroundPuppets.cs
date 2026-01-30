@@ -152,7 +152,7 @@ namespace FSO.Client.Rendering
 
             var vm = Screen.VisualVM;
 
-            if (vm == null)
+            if (vm == null || !vm.Ready || vm.FSOVAsyncLoading)
             {
                 return;
             }
