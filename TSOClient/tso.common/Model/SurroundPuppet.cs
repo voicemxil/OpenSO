@@ -99,6 +99,8 @@ namespace FSO.Common.Model
                     }
                 }
             }
+
+            Delta = delta;
         }
 
         public void ApplyDelta(SurroundPuppet puppet)

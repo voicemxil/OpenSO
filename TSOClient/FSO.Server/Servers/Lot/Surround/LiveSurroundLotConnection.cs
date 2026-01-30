@@ -63,6 +63,7 @@ namespace FSO.Server.Servers.Lot.Surround
                 }
 
                 PuppetData[puppet.PersistID] = puppet;
+                ExpectedAvatars.Remove(puppet.PersistID);
             }
 
             foreach (var id in ExpectedAvatars)

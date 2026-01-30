@@ -10,14 +10,14 @@ using System.Diagnostics;
 
 namespace FSO.Client.Rendering
 {
-    class VisualSurroundPuppet
+    class VisualSurroundPuppet : IDisposable
     {
         private SurroundPuppet Puppet;
         private ulong StartTimestamp;
 
         private SimAvatar TargetAvatar;
         private AvatarComponent TargetAvatarComponent;
-        private Dictionary<string, Animation> AnimByName;
+        private Dictionary<string, Animation> AnimByName = [];
 
         private Blueprint LastBp;
         private bool ReloadPuppet = false;
@@ -75,15 +75,17 @@ namespace FSO.Client.Rendering
                     {
                         Avatar = TargetAvatar
                     };
+                    TargetAvatarComponent.blueprint = bp;
 
                     bp.AddAvatar(TargetAvatarComponent);
 
                     LastBp = bp;
 
-                    RecalculateOffset(parentLocation);
+                    RecalculateOffset(parentLocation); // Can somehow end up wildly negative
                 }
 
                 LastBp = bp;
+                ReloadPuppet = false;
             }
 
             if (TargetAvatar != null)
@@ -117,16 +119,30 @@ namespace FSO.Client.Rendering
                 TargetAvatarComponent.RadianDirection = (double)(pos.W - Puppet.Velocity.W * fraction);
             }
         }
+
+        public void Dispose()
+        {
+            LastBp?.RemoveAvatar(TargetAvatarComponent);
+        }
     }
 
     public class VisualSurroundPuppets
     {
         private CoreGameScreen Screen;
         private Dictionary<uint, Dictionary<uint, VisualSurroundPuppet>> LotIdToPuppet = [];
+        private Blueprint LastBp;
 
         public VisualSurroundPuppets(CoreGameScreen screen)
         {
             Screen = screen;
+        }
+
+        private Point CalculateOffset(uint parentLocation, uint lotLocation)
+        {
+            var loc = MapCoordinates.Unpack(lotLocation).ToPoint();
+            var parent = MapCoordinates.Unpack(parentLocation).ToPoint();
+
+            return loc - parent;
         }
 
         public void PreDraw()
@@ -142,14 +158,49 @@ namespace FSO.Client.Rendering
 
             uint parentLocation = vm.TSOState.LotID;
             Blueprint bp = vm.Context.Blueprint;
+            bool bpChanged = bp != LastBp;
+
+            List<uint> lotIdsToDelete = null;
 
             foreach (var lot in LotIdToPuppet)
             {
+                if (bpChanged)
+                {
+                    var delta = CalculateOffset(parentLocation, lot.Key);
+
+                    if ((delta.X == 0 && delta.Y == 0) || Math.Abs(delta.X) > 1 || Math.Abs(delta.Y) > 1)
+                    {
+                        lotIdsToDelete ??= [];
+
+                        lotIdsToDelete.Add(lot.Key);
+
+                        continue;
+                    }
+                }
+
                 foreach (var puppet in lot.Value)
                 {
                     puppet.Value.PreDraw(parentLocation, bp, 0);
                 }
             }
+
+            if (lotIdsToDelete != null)
+            {
+                foreach (var id in lotIdsToDelete)
+                {
+                    if (LotIdToPuppet.TryGetValue(id, out var puppets))
+                    {
+                        foreach (var puppet in puppets)
+                        {
+                            puppet.Value.Dispose();
+                        }
+
+                        LotIdToPuppet.Remove(id);
+                    }
+                }
+            }
+
+            LastBp = bp;
         }
 
         public void Process(FSOVMSurroundPuppets message)
