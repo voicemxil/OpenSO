@@ -101,7 +101,7 @@ namespace FSO.Client.Rendering
                 foreach (var state in Puppet.Animations)
                 {
                     totalWeight += state.Weight;
-                    if (!state.EndReached)
+                    if (!state.EndReached && state.Name != null)
                     {
                         float visualFrame = state.CurrentFrame;
                         if (state.PlayingBackwards) visualFrame -= state.Speed * fraction;
@@ -112,7 +112,10 @@ namespace FSO.Client.Rendering
                             anim = Content.Content.Get().AvatarAnimations.Get(state.Name + ".anim");
                         }
 
-                        Animator.RenderFrame(TargetAvatar, anim, (int)visualFrame, visualFrame % 1, state.Weight / totalWeight);
+                        if (anim != null)
+                        {
+                            Animator.RenderFrame(TargetAvatar, anim, (int)visualFrame, visualFrame % 1, state.Weight / totalWeight);
+                        }
                     }
                 }
 
