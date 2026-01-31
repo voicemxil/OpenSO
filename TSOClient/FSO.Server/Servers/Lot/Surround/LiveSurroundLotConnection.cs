@@ -20,7 +20,6 @@ namespace FSO.Server.Servers.Lot.Surround
         private Queue<SurroundPuppetLot> TickQueue = [];
         private SurroundPuppetLot? LastTick;
 
-        private uint TickID;
         private int AdjacencyCount;
 
         private Lock PlayersLock = new();
@@ -30,6 +29,8 @@ namespace FSO.Server.Servers.Lot.Surround
         private HashSet<uint> PlayersCopy = [];
         private HashSet<uint> NewPlayersCopy = [];
 
+        private bool Dirty = false;
+
         public LiveSurroundLotConnection(LiveSurroundHost host, ILotHost lotHost, uint lotLocation)
         {
             Host = host;
@@ -37,14 +38,12 @@ namespace FSO.Server.Servers.Lot.Surround
             LotLocation = lotLocation;
         }
 
-        public void SubmitTick(VM vm, bool force, uint tickDelta = 1)
+        public void SubmitTick(VM vm, bool force)
         {
             if (AdjacencyCount <= 0 && !force)
             {
                 return;
             }
-
-            TickID += tickDelta;
 
             ExpectedAvatars.Clear();
             ExpectedAvatars.UnionWith(PuppetData.Keys);
@@ -118,12 +117,20 @@ namespace FSO.Server.Servers.Lot.Surround
 
         public void NotifyAdjacent()
         {
+            Dirty = true;
             Interlocked.Increment(ref AdjacencyCount);
         }
 
         public void NotifyAdjacentDecrement()
         {
             Interlocked.Decrement(ref AdjacencyCount);
+        }
+
+        public bool ConsumeDirty()
+        {
+            bool dirty = Dirty;
+            Dirty = false;
+            return dirty;
         }
 
         public void Broadcast(FSOVMSurroundPuppets broadcast)

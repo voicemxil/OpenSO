@@ -142,7 +142,6 @@ namespace FSO.Client.Rendering
     public class VisualSurroundPuppets
     {
         private const int QUEUE_LENGTH_MAX = 3;
-        private const int QUEUE_LENGTH_RESET = 1;
 
         private readonly CoreGameScreen Screen;
         private readonly Dictionary<uint, Dictionary<uint, VisualSurroundPuppet>> LotIdToPuppet = [];
@@ -288,7 +287,7 @@ namespace FSO.Client.Rendering
             {
                 if (!LotIdToPuppet.TryGetValue(lot.LotLocation, out var puppets))
                 {
-                    puppets = new Dictionary<uint, VisualSurroundPuppet>();
+                    puppets = [];
                     LotIdToPuppet[lot.LotLocation] = puppets;
                 }
 

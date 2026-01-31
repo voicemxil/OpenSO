@@ -19,6 +19,8 @@ namespace FSO.Server.Protocol.Electron.Packets
         // Runtime only
         // If this is true, the tick is outdated and shouldn't be sent to anyone who doesn't need an initial state.
         public bool Outdated;
+        // If this is true, this tick should have all dirty bits.
+        public bool ForceDirty;
     }
 
     public class FSOVMSurroundPuppets : AbstractElectronPacket
@@ -191,7 +193,7 @@ namespace FSO.Server.Protocol.Electron.Packets
 
                     foreach (ref var puppet in lot.Puppets.AsSpan())
                     {
-                        WritePuppet(output, ref puppet);
+                        WritePuppet(output, ref puppet, lot.ForceDirty);
                     }
                 }
             }
@@ -205,9 +207,9 @@ namespace FSO.Server.Protocol.Electron.Packets
             output.PutSingle(vec.W);
         }
 
-        private void WritePuppet(IoBuffer output, ref SurroundPuppet puppet)
+        private void WritePuppet(IoBuffer output, ref SurroundPuppet puppet, bool forceDirty)
         {
-            var delta = NewPlayer ? SurroundPuppetDelta.All : puppet.Delta;
+            var delta = NewPlayer || forceDirty ? SurroundPuppetDelta.All : puppet.Delta;
             output.PutInt32((int)delta);
 
             output.PutUInt32(puppet.PersistID);

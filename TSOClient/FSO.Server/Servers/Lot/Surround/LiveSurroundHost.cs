@@ -74,18 +74,27 @@ namespace FSO.Server.Servers.Lot.Surround
                         FSOVMSurroundPuppets puppets = new();
                         var lots = new List<SurroundPuppetLot>();
 
+                        bool adjUpdated = conn.ConsumeDirty();
+
                         foreach (var adj in target.Value)
                         {
                             if (!evaluatedLots.TryGetValue(adj.LotLocation, out SurroundPuppetLot? value))
                             {
-                                var lot = adj.PullTick();
+                                value = adj.PullTick();
 
                                 evaluatedLots[adj.LotLocation] = value;
                             }
 
                             if (value.HasValue)
                             {
-                                lots.Add(value.Value);
+                                var lot = value.Value;
+
+                                if (adjUpdated)
+                                {
+                                    lot.ForceDirty = true;
+                                }
+
+                                lots.Add(lot);
                             }
                         }
 
