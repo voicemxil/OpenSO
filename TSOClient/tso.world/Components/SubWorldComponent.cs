@@ -6,8 +6,6 @@ using FSO.LotView.Platform;
 using FSO.LotView.Utils;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using System;
-using System.Collections.Generic;
 
 namespace FSO.LotView.Components
 {
@@ -17,11 +15,13 @@ namespace FSO.LotView.Components
         /// Creates a new World instance.
         /// </summary>
         /// <param name="Device">A GraphicsDevice instance.</param>
-        public SubWorldComponent(GraphicsDevice Device)
+        public SubWorldComponent(GraphicsDevice Device, int index)
             : base(Device)
         {
+            Index = index;
         }
 
+        public int Index;
         public Vector2 GlobalPosition;
         public bool UseFade = true;
 

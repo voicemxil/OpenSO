@@ -50,6 +50,7 @@ namespace FSO.Server.Servers.Lot.Domain
         private const bool TIME_DILATION_ENABLED = true;
         private const int TIME_DILATION_THRESHOLD_MS = 500; // Accelerate through half second pauses.
         private const int TIME_DILATION_SKIP_THRESHOLD_MS = 5000; // 5 seconds, or 1 ingame minute
+        private const uint HOLLOW_LOAD_ALL = 0b111111111;
 
         private const uint TRANSITION_GUID = 0x746ED02B;
 
@@ -1505,8 +1506,10 @@ namespace FSO.Server.Servers.Lot.Domain
                 }
                 Host.RecordStartVisit(session, visitorType);
 
+                var hollowLoadMask = (transitionInfo?.GetSurroundingLotMask() ?? HOLLOW_LOAD_ALL);
+
                 VMDriver.ConnectClient(client);
-                VMDriver.SendDirectCommand(client, new VMNetAdjHollowSyncCmd { HollowAdj = HollowLots.Result });
+                VMDriver.SendDirectCommand(client, BuildHollowAsyncCmd(hollowLoadMask));
 
                 var vmInventory = new List<VMInventoryItem>();
                 foreach (var item in inventory)
@@ -1522,6 +1525,29 @@ namespace FSO.Server.Servers.Lot.Domain
                     VMDriver.SendDirectCommand(client, new VMNetSM64AnimDataCmd { AnimData = sm64Data });
                 }
             }
+        }
+
+        private VMNetAdjHollowSyncCmd BuildHollowAsyncCmd(uint loadMask)
+        {
+            return new VMNetAdjHollowSyncCmd
+            {
+                HollowAdj = [.. HollowLots.Result.Select((x, index) =>
+                    {
+                        uint bit = 1u << index;
+
+                        VMHollowAdjType type;
+                        if ((loadMask & bit) != 0)
+                        {
+                            type = x == null ? VMHollowAdjType.Terrain : VMHollowAdjType.Hollow;
+                        }
+                        else
+                        {
+                            type = VMHollowAdjType.Reuse;
+                        }
+
+                        return new VMHollowAdjEntry(type, x);
+                    })]
+            };
         }
 
         public static VMInventoryItem InventoryItemFromDB(DbObject obj)

@@ -67,7 +67,7 @@ namespace FSO.SimAntics
         public bool Aborting = false;
 
         private const long TickInterval = 33 * TimeSpan.TicksPerMillisecond;
-        public byte[][] HollowAdj;
+        public VMHollowAdjEntry[] HollowAdj;
 
         public VMContext Context { get; internal set; }
 

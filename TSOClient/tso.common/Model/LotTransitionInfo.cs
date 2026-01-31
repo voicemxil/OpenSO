@@ -53,30 +53,41 @@ namespace FSO.Common.Model
         /// <returns></returns>
         public uint GetSurroundingLotMask()
         {
-            uint updateMask = 0;
+            uint updateMask = 0b111111111;
             var cityOffset = RelativeChangeLotToCity(new Point(RelativeChangeX, RelativeChangeY));
 
-            if (cityOffset.Y > 0)
+            int i = 0;
+            for (int y = -1; y < 2; y++)
             {
-                updateMask |= 0b010000111;
-            }
+                for (int x = -1; x < 2; x++)
+                {
+                    uint bit = 1u << i;
 
-            if (cityOffset.Y < 0)
-            {
-                updateMask |= 0b111000010;
-            }
+                    // If this lot was present as an old surround lot, we can inherit it.
+                    var oldX = x + cityOffset.X;
+                    var oldY = y + cityOffset.Y;
 
-            if (cityOffset.X > 0)
-            {
-                updateMask |= 0b001101001;
-            }
+                    if (Math.Abs(oldX) < 2 && Math.Abs(oldY) < 2 && !(oldX == 0 && oldY == 0))
+                    {
+                        // Within bounds, not the source lot.
+                        updateMask &= ~bit;
+                    }
 
-            if (cityOffset.X < 0)
-            {
-                updateMask |= 0b100101100;
+                    i++;
+                }
             }
 
             return updateMask;
+        }
+
+        public int GetOldSubworldForIndex(int index)
+        {
+            var cityOffset = RelativeChangeLotToCity(new Point(RelativeChangeX, RelativeChangeY));
+
+            index += cityOffset.X;
+            index += cityOffset.Y * 3;
+
+            return index;
         }
     }
 }

@@ -1,10 +1,34 @@
-﻿using System.IO;
-
-namespace FSO.SimAntics.NetPlay.Model.Commands
+﻿namespace FSO.SimAntics.NetPlay.Model.Commands
 {
+    public enum VMHollowAdjType : byte
+    {
+        None = 0,
+        Reuse = 1,
+        Terrain = 2,
+        Hollow = 3,
+    }
+
+    public struct VMHollowAdjEntry
+    {
+        public VMHollowAdjType Type;
+        public byte[] Data;
+
+        public VMHollowAdjEntry(VMHollowAdjType type, byte[] data)
+        {
+            Type = type;
+            Data = data;
+        }
+
+        public VMHollowAdjEntry(VMHollowAdjType type)
+        {
+            Type = type;
+            Data = null;
+        }
+    }
+
     public class VMNetAdjHollowSyncCmd : VMNetCommandBodyAbstract
     {
-        public byte[][] HollowAdj;
+        public VMHollowAdjEntry[] HollowAdj;
 
         public override bool AcceptFromClient { get { return false; } }
 
@@ -27,12 +51,11 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
             writer.Write(HollowAdj.Length);
             foreach (var item in HollowAdj)
             {
-                if (item == null) writer.Write(false);
-                else
+                writer.Write((byte)item.Type);
+                if (item.Type >= VMHollowAdjType.Hollow)
                 {
-                    writer.Write(true);
-                    writer.Write(item.Length);
-                    writer.Write(item);
+                    writer.Write(item.Data.Length);
+                    writer.Write(item.Data);
                 }
             }
         }
@@ -40,10 +63,13 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
         public override void Deserialize(BinaryReader reader)
         {
             base.Deserialize(reader);
-            HollowAdj = new byte[reader.ReadInt32()][];
+            HollowAdj = new VMHollowAdjEntry[reader.ReadInt32()];
             for (int i=0; i<HollowAdj.Length; i++)
             {
-                if (reader.ReadBoolean()) HollowAdj[i] = reader.ReadBytes(reader.ReadInt32());
+                var type = (VMHollowAdjType)reader.ReadByte();
+                var data = type >= VMHollowAdjType.Hollow ? reader.ReadBytes(reader.ReadInt32()) : null;
+
+                HollowAdj[i] = new VMHollowAdjEntry(type, data);
             }
         }
 

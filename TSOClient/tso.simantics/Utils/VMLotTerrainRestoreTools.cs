@@ -8,6 +8,7 @@ using FSO.SimAntics.Marshals.Hollow;
 using FSO.SimAntics.Model;
 using FSO.SimAntics.Model.TSOPlatform;
 using FSO.SimAntics.NetPlay.Drivers;
+using FSO.SimAntics.NetPlay.Model.Commands;
 using Microsoft.Xna.Framework;
 using System;
 using System.IO;
@@ -457,6 +458,11 @@ namespace FSO.SimAntics.Utils
             }
 
             return (int)(((sr[1, 1] + sr[1, 2] + sr[2, 2] + sr[2, 1]) / 4) * 100);
+        }
+
+        public static int GetBaseLevel(VM vm, int x, int y)
+        {
+            return GetBaseLevel(vm, vm.TSOState.Terrain, x, y);
         }
 
         public static int RestoreHeight(VM vm, VMTSOSurroundingTerrain terrain, int x, int y, bool flatten = true)
@@ -999,17 +1005,21 @@ namespace FSO.SimAntics.Utils
             }
         }
 
-        public static void RestoreSurroundings(VM vm, byte[][] hollowAdj)
+        public static void RestoreSurroundings(VM vm, VMHollowAdjEntry[] hollowAdj, bool modeSwitch = false)
         {
             var myArch = vm.Context.Architecture;
             var terrain = vm.TSOState.Terrain;
             var size = myArch.Width;
             var lotsMode = WorldConfig.Current.SurroundingLots;
-            foreach (var world in vm.Context.Blueprint.SubWorlds)
+
+            if (lotsMode == 0 || modeSwitch)
             {
-                world.Dispose();
+                foreach (var world in vm.Context.Blueprint.SubWorlds)
+                {
+                    world.Dispose();
+                }
+                vm.Context.Blueprint.SubWorlds.Clear();
             }
-            vm.Context.Blueprint.SubWorlds.Clear();
 
             var baseHeight = GetBaseLevel(vm, terrain, 1, 1);
             //vm.Context.Blueprint.BaseAlt = 0;// 128;
@@ -1024,18 +1034,39 @@ namespace FSO.SimAntics.Utils
             {
                 for (int x=0; x<3; x++)
                 {
+                    int i = y * 3 + x;
                     if (x == 1 & y == 1) continue; //that's us...
+
+                    var adj = hollowAdj[i];
+
+                    if (adj.Type < VMHollowAdjType.Terrain)
+                    {
+                        // Reuse or ignore
+                        continue;
+                    }
+
+                    // If there's an existing subworld with this lot id, replace it.
+                    vm.Context.Blueprint.SubWorlds.RemoveAll((x) =>
+                    {
+                        if (x.Index == i)
+                        {
+                            x.Dispose();
+                            return true;
+                        }
+
+                        return false;
+                    });
 
                     Point cityRelative = new Point(x - 1, y - 1);
                     uint newLocation = (uint)(((baseX + cityRelative.X) << 16) | ((baseY + cityRelative.Y) & 0xFFFF));
 
                     var gd = vm.Context.World.State.Device;
-                    var subworld = vm.Context.World.MakeSubWorld(gd);
+                    var subworld = vm.Context.World.MakeSubWorld(gd, i);
                     subworld.Initialize(gd);
                     var tempVM = new VM(new VMContext(subworld), new VMServerDriver(new VMTSOGlobalLinkStub()), new VMNullHeadlineProvider());
                     tempVM.Init();
 
-                    var state = (hollowAdj == null)? null : hollowAdj[y * 3 + x];
+                    var state = adj.Data;
                     if (lotsMode == 1) state = null;
 
                     float height;
@@ -1069,7 +1100,7 @@ namespace FSO.SimAntics.Utils
                         }
                         catch (Exception)
                         {
-                            hollowAdj[y * 3 + x] = null;
+                            hollowAdj[i] = new VMHollowAdjEntry(VMHollowAdjType.Terrain);
                             subworld.Dispose();
                             x--;
                             continue; //try this surrounding lot again, but as an empty one.

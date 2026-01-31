@@ -157,6 +157,14 @@ namespace FSO.LotView.Model
             this.SM64 = new SM64Component(this);
         }
 
+        public void AdjustBaseAlt(int altDiff)
+        {
+            float heightDiff = altDiff * TerrainFactor * -3;
+
+            WCRC?.AdjustHeight(heightDiff / 3);
+            RoofComp?.AdjustHeight(heightDiff);
+        }
+
         public void BoundAltPoint(ref int x, ref int y)
         {
             x = Math.Max(1, Math.Min(Width - 1, x));

@@ -1089,9 +1089,9 @@ namespace FSO.LotView
             return new ObjectComponent(obj);
         }
 
-        public virtual SubWorldComponent MakeSubWorld(GraphicsDevice gd)
+        public virtual SubWorldComponent MakeSubWorld(GraphicsDevice gd, int index)
         {
-            return new SubWorldComponent(gd);
+            return new SubWorldComponent(gd, index);
         }
 
         public BoundingBox[] SkyBounds;
