@@ -321,6 +321,8 @@ namespace FSO.Client.Rendering
                         puppets.Remove(toRemove);
                     }
                 }
+
+                ExpectedLots.Remove(lot.LotLocation);
             }
 
             DeleteLots(ExpectedLots);
