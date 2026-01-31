@@ -72,7 +72,11 @@ namespace FSO.Client.Rendering
                 TargetAvatar.Appearance = (AppearanceType)Puppet.SkinTone;
                 TargetAvatar.Head = FSO.Content.Content.Get().AvatarOutfits.Get(Puppet.HeadOutfit);
                 TargetAvatar.Body = FSO.Content.Content.Get().AvatarOutfits.Get(Puppet.BodyOutfit);
-                TargetAvatar.Handgroup = TargetAvatar.Body;
+
+                if (Puppet.SkeletonName == "adult")
+                {
+                    TargetAvatar.Handgroup = TargetAvatar.Body;
+                }
 
                 if (bp != LastBp || TargetAvatarComponent == null)
                 {

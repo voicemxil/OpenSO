@@ -1202,11 +1202,11 @@ namespace FSO.SimAntics
             return new SurroundPuppet()
             {
                 Delta = KillTimeout != -1 ? SurroundPuppetDelta.Leaving : 0,
-                PersistID = PersistID,
+                PersistID = PersistID == 0 ? (uint)ObjectID | 0xFFFF0000u : PersistID,
                 SkinTone = (uint)SkinTone,
-                BodyOutfit = BodyOutfit.ID,
-                HeadOutfit = HeadOutfit.ID,
-                SkeletonName = Avatar.Skeleton.Name,
+                BodyOutfit = BodyOutfit?.ID ?? 0,
+                HeadOutfit = HeadOutfit?.ID ?? 0,
+                SkeletonName = Avatar?.Skeleton?.Name ?? "adult",
                 VisualPositionStart = new Vector4(VisualPositionStart ?? VisualPosition, (float)RadianDirection),
                 Velocity = new Vector4(VisualPositionStart == null ? new Vector3() : Velocity, (float)TurnVelocity),
                 Appearances = BoundAppearances.Count == 0 ? [] : [.. BoundAppearances],

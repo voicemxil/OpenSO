@@ -48,9 +48,9 @@ namespace FSO.Server.Servers.Lot.Surround
             ExpectedAvatars.Clear();
             ExpectedAvatars.UnionWith(PuppetData.Keys);
 
-            foreach (var ava in vm.Context.ObjectQueries.AvatarsByPersist)
+            foreach (var ava in vm.Context.ObjectQueries.Avatars)
             {
-                var puppet = ava.Value.GetSurroundPuppet();
+                var puppet = ((VMAvatar)ava).GetSurroundPuppet();
 
                 if (PuppetData.TryGetValue(puppet.PersistID, out var existing))
                 {
