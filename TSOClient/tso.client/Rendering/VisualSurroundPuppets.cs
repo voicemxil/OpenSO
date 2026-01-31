@@ -285,6 +285,12 @@ namespace FSO.Client.Rendering
 
             foreach (ref var lot in tick.Lots.AsSpan())
             {
+                if (lot.Outdated)
+                {
+                    ExpectedLots.Remove(lot.LotLocation);
+                    continue;
+                }
+
                 if (!LotIdToPuppet.TryGetValue(lot.LotLocation, out var puppets))
                 {
                     puppets = [];

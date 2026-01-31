@@ -15,10 +15,10 @@ namespace FSO.Server.Protocol.Electron.Packets
     {
         public uint LotLocation;
         public SurroundPuppet[] Puppets;
+        // If this is true, the tick is outdated and shouldn't have its timestamp updated.
+        public bool Outdated;
 
         // Runtime only
-        // If this is true, the tick is outdated and shouldn't be sent to anyone who doesn't need an initial state.
-        public bool Outdated;
         // If this is true, this tick should have all dirty bits.
         public bool ForceDirty;
     }
@@ -41,7 +41,7 @@ namespace FSO.Server.Protocol.Electron.Packets
             int tickCount = input.GetInt32();
             if (tickCount > MAX_TICKS)
             {
-                throw new Exception($"Invalid puppet lot count {tickCount}");
+                throw new Exception($"Invalid tick count {tickCount}");
             }
 
             Ticks = new SurroundPuppetTick[tickCount];
@@ -57,7 +57,7 @@ namespace FSO.Server.Protocol.Electron.Packets
 
                 if (lotCount > MAX_LOTS)
                 {
-                    throw new Exception($"Invalid tick count {lotCount}");
+                    throw new Exception($"Invalid puppet lot count {lotCount}");
                 }
 
                 var lots = new SurroundPuppetLot[lotCount];
@@ -71,19 +71,27 @@ namespace FSO.Server.Protocol.Electron.Packets
 
                     int puppetCount = input.GetInt32();
 
-                    if (puppetCount > MAX_CHARACTERS)
+                    if (puppetCount == -1)
                     {
-                        throw new Exception($"Invalid character count {lotCount}");
+                        lot.Puppets = [];
+                        lot.Outdated = true;
                     }
-
-                    var puppets = new SurroundPuppet[puppetCount];
-
-                    for (int k = 0; k < puppetCount; k++)
+                    else
                     {
-                        puppets[k] = ReadPuppet(input);
-                    }
+                        if (puppetCount > MAX_CHARACTERS)
+                        {
+                            throw new Exception($"Invalid character count {lotCount}");
+                        }
 
-                    lot.Puppets = puppets;
+                        var puppets = new SurroundPuppet[puppetCount];
+
+                        for (int k = 0; k < puppetCount; k++)
+                        {
+                            puppets[k] = ReadPuppet(input);
+                        }
+
+                        lot.Puppets = puppets;
+                    }
 
                     lots[j] = lot;
                 }
@@ -177,18 +185,20 @@ namespace FSO.Server.Protocol.Electron.Packets
             {
                 output.PutUInt32(tick.TickID);
 
-                var tickCount = NewPlayer ? tick.Lots.Length : tick.Lots.Count(x => !x.Outdated);
+                var tickCount = tick.Lots.Length;
 
                 output.PutInt32(tickCount);
 
                 foreach (ref var lot in tick.Lots.AsSpan())
                 {
+                    output.PutUInt32(lot.LotLocation);
+
                     if (!NewPlayer && lot.Outdated)
                     {
+                        output.PutInt32(-1);
                         continue;
                     }
 
-                    output.PutUInt32(lot.LotLocation);
                     output.PutInt32(lot.Puppets.Length);
 
                     foreach (ref var puppet in lot.Puppets.AsSpan())
