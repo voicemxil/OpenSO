@@ -25,6 +25,8 @@ namespace FSO.Client.Rendering
 
         private Blueprint LastBp;
         private bool ReloadPuppet = false;
+        private bool UpdateAppearances = false;
+        private string[] LastAppearances;
         private Vector3 LotOffset;
 
         public bool IsLeaving => Puppet.Delta.HasFlag(SurroundPuppetDelta.Leaving);
@@ -55,6 +57,11 @@ namespace FSO.Client.Rendering
             if (puppet.Delta.HasFlag(SurroundPuppetDelta.BodyInfo))
             {
                 ReloadPuppet = true;
+            }
+
+            if (puppet.Delta.HasFlag(SurroundPuppetDelta.Appearances))
+            {
+                UpdateAppearances = true;
             }
 
             StartTimestamp = startTimestamp;
@@ -101,6 +108,31 @@ namespace FSO.Client.Rendering
 
             if (TargetAvatar != null)
             {
+                if (UpdateAppearances)
+                {
+                    var oldApr = LastAppearances ?? [];
+                    var newApr = Puppet.Appearances ?? [];
+
+                    var toAdd = newApr.Where(x => Array.IndexOf(oldApr, x) == -1);
+                    var toRemove = oldApr.Where(x => Array.IndexOf(newApr, x) == -1);
+
+                    var appearances = Content.Content.Get().AvatarAppearances;
+
+                    foreach (var aprN in toAdd)
+                    {
+                        var apr = appearances.Get(aprN);
+                        if (apr != null) TargetAvatar.AddAccessory(apr);
+                    }
+
+                    foreach (var aprN in toRemove)
+                    {
+                        var apr = appearances.Get(aprN);
+                        if (apr != null) TargetAvatar.RemoveAccessory(apr);
+                    }
+
+                    LastAppearances = newApr;
+                }
+
                 // Update the avatar's position and animation based on the frame timing.
                 float fraction = (renderTimestamp - StartTimestamp) / ((float)Stopwatch.Frequency / 30f);
 
@@ -284,6 +316,7 @@ namespace FSO.Client.Rendering
 
         private void ProcessTick(uint myID, SurroundPuppetTick tick)
         {
+            var isTransitioning = Screen.VisualVM != Screen.vm;
             ExpectedLots.Clear();
             ExpectedLots.UnionWith(LotIdToPuppet.Keys);
 
@@ -335,7 +368,10 @@ namespace FSO.Client.Rendering
                 ExpectedLots.Remove(lot.LotLocation);
             }
 
-            DeleteLots(ExpectedLots);
+            if (!isTransitioning)
+            {
+                DeleteLots(ExpectedLots);
+            }
         }
 
         public bool ProcessInstantly(in SurroundPuppetTick tick)
