@@ -123,6 +123,7 @@ namespace FSO.Client.UI.Panels
         public I3DRotate Rotate { get { return World.State.Cameras.Camera3D; } } //(I3DRotate)World.State; } }
         public bool TVisible { get { return Visible; } }
         public bool UserModZoom { get; set; }
+        public bool StealFocus { get; set; }
 
         public bool EnableTransitions = true;
 
@@ -135,7 +136,6 @@ namespace FSO.Client.UI.Panels
         // and that the code actually blocks further dialogs from appearing while waiting for a response.
         // If we are to implement controlling multiple sims, this must be changed.
         private UIAlert BlockingDialog;
-        private UIAlert DialogTakeFocus;
         private UINeighborhoodSelectionPanel TS1NeighSelector;
         private ulong LastDialogID;
 
@@ -354,7 +354,7 @@ namespace FSO.Client.UI.Panels
                 LastDialogID = info.DialogID;
             }
 
-            DialogTakeFocus = alert;
+            StealFocus = true;
 
             var entity = info.Icon;
             if (entity is VMGameObject)
@@ -1053,11 +1053,11 @@ namespace FSO.Client.UI.Panels
                 }
             }
 
-            if (DialogTakeFocus != null)
+            if (StealFocus)
             {
-                // Right now just steal it from the game. In future it should be given to the OK button.
+                // Right now just steal it from the game. In future dialog focus could be given to the OK button.
                 state.InputManager.SetFocus(this);
-                DialogTakeFocus = null;
+                StealFocus = false;
             }
 
             if (Visible)

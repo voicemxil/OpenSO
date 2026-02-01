@@ -39,7 +39,7 @@ namespace FSO.Client.UI.Screens
 {
     public class CoreGameScreen : FSO.Client.UI.Framework.GameScreen, IGameScreen
     {
-        public UIUCP ucp;
+        public UIUCP ucp { get; set; }
         public UIGizmo gizmo;
         public UIInbox Inbox;
         public UIGameTitle Title;
