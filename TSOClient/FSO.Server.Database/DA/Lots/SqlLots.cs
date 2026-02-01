@@ -149,9 +149,19 @@ namespace FSO.Server.Database.DA.Lots
  
         public List<DbLot> GetAdjToLocation(int shard_id, uint location)
         {
+            uint[] locations = new uint[8];
+            int i = 0;
+            for (int y = -1; y < 2; y++)
+            {
+                for (int x = -1; x < 2; x++)
+                {
+                    if (y == 0 && x == 0) continue;
+                    locations[i++] = (uint)(location + (x * 65536) + y);
+                }
+            }
+
             return Context.Connection.Query<DbLot>("SELECT * FROM fso_lots WHERE "
-                + "(ABS(CAST((location&65535) AS SIGNED) - CAST((@location&65535) AS SIGNED)) = 1 OR ABS(CAST((location/65536) AS SIGNED) - CAST((@location/65536) AS SIGNED)) = 1) "
-                + "AND shard_id = @shard_id AND move_flags = 0", new { location = location, shard_id = shard_id }).ToList();
+                + "shard_id = @shard_id AND location IN @locations AND move_flags = 0", new { locations, shard_id }).ToList();
         }
 
         public void RenameLot(int id, string newName)
