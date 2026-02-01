@@ -29,6 +29,8 @@ namespace FSO.Client.Rendering
         private string[] LastAppearances;
         private Vector3 LotOffset;
 
+        private SurroundPuppetDelta MissingDelta = SurroundPuppetDelta.Required;
+
         public bool IsLeaving => Puppet.Delta.HasFlag(SurroundPuppetDelta.Leaving);
 
         public VisualSurroundPuppet(VisualSurroundPuppets parent, uint lotLocation)
@@ -64,11 +66,19 @@ namespace FSO.Client.Rendering
                 UpdateAppearances = true;
             }
 
+            MissingDelta &= ~puppet.Delta;
+
             StartTimestamp = startTimestamp;
         }
 
         public void PreDraw(uint parentLocation, Blueprint bp, long renderTimestamp)
         {
+            if (MissingDelta != 0)
+            {
+                // Need to see at least one delta for certain fields to draw at all.
+                return;
+            }
+
             if ((bp != LastBp || ReloadPuppet || TargetAvatar == null) && bp != null)
             {
                 if (TargetAvatar == null)

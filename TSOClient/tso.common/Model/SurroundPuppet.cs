@@ -15,6 +15,8 @@ namespace FSO.Common.Model
         Animation = AnimationNames | AnimationState,
         All = BodyInfo | Position | Appearances | Animation,
 
+        Required = BodyInfo | Position | Animation,
+
         // This isn't a delta flag - it's just a special flag that means that this puppet should disappear
         // if there's a puppet somewhere else without the flag, or a user on the source lot.
         // This prevents some duplicate overlapping puppets during lot transitions.
