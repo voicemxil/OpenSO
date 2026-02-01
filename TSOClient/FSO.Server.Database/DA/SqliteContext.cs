@@ -83,6 +83,12 @@ namespace FSO.Server.Database.DA
             if (updateKey != null)
             {
                 sql = sql.Replace("ON DUPLICATE KEY UPDATE", $"ON CONFLICT({updateKey}) DO UPDATE SET");
+
+                var valuesPatch = "VALUES(`value`);";
+                if (sql.EndsWith(valuesPatch))
+                {
+                    sql = string.Concat(sql.AsSpan(0, sql.Length - valuesPatch.Length), "excluded.`value`;");
+                }
             }
 
             return sql;
