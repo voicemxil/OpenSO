@@ -69,7 +69,11 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                 }
             }
 
-            if (VM.UseWorld) FSO.HIT.HITVM.Get().PlaySoundEvent("lot_enter");
+            // Try to avoid playing the lot enter sound for the active player when transitioning between lots.
+            if (VM.UseWorld && ((TransitionInfo == null && vm.Ready) || vm.MyUID != AvatarState.PersistID))
+            {
+                FSO.HIT.HITVM.Get().PlaySoundEvent("lot_enter");
+            }
 
             if (toMailbox)
             {
