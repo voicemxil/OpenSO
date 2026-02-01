@@ -106,7 +106,7 @@ namespace FSO.SimAntics.Primitives
 
                 bool loop = (operand.SearchType == VMSetToNextSearchType.ObjectOnSameTile) || (operand.SearchType == VMSetToNextSearchType.FamilyMember);
 
-                var ind = VM.FindNextIndexInObjList(entities, targetValue);
+                var ind = entities.FindNextIndexInObjList(targetValue);
                 for (int i=ind; i<entities.Count; i++) //generic search through all objects
                 {
                     var temp = entities[i];

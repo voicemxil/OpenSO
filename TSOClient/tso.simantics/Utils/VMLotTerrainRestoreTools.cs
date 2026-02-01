@@ -842,7 +842,7 @@ namespace FSO.SimAntics.Utils
 
         private static VMEntity EntityByGUID(VM vm, uint GUID)
         {
-            return vm.Entities.FindAll(x => (x.MasterDefinition?.GUID ?? 0) == GUID || x.Object.GUID == GUID).FirstOrDefault();
+            return vm.Entities.FirstOrDefault(x => (x.MasterDefinition?.GUID ?? 0) == GUID || x.Object.GUID == GUID);
         }
 
         private static byte RotateByte(byte flags, int amount)

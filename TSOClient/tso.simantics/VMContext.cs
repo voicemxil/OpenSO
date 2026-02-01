@@ -585,7 +585,7 @@ namespace FSO.SimAntics
             RoomInfo = new VMRoomInfo[Architecture.RoomData.Count()];
             for (int i = 0; i < RoomInfo.Length; i++)
             {
-                RoomInfo[i].Entities = new List<VMEntity>();
+                RoomInfo[i].Entities = [];
                 RoomInfo[i].Portals = new List<VMRoomPortal>();
                 RoomInfo[i].WindowPortals = new List<VMRoomPortal>();
                 RoomInfo[i].Room = Architecture.RoomData[i];
@@ -598,7 +598,7 @@ namespace FSO.SimAntics
             {
                 var room = GetObjectRoom(obj);
                 var roomInfo = RoomInfo[room];
-                VM.AddToObjList(roomInfo.Entities, obj);
+                roomInfo.Entities.AddToObjList(obj);
 
                 //register collision footprint (if present)
                 var footprint = obj.Footprint;
@@ -944,7 +944,7 @@ namespace FSO.SimAntics
             if (roomChange)
             {
                 var roomInfo = RoomInfo[room];
-                VM.AddToObjList(roomInfo.Entities, obj); //if it's already in this room, this will do nothing
+                roomInfo.Entities.AddToObjList(obj); //if it's already in this room, this will do nothing
 
                 //register collision footprint (if present)
                 var footprint = obj.Footprint;
@@ -995,7 +995,7 @@ namespace FSO.SimAntics
             if (roomChange)
             {
                 var room = GetObjectRoom(obj);
-                VM.DeleteFromObjList(RoomInfo[room].Entities, obj);
+                RoomInfo[room].Entities.DeleteFromObjList(obj);
 
                 //unregister collision footprint (if present)
                 obj.Footprint?.Unregister();
