@@ -1710,23 +1710,26 @@ namespace FSO.Server.Servers.Lot.Domain
             }
             state.MotiveData = motives;
 
-            var relDict = new Dictionary<uint, List<int>>();
+            var relDict = new Dictionary<uint, List<int>>(rels.Count);
             foreach (var rel in rels)
             {
-                if (!relDict.ContainsKey(rel.to_id)) relDict[rel.to_id] = new List<int>();
-                var list = relDict[rel.to_id];
+                if (!relDict.TryGetValue(rel.to_id, out var list))
+                {
+                    list = [];
+                    relDict[rel.to_id] = list;
+                }
                 while (list.Count <= rel.index) list.Add(0);
                 list[(int)rel.index] = rel.value;
             }
 
             state.Relationships = new VMEntityPersistRelationshipMarshal[relDict.Count];
-            for (int i=0; i<relDict.Count; i++)
+            int relI = 0;
+            foreach (var dictItem in relDict)
             {
-                var dictItem = relDict.ElementAt(i);
                 var marshal = new VMEntityPersistRelationshipMarshal();
                 marshal.Target = dictItem.Key;
-                marshal.Values = dictItem.Value.ConvertAll(x => (short)x).ToArray();
-                state.Relationships[i] = marshal;
+                marshal.Values = [.. dictItem.Value.Select(x => (short)x)];
+                state.Relationships[relI++] = marshal;
             }
 
             return state;
