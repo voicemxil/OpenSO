@@ -1,6 +1,7 @@
 ﻿using System;
 using FSO.Content;
 using FSO.SimAntics.Marshals.Threads;
+using FSO.SimAntics.Model;
 
 namespace FSO.SimAntics.Engine
 {
@@ -84,7 +85,7 @@ namespace FSO.SimAntics.Engine
         /**
          * Arguments
          */
-        public short[] Args;
+        public VMArguments Args;
 
         public GameObjectResource CallerPrivate
         {
@@ -146,7 +147,7 @@ namespace FSO.SimAntics.Engine
                 StackObject = StackObjectID,
                 CodeOwnerGUID = CodeOwner.OBJ.GUID,
                 Locals = (short[])Locals?.Clone(),
-                Args = (short[])Args?.Clone(),
+                Args = Args.Clone(),
                 SpecialResult = SpecialResult,
                 ActionTree = ActionTree,
             };
@@ -174,7 +175,7 @@ namespace FSO.SimAntics.Engine
             {
                 Locals = input.Locals;
             }
-            Args = input.Args;
+            Args = new VMArguments(input.Args);
             SpecialResult = input.SpecialResult;
             ActionTree = input.ActionTree;
         }

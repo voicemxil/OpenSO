@@ -504,15 +504,14 @@ namespace FSO.SimAntics
             }
 
             ExecuteEntryPoint(0, context, true); //Init
-            ExecuteEntryPoint(8, context, true, null, new short[] { 0, 0, 0, 0 }); //dynamic multitile - say we don't have any adjacent objects to start
+            ExecuteEntryPoint(8, context, true, null, default); //dynamic multitile - say we don't have any adjacent objects to start
 
             if (!GhostImage)
             {
-                short[] Args = null;
+                VMArguments Args = default;
                 VMEntity StackOBJ = null;
                 if (MainParam != 0)
                 {
-                    Args = new short[4];
                     Args[0] = MainParam;
                     MainParam = 0;
                 }
@@ -568,15 +567,15 @@ namespace FSO.SimAntics
 
         public bool ExecuteEntryPoint(int entry, VMContext context, bool runImmediately)
         {
-            return ExecuteEntryPoint(entry, context, runImmediately, null, null);
+            return ExecuteEntryPoint(entry, context, runImmediately, null, default);
         }
 
         public bool ExecuteEntryPoint(int entry, VMContext context, bool runImmediately, VMEntity stackOBJ)
         {
-            return ExecuteEntryPoint(entry, context, runImmediately, stackOBJ, null);
+            return ExecuteEntryPoint(entry, context, runImmediately, stackOBJ, default);
         }
 
-        public bool ExecuteGenericEntryPoint(OBJfFunctionEntry entry, VMContext context, bool runImmediately, VMEntity stackOBJ, short[] args)
+        public bool ExecuteGenericEntryPoint(OBJfFunctionEntry entry, VMContext context, bool runImmediately, VMEntity stackOBJ, in VMArguments args)
         {
             if (entry.ActionFunction > 255)
             {
@@ -632,9 +631,8 @@ namespace FSO.SimAntics
             }
         }
 
-        public bool ExecuteEntryPoint(int entry, VMContext context, bool runImmediately, VMEntity stackOBJ, short[] args)
+        public bool ExecuteEntryPoint(int entry, VMContext context, bool runImmediately, VMEntity stackOBJ, in VMArguments args)
         {
-            if (args == null) args = new short[4];
             if (entry == 11)
             {
                 //user placement, hack to do auto floor removal/placement for stairs
@@ -651,7 +649,7 @@ namespace FSO.SimAntics
 
             if (entry < EntryPoints.Length)
             {
-                return ExecuteGenericEntryPoint(EntryPoints[entry], context, runImmediately, stackOBJ, args);
+                return ExecuteGenericEntryPoint(EntryPoints[entry], context, runImmediately, stackOBJ, in args);
             }
             else
             {
@@ -659,7 +657,7 @@ namespace FSO.SimAntics
             }
         }
 
-        public bool ExecuteNamedEntryPoint(string name, VMContext context, bool runImmediately, VMEntity stackOBJ, short[] args)
+        public bool ExecuteNamedEntryPoint(string name, VMContext context, bool runImmediately, VMEntity stackOBJ, in VMArguments args)
         {
             VMTreeByNameTableEntry tree;
             if (TreeByName.TryGetValue(name, out tree))
@@ -1592,7 +1590,7 @@ namespace FSO.SimAntics
                     flags |= 1 << dirDiff;
                 }
             }
-            ExecuteEntryPoint(8, context, true, null, new short[] { (short)flags, 0, 0, 0 });
+            ExecuteEntryPoint(8, context, true, null, new([(short)flags, 0, 0, 0]));
         }
 
         public void UpdateDynamicMultitileFlags(VMContext context)
@@ -1611,7 +1609,7 @@ namespace FSO.SimAntics
                     flags |= 1 << dirDiff;
                 }
             }
-            ExecuteEntryPoint(8, context, true, null, new short[] { (short)flags, 0, 0, 0 });
+            ExecuteEntryPoint(8, context, true, null, new([(short)flags, 0, 0, 0]));
         }
 
         public abstract Texture2D GetIcon(GraphicsDevice gd, int store);

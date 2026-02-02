@@ -366,8 +366,8 @@ namespace FSO.SimAntics.Engine
                 if (obj != Caller && ft != null &&
                     (obj is VMGameObject || (considerAvatars && AvatarsToConsider.Contains(obj))) &&
                     ((flags & VMEntityFlags.DisallowPersonIntersection) > 0 || (flags & VMEntityFlags.AllowPersonIntersection) == 0)
-                    && (!(Caller.ExecuteEntryPoint(5, VM.Context, true, obj, new short[] { obj.ObjectID, 1, 0, 0 })
-                        || obj.ExecuteEntryPoint(5, VM.Context, true, Caller, new short[] { Caller.ObjectID, 1, 0, 0 }))))
+                    && (!(Caller.ExecuteEntryPoint(5, VM.Context, true, obj, new([obj.ObjectID, 1, 0, 0]))
+                        || obj.ExecuteEntryPoint(5, VM.Context, true, Caller, new([Caller.ObjectID, 1, 0, 0])))))
                     obstacles.Add(new VMObstacle(ft.x1-3, ft.y1-3, ft.x2+3, ft.y2+3));
             }
 
@@ -470,7 +470,7 @@ namespace FSO.SimAntics.Engine
                             CodeOwner = Behavior.owner,
                             StackObject = ent,
                             Routine = Behavior.routine,
-                            Args = new short[4]
+                            Args = default
                         }) == VMPrimitiveExitCode.RETURN_TRUE);
                     }
                     else Execute = true;
@@ -496,7 +496,7 @@ namespace FSO.SimAntics.Engine
                         StackObject = ent,
                         ActionTree = ActionTree
                     };
-                    childFrame.Args = new short[routine.Arguments];
+                    childFrame.Args = new(routine.Arguments);
                     Thread.Push(childFrame);
                     return true;
                 }

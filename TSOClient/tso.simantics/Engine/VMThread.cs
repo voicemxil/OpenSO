@@ -55,8 +55,8 @@ namespace FSO.SimAntics.Engine
         public bool QueueDirty;
 
         public sbyte ActiveQueueBlock = -1; //cannot reorder items in the queue with index <= this.
-        public short[] TempRegisters = new short[20];
-        public int[] TempXL = new int[2];
+        public VMTempRegisters TempRegisters;
+        public VMTempXLRegisters TempXL;
         public VMPrimitiveExitCode LastStackExitCode = VMPrimitiveExitCode.GOTO_FALSE;
 
         public VMAsyncState BlockingState;
@@ -92,12 +92,12 @@ namespace FSO.SimAntics.Engine
         public static VMPrimitiveExitCode EvaluateCheck(VMContext context, VMEntity entity, VMStackFrame initFrame, VMQueuedAction action, List<VMPieMenuInteraction> actionStrings)
         {
             var temp = new VMThread(context, entity, 5);
-            var forceClone = !context.VM.Scheduler.RunningNow;
+            var forceClone = entity.Thread != null && !context.VM.Scheduler.RunningNow;
             //temps should only persist on check trees running within the vm tick to avoid desyncs.
             if (entity.Thread != null)
             {
-                temp.TempRegisters = forceClone?(short[])entity.Thread.TempRegisters.Clone() : entity.Thread.TempRegisters;
-                temp.TempXL = forceClone ? (int[])entity.Thread.TempXL.Clone() : entity.Thread.TempXL;
+                temp.TempRegisters = entity.Thread.TempRegisters;
+                temp.TempXL = entity.Thread.TempXL;
             }
             temp.IsCheck = true;
             temp.ActionStrings = actionStrings; //generate and place action strings in here
@@ -112,6 +112,14 @@ namespace FSO.SimAntics.Engine
                 temp.Tick();
                 temp.ThreadBreak = VMThreadBreakMode.Active; //cannot breakpoint in check trees
             }
+
+            // Need to copy temps back
+            if (forceClone)
+            {
+                entity.Thread.TempRegisters = temp.TempRegisters;
+                entity.Thread.TempXL = temp.TempXL;
+            }
+
             if (actionStrings != null && actionStrings.Count == 0)
             {
                 //add an action string containing any modified ads
@@ -505,7 +513,7 @@ namespace FSO.SimAntics.Engine
                 _StackObjectID = frame.StackObjectID, //pass this without doing a lookup
                 ActionTree = frame.ActionTree
             };
-            childFrame.Args = new short[(routine.Arguments > 4) ? routine.Arguments : 4];
+            childFrame.Args = new VMArguments((routine.Arguments > 4) ? routine.Arguments : 4);
             for (var i = 0; i < childFrame.Args.Length; i++)
             {
                 short argValue = (i > 3) ? (short)-1 : args.Arguments[i];
@@ -742,7 +750,7 @@ namespace FSO.SimAntics.Engine
 
             /** Initialize the locals **/
             var numLocals = Math.Max(frame.Routine.Locals, frame.Routine.Arguments);
-            frame.Locals = new short[numLocals];
+            frame.Locals = numLocals == 0 ? [] : new short[numLocals];
             frame.Thread = this;
 
             frame.InstructionPointer = 0;
@@ -926,7 +934,7 @@ namespace FSO.SimAntics.Engine
             }
             if (action.CheckRoutine != null)
             {
-                var args = new short[4];
+                VMArguments args = default;
                 if (auto) args[0] = 1;
                 if (EvaluateCheck(Context, Entity, new VMStackFrame()
                 {
@@ -1032,7 +1040,7 @@ namespace FSO.SimAntics.Engine
             if ((!action.Flags.HasFlag(TTABFlags.FSOSkipPermissions) || ((action.Flags & TTABFlags.TSORunCheckAlways) > 0))
                 && action.CheckRoutine != null)
             {
-                var args = new short[4];
+                VMArguments args = default;
                 if (auto) args[0] = 1;
                 if (EvaluateCheck(Context, Entity, new VMStackFrame()
                 {
@@ -1096,8 +1104,8 @@ namespace FSO.SimAntics.Engine
                 Stack = stack,
                 Queue = queue,
                 ActiveQueueBlock = ActiveQueueBlock,
-                TempRegisters = (short[])TempRegisters.Clone(),
-                TempXL = (int[])TempXL.Clone(),
+                TempRegisters = TempRegisters.AsSpan().ToArray(),
+                TempXL = TempXL.AsSpan().ToArray(),
                 LastStackExitCode = LastStackExitCode,
 
                 BlockingState = BlockingState,
@@ -1133,8 +1141,8 @@ namespace FSO.SimAntics.Engine
             QueueDirty = true;
             foreach (var item in input.Queue) Queue.Add(new VMQueuedAction(item, context));
             ActiveQueueBlock = input.ActiveQueueBlock;
-            TempRegisters = input.TempRegisters;
-            TempXL = input.TempXL;
+            TempRegisters = new(input.TempRegisters);
+            TempXL = new(input.TempXL);
             LastStackExitCode = input.LastStackExitCode;
 
             BlockingState = input.BlockingState;

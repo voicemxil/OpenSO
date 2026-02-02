@@ -1,4 +1,5 @@
 ﻿using System.Collections;
+using System.Runtime.InteropServices;
 
 namespace FSO.SimAntics.Model
 {
@@ -26,15 +27,16 @@ namespace FSO.SimAntics.Model
 
         public void AddToObjList(T entity)
         {
-            if (Count == 0) { Add(entity); return; }
+            var raw = CollectionsMarshal.AsSpan(List);
+            if (raw.Length == 0) { Add(entity); return; }
 
             int id = entity.ObjectID;
-            int max = Count;
+            int max = raw.Length;
             int min = 0;
             while (max > min)
             {
                 int mid = (max + min) / 2;
-                int nid = List[mid].ObjectID;
+                int nid = raw[mid].ObjectID;
                 if (id < nid) max = mid;
                 else if (id == nid) return; //do not add dupes
                 else min = mid + 1;
@@ -44,14 +46,16 @@ namespace FSO.SimAntics.Model
 
         public int FindInObjList(T entity)
         {
-            if (Count == 0) { return -1; }
+            var raw = CollectionsMarshal.AsSpan(List);
+            if (raw.Length == 0) { return -1; }
+
             int id = entity.ObjectID;
-            int max = Count;
+            int max = raw.Length;
             int min = 0;
             while (max > min)
             {
                 int mid = (max + min) / 2;
-                int nid = List[mid].ObjectID;
+                int nid = raw[mid].ObjectID;
                 if (id < nid) max = mid;
                 else if (id == nid)
                 {
@@ -65,14 +69,16 @@ namespace FSO.SimAntics.Model
 
         public bool DeleteFromObjList(T entity)
         {
-            if (Count == 0) { return false; }
+            var raw = CollectionsMarshal.AsSpan(List);
+            if (raw.Length == 0) { return false; }
+
             int id = entity.ObjectID;
-            int max = Count;
+            int max = raw.Length;
             int min = 0;
             while (max > min)
             {
                 int mid = (max + min) / 2;
-                int nid = List[mid].ObjectID;
+                int nid = raw[mid].ObjectID;
                 if (id < nid) max = mid;
                 else if (id == nid)
                 {
@@ -86,14 +92,16 @@ namespace FSO.SimAntics.Model
 
         public int FindNextIndexInObjList(short targId)
         {
-            if (Count == 0) return 0;
-            int count = Count;
+            var raw = CollectionsMarshal.AsSpan(List);
+            int count = raw.Length;
+            if (count == 0) return 0;
+
             int max = count;
             int min = 0;
             while (max > min)
             {
                 int mid = (max + min) / 2;
-                int nid = List[mid].ObjectID;
+                int nid = raw[mid].ObjectID;
                 if (targId < nid) max = mid; //target object is below us
                 else if (targId == nid)
                 {
@@ -103,7 +111,7 @@ namespace FSO.SimAntics.Model
                 else min = mid + 1; //target object is above us
             }
             if (min >= count) return count;
-            return List[min].ObjectID > targId ? min : min + 1;
+            return raw[min].ObjectID > targId ? min : min + 1;
         }
 
         public int IndexOf(T item)

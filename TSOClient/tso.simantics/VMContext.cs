@@ -1213,8 +1213,8 @@ namespace FSO.SimAntics
                 if (obj.MultitileGroup == target.MultitileGroup) continue;
                 var ghost = (short)((target.GhostImage || obj.GhostImage) ? 1 : 0);
 
-                if ((!(target.ExecuteEntryPoint(5, this, true, obj, new short[] { obj.ObjectID, ghost, 0, 0 })
-                        || obj.ExecuteEntryPoint(5, this, true, target, new short[] { target.ObjectID, ghost, 0, 0 })))
+                if ((!(target.ExecuteEntryPoint(5, this, true, obj, new([obj.ObjectID, ghost, 0, 0]))
+                        || obj.ExecuteEntryPoint(5, this, true, target, new([target.ObjectID, ghost, 0, 0]))))
                     )
                 {
                     var flags = (VMEntityFlags)obj.GetValue(VMStackObjectVariable.Flags);
@@ -1266,8 +1266,8 @@ namespace FSO.SimAntics
                     || (target.IgnoreIntersection != null && target.IgnoreIntersection.Objects.Contains(obj))) continue;
                 var ghost = (short)((target.GhostImage || obj.GhostImage) ? 1 : 0);
 
-                if ((!(target.ExecuteEntryPoint(5, this, true, obj, new short[] { obj.ObjectID, ghost, 0, 0 })
-                        || obj.ExecuteEntryPoint(5, this, true, target, new short[] { target.ObjectID, ghost, 0, 0 })))
+                if ((!(target.ExecuteEntryPoint(5, this, true, obj, new([obj.ObjectID, ghost, 0, 0]))
+                        || obj.ExecuteEntryPoint(5, this, true, target, new([target.ObjectID, ghost, 0, 0]))))
                     )
                 {
                     statusObj = obj; 

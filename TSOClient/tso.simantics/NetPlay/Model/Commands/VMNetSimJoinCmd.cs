@@ -168,7 +168,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                 {
                     foreach (var obj in oow)
                     {
-                        obj.ExecuteNamedEntryPoint("CT - FSO Player Joined", vm.Context, true, obj, new short[] { avatar.ObjectID, 0, 0, 0 });
+                        obj.ExecuteNamedEntryPoint("CT - FSO Player Joined", vm.Context, true, obj, new([avatar.ObjectID, 0, 0, 0 ]));
                     }
                 }
             }
