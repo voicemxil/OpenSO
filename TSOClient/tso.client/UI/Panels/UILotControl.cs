@@ -630,6 +630,13 @@ namespace FSO.Client.UI.Panels
             Point targetCityOffset = LotTransitionInfo.RelativeChangeLotToCity(targetLotOffset);
             var newLocation = new MapCoordinate(myLocation + targetCityOffset);
 
+            // TODO: pull map data from screen?
+
+            if (!MapCoordinates.InBounds(newLocation.X, newLocation.Y))
+            {
+                return false;
+            }
+
             var packed = MapCoordinates.Pack(newLocation.X, newLocation.Y);
 
             TransitionObject.SetAttribute(1, (short)newLocation.Y); // lot id (low)

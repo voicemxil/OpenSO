@@ -75,9 +75,9 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                 FSO.HIT.HITVM.Get().PlaySoundEvent("lot_enter");
             }
 
+            var mailbox = vm.Entities.FirstOrDefault(x => (x.Object.OBJ.GUID == 0xEF121974 || x.Object.OBJ.GUID == 0x1D95C9B0));
             if (toMailbox)
             {
-                var mailbox = vm.Entities.FirstOrDefault(x => (x.Object.OBJ.GUID == 0xEF121974 || x.Object.OBJ.GUID == 0x1D95C9B0));
                 if (mailbox != null) VMFindLocationFor.FindLocationFor(sim, mailbox, vm.Context, VMPlaceRequestFlags.Default);
                 else sim.SetPosition(LotTilePos.FromBigTile(3, 3, 1), Direction.NORTH, vm.Context);
             }
@@ -181,7 +181,36 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                 }
                 else if (TransitionInfo.Type == LotTransitionType.Routing)
                 {
-                    VMNetGotoCmd.QueueGoto(vm, avatar, new LotTilePos((short)TransitionInfo.RoutingLotTilePosX, (short)TransitionInfo.RoutingLotTilePosY, 1));
+                    int w = vm.Context.Architecture.Width << 4;
+                    int h = vm.Context.Architecture.Height << 4;
+                    int targX = TransitionInfo.RoutingLotTilePosX;
+                    int targY = TransitionInfo.RoutingLotTilePosY;
+                    bool targInBounds = targX >= 0 && targX < w && targY >= h && targY < h;
+
+                    if (!targInBounds || !VMNetGotoCmd.QueueGoto(vm, avatar, new LotTilePos((short)TransitionInfo.RoutingLotTilePosX, (short)TransitionInfo.RoutingLotTilePosY, 1)))
+                    {
+                        // Try to go behind the mailbox.
+                        if (mailbox != null)
+                        {
+                            LotTilePos tpos = new LotTilePos(mailbox.Position);
+                            switch (mailbox.Direction)
+                            {
+                                case Direction.SOUTH:
+                                    tpos.y += 16;
+                                    break;
+                                case Direction.WEST:
+                                    tpos.x -= 16;
+                                    break;
+                                case Direction.EAST:
+                                    tpos.x += 16;
+                                    break;
+                                case Direction.NORTH:
+                                    tpos.y -= 16;
+                                    break;
+                            }
+                            VMNetGotoCmd.QueueGoto(vm, avatar, tpos);
+                        }
+                    }
                 }
             }
 
@@ -205,25 +234,32 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                     return;
                 }
 
+                // Needs to be on the correct side for the relative change info
+
                 int w = vm.Context.Architecture.Width << 4;
                 int h = vm.Context.Architecture.Height << 4;
 
+                var x = TransitionInfo.AvatarLotTilePosX;
+                var y = TransitionInfo.AvatarLotTilePosY;
+                var xEdge = w * ((TransitionInfo.RelativeChangeX + 1) / 2);
+                var yEdge = h * ((TransitionInfo.RelativeChangeY + 1) / 2);
+
                 int acceptableMargin = 16;
 
-                // Needs to be on the correct side for the relative change info
+                bool xValid = TransitionInfo.RelativeChangeX == 0 || (x >= 0 && x < w && Math.Abs(x - xEdge) < acceptableMargin);
+                bool yValid = TransitionInfo.RelativeChangeY == 0 || (y >= 0 && y < h && Math.Abs(y - yEdge) < acceptableMargin);
+
+                if (!xValid && !yValid)
+                {
+                    TransitionInfo = null;
+                    return;
+                }
 
                 TransitionInfo.AvatarDirection = (float)DirectionUtils.Normalize(TransitionInfo.AvatarDirection);
 
                 if (float.IsNaN(TransitionInfo.AvatarDirection) || float.IsInfinity(TransitionInfo.AvatarDirection))
                 {
                     TransitionInfo.AvatarDirection = 0;
-                }
-
-                if (TransitionInfo.Type == LotTransitionType.Routing)
-                {
-                    // TODO !!
-                    // Check if target tile position is in bounds
-                    // If the tile position is occupied, go to the mailbox.
                 }
             }
         }
