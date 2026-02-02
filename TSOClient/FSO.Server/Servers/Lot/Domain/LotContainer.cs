@@ -925,7 +925,8 @@ namespace FSO.Server.Servers.Lot.Domain
             {
                 var msg = (VMNetLeaveBuildBuyCmd)data;
 
-                if (msg.Build)
+                bool broadcastUpdate = msg.Build || true;
+                if (broadcastUpdate)
                 {
                     if (LastHollowBroadcast == -1)
                     {
