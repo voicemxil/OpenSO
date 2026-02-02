@@ -1349,6 +1349,7 @@ namespace FSO.SimAntics.Engine
 
         public VMRoutingFrame(VMStackFrameMarshal input, VMContext context, VMThread thread)
         {
+            SpecialFrame = true;
             Thread = thread;
             Load(input, context);
         }

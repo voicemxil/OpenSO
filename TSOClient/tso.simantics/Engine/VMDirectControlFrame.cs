@@ -746,6 +746,7 @@ namespace FSO.SimAntics.Engine
 
         public VMDirectControlFrame(VMStackFrameMarshal input, VMContext context, VMThread thread)
         {
+            SpecialFrame = true;
             Thread = thread;
             Load(input, context);
         }
