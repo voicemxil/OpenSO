@@ -450,12 +450,14 @@ namespace FSO.SimAntics.Engine
             var currentFrame = Stack.LastOrDefault();
             if (currentFrame == null) return;
 
-            if (currentFrame is VMRoutingFrame) HandleResult(currentFrame, null, ((VMRoutingFrame)currentFrame).Tick());
-            else if (currentFrame is VMDirectControlFrame) HandleResult(currentFrame, null, ((VMDirectControlFrame)currentFrame).Tick());
+            if (currentFrame.SpecialFrame)
+            {
+                if (currentFrame is VMRoutingFrame routing) HandleResult(currentFrame, null, routing.Tick());
+                else if (currentFrame is VMDirectControlFrame direct) HandleResult(currentFrame, null, direct.Tick());
+            }
             else
             {
-                VMInstruction instruction;
-                VMPrimitiveExitCode result = currentFrame.Routine.Execute(currentFrame, out instruction);
+                VMPrimitiveExitCode result = currentFrame.Routine.Execute(currentFrame, out VMInstruction instruction);
                 HandleResult(currentFrame, instruction, result);
             }
         }
@@ -650,7 +652,7 @@ namespace FSO.SimAntics.Engine
 
         private void MoveToInstruction(VMStackFrame frame, byte instruction, bool continueExecution)
         {
-            if (frame is VMRoutingFrame)
+            if (frame.SpecialFrame && frame is VMRoutingFrame)
             {
                 //TODO: Handle returning false into the pathfinder (indicates failure)
                 return;
@@ -712,9 +714,11 @@ namespace FSO.SimAntics.Engine
 
         public void Pop(VMPrimitiveExitCode result)
         {
-            var discardResult = Stack[Stack.Count - 1].SpecialResult;
-            var contextSwitch = (Stack.Count > 1) && Stack.LastOrDefault().ActionTree != Stack[Stack.Count - 2].ActionTree;
-            Stack.RemoveAt(Stack.Count - 1);
+            var stackCount = Stack.Count;
+            var stackTop = Stack[stackCount - 1];
+            var discardResult = stackTop.SpecialResult;
+
+            Stack.RemoveAt(stackCount - 1);
             LastStackExitCode = result;
 
             if (discardResult == VMSpecialResult.Interaction) //interaction switching back to main (it cannot be the other way...)
@@ -734,7 +738,7 @@ namespace FSO.SimAntics.Engine
                     result = VMPrimitiveExitCode.GOTO_TRUE;
                 else if (result == VMPrimitiveExitCode.RETURN_FALSE)
                     result = VMPrimitiveExitCode.GOTO_FALSE;
-                var currentFrame = Stack.Last();
+                var currentFrame = Stack[^1];
                 HandleResult(currentFrame, currentFrame.GetCurrentInstruction(), result);
             }
             else // :(

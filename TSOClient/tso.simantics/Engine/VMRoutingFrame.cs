@@ -110,7 +110,10 @@ namespace FSO.SimAntics.Engine
         private VMFindLocationResult CurRoute;
         private short LastWalkStyle = -1;
 
-        public VMRoutingFrame() { }
+        public VMRoutingFrame()
+        {
+            SpecialFrame = true;
+        }
         
         private void Init()
         {

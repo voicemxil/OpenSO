@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Runtime.CompilerServices;
 using FSO.Content;
 using FSO.SimAntics.Marshals.Threads;
 using FSO.SimAntics.Model;
@@ -18,6 +19,8 @@ namespace FSO.SimAntics.Engine
     public class VMStackFrame
     {
         public VMStackFrame() { }
+
+        public bool SpecialFrame;
 
         /** Thread executing this routine **/
         public VMThread Thread;
@@ -43,6 +46,22 @@ namespace FSO.SimAntics.Engine
                 _StackObjectID = value?.ObjectID ?? 0;
             }
         }
+
+        public VMEntity StackObjectSafe
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get
+            {
+                var obj = _StackObject;
+                if ((obj == null || obj.Dead) && _StackObjectID != 0)
+                {
+                    // This is undefined behaviour, but make sure it's at least consistent.
+                    obj = VM.GetObjectById(_StackObjectID);
+                }
+                return obj;
+            }
+        }
+
         public short StackObjectID
         {
             get { return _StackObjectID; }

@@ -71,7 +71,7 @@ namespace FSO.SimAntics.Engine
 
         public VMDirectControlFrame()
         {
-
+            SpecialFrame = true;
         }
 
         public void Init()
