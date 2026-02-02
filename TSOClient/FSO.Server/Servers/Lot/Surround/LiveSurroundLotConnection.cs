@@ -12,6 +12,7 @@ namespace FSO.Server.Servers.Lot.Surround
 
         private readonly LiveSurroundHost Host;
         private readonly ILotHost LotHost;
+        private readonly LotContainer LotContainer;
         public readonly uint LotLocation;
         private readonly Dictionary<uint, SurroundPuppet> PuppetData = [];
         private readonly HashSet<uint> ExpectedAvatars = [];
@@ -31,9 +32,10 @@ namespace FSO.Server.Servers.Lot.Surround
 
         private bool Dirty = false;
 
-        public LiveSurroundLotConnection(LiveSurroundHost host, ILotHost lotHost, uint lotLocation)
+        public LiveSurroundLotConnection(LiveSurroundHost host, LotContainer lotContainer, ILotHost lotHost, uint lotLocation)
         {
             Host = host;
+            LotContainer = lotContainer;
             LotHost = lotHost;
             LotLocation = lotLocation;
         }
@@ -181,6 +183,16 @@ namespace FSO.Server.Servers.Lot.Surround
                 NewPlayers.Remove(persistId);
                 Players.Remove(persistId);
             }
+        }
+
+        public bool HollowBroadcast(Action<Action<byte[]>> generateHollow)
+        {
+            return Host.HollowBroadcast(this, generateHollow);
+        }
+
+        public void SendHollowLotData(uint location, byte[] data)
+        {
+            LotContainer.SendHollowLotData(location, data);
         }
 
         public void Dispose()

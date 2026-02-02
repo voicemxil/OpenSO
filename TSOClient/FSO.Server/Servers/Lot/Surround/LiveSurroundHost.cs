@@ -114,9 +114,9 @@ namespace FSO.Server.Servers.Lot.Surround
             TickID++;
         }
 
-        public LiveSurroundLotConnection Connect(uint location, ILotHost lotHost)
+        public LiveSurroundLotConnection Connect(uint location, LotContainer lotContainer, ILotHost lotHost)
         {
-            var connection = new LiveSurroundLotConnection(this, lotHost, location);
+            var connection = new LiveSurroundLotConnection(this, lotContainer, lotHost, location);
 
             lock (ConnectionsLock)
             {
@@ -190,6 +190,34 @@ namespace FSO.Server.Servers.Lot.Surround
                     }
                 }
             }
+        }
+
+        public bool HollowBroadcast(LiveSurroundLotConnection conn, Action<Action<byte[]>> generateHollow)
+        {
+            LiveSurroundLotConnection[] adj = null;
+
+            lock (ConnectionsLock)
+            {
+                if (AdjacencyById.TryGetValue(conn.LotLocation, out var adjList) && adjList.Count > 0)
+                {
+                    adj = [.. adjList];
+                }
+            }
+
+            if (adj != null)
+            {
+                generateHollow((data) =>
+                {
+                    foreach (var conn2 in adj)
+                    {
+                        conn2.SendHollowLotData(conn.LotLocation, data);
+                    }
+                });
+
+                return true;
+            }
+
+            return false;
         }
 
         public void Dispose()

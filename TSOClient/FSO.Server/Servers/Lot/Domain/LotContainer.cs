@@ -50,6 +50,7 @@ namespace FSO.Server.Servers.Lot.Domain
         private const bool TIME_DILATION_ENABLED = true;
         private const int TIME_DILATION_THRESHOLD_MS = 500; // Accelerate through half second pauses.
         private const int TIME_DILATION_SKIP_THRESHOLD_MS = 5000; // 5 seconds, or 1 ingame minute
+        private const int HOLLOW_UPDATE_FREQ_MS = 5000; // 5 seconds
         private const uint HOLLOW_LOAD_ALL = 0b111111111;
 
         private const uint TRANSITION_GUID = 0x746ED02B;
@@ -64,6 +65,8 @@ namespace FSO.Server.Servers.Lot.Domain
         private DbLot LotPersist;
         private List<DbLot> LotAdj;
         private List<DbRoommate> LotRoommates;
+        private CancellationTokenSource ClosedToken = new();
+        private long LastHollowBroadcast;
 
         private VM Lot;
         private VMServerDriver VMDriver;
@@ -737,7 +740,7 @@ namespace FSO.Server.Servers.Lot.Domain
             if (AllowGuestOpening && !JobLot)
             {
                 var host = Kernel.Get<LiveSurroundHost>();
-                SurroundConnection = host.Connect(LotPersist.location, Host);
+                SurroundConnection = host.Connect(LotPersist.location, this, Host);
             }
 
             VMDriver = new VMServerDriver(VMGlobalLink);
@@ -761,6 +764,7 @@ namespace FSO.Server.Servers.Lot.Domain
 
             Lot = new VM(new VMContext(null), VMDriver, new VMNullHeadlineProvider());
             Lot.OnChatEvent += Lot_OnChatEvent;
+            Lot.OnGenericVMEvent += Lot_OnGenericVMEvent;
             Lot.Init();
 
             bool isNew = false;
@@ -913,6 +917,82 @@ namespace FSO.Server.Servers.Lot.Domain
                     Run = false,
                 });
             }
+        }
+
+        private void Lot_OnGenericVMEvent(VMEventType type, object data)
+        {
+            if (type == VMEventType.TSOUserLeaveBuildBuy)
+            {
+                var msg = (VMNetLeaveBuildBuyCmd)data;
+
+                if (msg.Build)
+                {
+                    if (LastHollowBroadcast == -1)
+                    {
+                        // In flight...
+                        return;
+                    }
+
+                    var msSinceLast = (Stopwatch.GetTimestamp() - LastHollowBroadcast) / (Stopwatch.Frequency / 1000);
+
+                    if (msSinceLast > HOLLOW_UPDATE_FREQ_MS)
+                    {
+                        HollowBroadcast();
+                    }
+                    else
+                    {
+                        LastHollowBroadcast = -1;
+                        Task.Delay((int)(HOLLOW_UPDATE_FREQ_MS - msSinceLast), ClosedToken.Token).ContinueWith((task) =>
+                        {
+                            if (!task.IsCanceled)
+                            {
+                                BlockOnLotThread(HollowBroadcast);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        private void HollowBroadcast()
+        {
+            var didBroadcast = SurroundConnection?.HollowBroadcast((Action<byte[]> onData) =>
+            {
+                var hmarshal = Lot.HollowSave();
+
+                Host.InBackground(() => {
+                    try
+                    {
+
+                        byte[] data;
+                        using (var output = new MemoryStream())
+                        {
+                            hmarshal.SerializeInto(new BinaryWriter(output));
+                            data = output.ToArray();
+                        }
+
+                        onData(data);
+
+                        if (!TransientLot)
+                        {
+                            var lotStr = LotPersist.lot_id.ToString("x8");
+                            string path = Path.Combine(Config.SimNFS, "Lots/" + lotStr + "/hollow.fsoh");
+
+                            using (var output = new FileStream(path, FileMode.Create))
+                            {
+                                output.Write(data);
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        LOG.Warn(e, "Failed to save hollow lot (to disk/db) with dbid = " + Context.DbId);
+                        LOG.Warn(e.StackTrace);
+                    }
+                });
+            }) ?? false;
+
+            LastHollowBroadcast = didBroadcast ? Stopwatch.GetTimestamp() : 0;
         }
 
         public void UpdateTuning(IEnumerable<DynTuningEntry> tuning)
@@ -1375,6 +1455,42 @@ namespace FSO.Server.Servers.Lot.Domain
                     }
                 }
             }
+        }
+
+        public void SendHollowLotData(uint location, byte[] data)
+        {
+            // Sends the given hollow lot data to the players on the lot.
+
+            var update = new VMHollowAdjEntry[9];
+
+            var myLocation = LotPersist?.location ?? 0;
+
+            if (LotPersist == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < 9; i++)
+            {
+                int x = (i % 3) - 1;
+                int y = (i / 3) - 1;
+
+                if (myLocation + (x * 65536) + y == location)
+                {
+                    var existingData = HollowLots.Result;
+                    existingData[i] = data;
+                    update[i] = new VMHollowAdjEntry(VMHollowAdjType.Hollow, data);
+                }
+                else
+                {
+                    update[i] = new VMHollowAdjEntry(VMHollowAdjType.None);
+                }
+            }
+
+            Lot?.SendCommand(new VMNetAdjHollowSyncCmd()
+            {
+                HollowAdj = update
+            });
         }
 
         public bool IsAvatarOnLot(uint pid, Dictionary<uint, IVoltronSession> visitors)
@@ -1869,6 +1985,8 @@ namespace FSO.Server.Servers.Lot.Domain
         public void Shutdown()
         {
             //shut down this lot. Do a final save and close everything down.
+            ClosedToken?.Cancel();
+
             VMDriver.EndRecord();
             LOG.Info("Lot with dbid = " + Context.DbId + " shutting down.");
             if ((LotPersist.move_flags & 4) > 0)

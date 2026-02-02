@@ -1,4 +1,6 @@
-﻿namespace FSO.SimAntics.NetPlay.Model.Commands
+﻿using FSO.SimAntics.Utils;
+
+namespace FSO.SimAntics.NetPlay.Model.Commands
 {
     public enum VMHollowAdjType : byte
     {
@@ -34,7 +36,30 @@
 
         public override bool Execute(VM vm)
         {
-            vm.HollowAdj = HollowAdj;
+            if (vm.HollowAdj == null)
+            {
+                vm.HollowAdj = HollowAdj;
+            }
+            else
+            {
+                bool changed = false;
+                for (int i = 0; i < HollowAdj.Length; i++)
+                {
+                    var toCopy = HollowAdj[i];
+                    ref var target = ref vm.HollowAdj[i];
+
+                    if (toCopy.Type == VMHollowAdjType.Hollow)
+                    {
+                        target = toCopy;
+                        changed = true;
+                    }
+                }
+
+                if (VM.UseWorld && vm.Ready && !vm.FSOVAsyncLoading && changed && vm.Context.Blueprint.SubWorlds.Count != 0)
+                {
+                    VMLotTerrainRestoreTools.RestoreSurroundings(vm, vm.HollowAdj);
+                }
+            }
             return true;
         }
 
