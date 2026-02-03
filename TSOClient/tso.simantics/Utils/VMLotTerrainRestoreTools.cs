@@ -1037,7 +1037,7 @@ namespace FSO.SimAntics.Utils
                     int i = y * 3 + x;
                     if (x == 1 & y == 1) continue; //that's us...
 
-                    var adj = hollowAdj[i];
+                    var adj = hollowAdj == null ? new VMHollowAdjEntry(VMHollowAdjType.Terrain) : hollowAdj[i];
 
                     if (adj.Type < VMHollowAdjType.Terrain)
                     {
