@@ -521,7 +521,14 @@ namespace FSO.LotView
             }
             else
             {
-                State.CenterTile = new Vector2(pelvisCenter.X, pelvisCenter.Y);
+                if (!isFirstPerson)
+                {
+                    State.CenterTile = new Vector2(pelvisCenter.X, pelvisCenter.Y);
+                }
+                else
+                {
+                    State.Cameras.CameraDirect.PreDraw(this);
+                }
 
                 State.Cameras.CameraDirect.FirstPersonAvatar = isFirstPerson ? comp as AvatarComponent : null;
                 if (isFirstPerson && State.Cameras.ActiveType == CameraControllerType.Direct)
