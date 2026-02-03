@@ -185,5 +185,19 @@ namespace FSO.LotView.Utils.Camera
                 InvalidateCamera(world.State);
             }
         }
+
+        public override void OnActive(ICameraController previous, World world)
+        {
+            base.OnActive(previous, world);
+
+            if (previous is CameraControllerDirect direct)
+            {
+                ThirdPersonDistance = direct.ThirdPersonDistance;
+                ThirdPersonTargetDistance = direct.ThirdPersonTargetDistance;
+                ThirdPersonLimitDistance = direct.ThirdPersonLimitDistance;
+
+                LastWheel = direct.LastWheel;
+            }
+        }
     }
 }
