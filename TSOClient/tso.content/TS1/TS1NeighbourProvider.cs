@@ -1,4 +1,4 @@
-﻿using FSO.Common;
+using FSO.Common;
 using FSO.Files.Formats.IFF;
 using FSO.Files.Formats.IFF.Chunks;
 using System;
@@ -53,25 +53,61 @@ namespace FSO.Content.TS1
             var udName = "UserData" + ((id == 0) ? "" : (id + 1).ToString());
             //simitone shouldn't modify existing ts1 data, since our house saves are incompatible.
             //therefore we should copy to the simitone user data.
-
+            
             var userPath = Path.Combine(FSOEnvironment.UserDir, udName + "/");
-
+            
             if (!Directory.Exists(userPath))
             {
-                var source = Path.Combine(ContentManager.TS1BasePath, udName + "/");
+                
+                string source;
+                
+                // Check if user selected Steam install via Content.TS1SteamInstall flag
+                if (Content.TS1SteamInstall)
+                {
+                    // Use Steam's "Saved Games" location (used by The Sims Legacy Collection)
+                    source = Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                        "Saved Games", "Electronic Arts", "The Sims 25", udName + "/"
+                    );
+                }
+                else
+                {
+                    // Use install directory saves (non-Steam installs)
+                    source = Path.Combine(ContentManager.TS1BasePath, udName + "/");
+                }
+                
+                
                 var destination = userPath;
 
-                //quick and dirty copy.
+                // Normalize paths for comparison (remove trailing slashes, use consistent separators)
+                var normalizedSource = source.TrimEnd('/', '\\');
+                var normalizedDest = destination.TrimEnd('/', '\\');
 
-                foreach (string dirPath in Directory.GetDirectories(source, "*",
-                    SearchOption.AllDirectories))
-                    Directory.CreateDirectory(dirPath.Replace('\\', '/').Replace(source, destination));
+                // Create directory structure
+                foreach (string dirPath in Directory.GetDirectories(source, "*", SearchOption.AllDirectories))
+                {
+                    var relativePath = dirPath.Substring(normalizedSource.Length).TrimStart('\\', '/');
+                    var destDir = Path.Combine(normalizedDest, relativePath);
+                    Directory.CreateDirectory(destDir);
+                }
 
-                foreach (string newPath in Directory.GetFiles(source, "*.*",
-                    SearchOption.AllDirectories))
-                    File.Copy(newPath, newPath.Replace('\\', '/').Replace(source, destination), true);
+                // Copy files with error handling
+                foreach (string srcPath in Directory.GetFiles(source, "*.*", SearchOption.AllDirectories))
+                {
+                    var relativePath = srcPath.Substring(normalizedSource.Length).TrimStart('\\', '/');
+                    var destPath = Path.Combine(normalizedDest, relativePath);
+                    try
+                    {
+                        File.Copy(srcPath, destPath, true);
+                    }
+                    catch (IOException ex)
+                    {
+                        throw; // Re-throw to show error dialog
+                    }
+                }
+                
             }
-
+            
             UserPath = userPath;
 
             MainResource = new IffFile(Path.Combine(UserPath, "Neighborhood.iff"));
