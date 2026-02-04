@@ -101,6 +101,24 @@ namespace FSO.LotView.Utils.Camera
             }
         }
 
+        private float GetWallLimitedDistance(World world, Vector3 basePos, Vector3 frontVec, float targetDistance)
+        {
+            const float wallMargin = 0.30f;
+
+            var dir = -new Vector3(frontVec.X, frontVec.Z, frontVec.Y);
+            dir.Normalize();
+            var ray = new Ray(new Vector3(basePos.X, basePos.Z, basePos.Y) * 3, dir);
+
+            var hit = WallRaycaster.RaycastMultifloor(ray, world.Architecture.Blueprint, (targetDistance + wallMargin) * 3);
+
+            if (hit != null)
+            {
+                return Math.Clamp(hit.Value.Item1 / 3 - wallMargin, 0f, targetDistance);
+            }
+
+            return targetDistance;
+        }
+
         private float GetFloorLimitedDistance(World world, Vector3 basePos, Vector3 frontVec, float targetDistance)
         {
             const float floorMargin = 0.15f;
@@ -169,7 +187,10 @@ namespace FSO.LotView.Utils.Camera
                     headPos = tpPos;
                     headPos -= sideVec * 0.27f + downVec * 0.17f;
 
-                    var dist = GetFloorLimitedDistance(world, headPos, frontVec, Math.Min(ThirdPersonLimitDistance, ThirdPersonDistance));
+                    var dist = GetWallLimitedDistance(world, headPos, frontVec, Math.Min(ThirdPersonLimitDistance, ThirdPersonDistance));
+                    dist = GetFloorLimitedDistance(world, headPos, frontVec, dist);
+
+                    ThirdPersonLimitDistance = dist;
 
                     headPos -= frontVec * dist;
 
