@@ -438,15 +438,15 @@ namespace FSO.Client.UI.Panels
             }
         }
 
-        private short GetFloorBlockableHover(Point pt, out Vector3 tilePos)
+        private short GetFloorBlockableHover(Point pt, out Vector3? tilePos)
         {
-            tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y));
+            tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y), canFail: true);
             var newHover = World.GetObjectIDAtScreenPos(pt.X,
                     pt.Y,
                     GameFacade.GraphicsDevice);
 
             var hobj = vm.GetObjectById(newHover);
-            if (hobj == null || hobj.Position.Level < tilePos.Z) newHover = 0;
+            if (!tilePos.HasValue || hobj == null || hobj.Position.Level < tilePos.Value.Z) newHover = 0;
             return newHover;
         }
 
@@ -462,10 +462,13 @@ namespace FSO.Client.UI.Panels
             {
                 VMEntity obj;
                 //get new pie menu, make new pie menu panel for it
-                var tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y));
+                var tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y), canFail: true);
 
-                LotTilePos targetPos = LotTilePos.FromBigTile((short)tilePos.X, (short)tilePos.Y, (sbyte)tilePos.Z);
-                if (vm.Context.SolidToAvatars(targetPos).Solid) targetPos = LotTilePos.OUT_OF_WORLD;
+                LotTilePos targetPos = tilePos.HasValue ? LotTilePos.FromBigTile((short)tilePos.Value.X, (short)tilePos.Value.Y, (sbyte)tilePos.Value.Z) : LotTilePos.OUT_OF_WORLD;
+                if (vm.Context.SolidToAvatars(targetPos).Solid)
+                {
+                    targetPos = LotTilePos.OUT_OF_WORLD;
+                }
 
                 GotoObject.SetPosition(targetPos, Direction.NORTH, vm.Context);
 
@@ -480,7 +483,7 @@ namespace FSO.Client.UI.Panels
                 }
 
                 var hobj = GetHoverById(newHover);
-                if (hobj == null || hobj.Position.Level < tilePos.Z) newHover = 0;
+                if (!tilePos.HasValue || hobj == null || hobj.Position.Level < tilePos.Value.Z) newHover = 0;
                 ObjectHover = newHover;
 
                 bool objSelected = ObjectHover != 0;
@@ -667,9 +670,9 @@ namespace FSO.Client.UI.Panels
                     OldMX = state.MouseState.X;
                     OldMY = state.MouseState.Y;
                     var scaled = GetScaledPoint(state.MouseState.Position);
-                    var newHover = GetFloorBlockableHover(scaled, out Vector3 tilePos);
+                    var newHover = GetFloorBlockableHover(scaled, out Vector3? tilePos);
 
-                    if (newHover == 0 && TryPrepareLotTransition(tilePos))
+                    if (newHover == 0 && tilePos.HasValue && TryPrepareLotTransition(tilePos.Value))
                     {
                         newHover = -1;
                     }
