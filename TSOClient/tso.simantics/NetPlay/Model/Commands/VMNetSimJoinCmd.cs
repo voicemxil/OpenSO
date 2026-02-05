@@ -185,7 +185,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                     int h = vm.Context.Architecture.Height << 4;
                     int targX = TransitionInfo.RoutingLotTilePosX;
                     int targY = TransitionInfo.RoutingLotTilePosY;
-                    bool targInBounds = targX >= 0 && targX < w && targY >= h && targY < h;
+                    bool targInBounds = targX >= 0 && targX < w && targY >= 0 && targY < h;
 
                     if (!targInBounds || !VMNetGotoCmd.QueueGoto(vm, avatar, new LotTilePos((short)TransitionInfo.RoutingLotTilePosX, (short)TransitionInfo.RoutingLotTilePosY, 1)))
                     {
