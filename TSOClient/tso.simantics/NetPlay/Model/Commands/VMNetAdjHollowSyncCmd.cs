@@ -55,7 +55,7 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                     }
                 }
 
-                if (VM.UseWorld && vm.Ready && !vm.FSOVAsyncLoading && changed && vm.Context.Blueprint.SubWorlds.Count != 0)
+                if (VM.UseWorld && vm.Ready && !vm.FSOVAsyncLoading && !vm.Driver.RunningCatchup && changed && vm.Context.Blueprint.SubWorlds.Count != 0)
                 {
                     VMLotTerrainRestoreTools.RestoreSurroundings(vm, HollowAdj);
                 }

@@ -18,6 +18,8 @@ namespace FSO.SimAntics.NetPlay
         private BinaryWriter RecordStream;
         public VMNetCommand Executing;
 
+        public bool RunningCatchup { get; protected set; }
+
         /// <summary>
         /// Indicates a VM inspired total connection shutdown. 
         /// </summary>
@@ -40,6 +42,8 @@ namespace FSO.SimAntics.NetPlay
         }
 
         public bool AsyncBreak; //if 
+
+        private bool HasShutdown;
 
         protected void InternalTick(VM vm, VMNetTick tick)
         {
@@ -116,7 +120,11 @@ namespace FSO.SimAntics.NetPlay
 
         public virtual void Shutdown()
         {
-            if (OnShutdown != null) OnShutdown(CloseReason);
+            if (!HasShutdown)
+            {
+                HasShutdown = true;
+                if (OnShutdown != null) OnShutdown(CloseReason);
+            }
         }
 
         public delegate void VMNetMessageHandler(VMNetMessageType type, byte[] data);

@@ -168,7 +168,7 @@ namespace FSO.SimAntics.Engine.TSOTransaction
         public void LeaveLot(VM vm, VMAvatar avatar)
         {
             // Disconnect immediately on the client, at least if they aren't fast forwarding to the current lot state.
-            if (avatar.PersistID == vm.MyUID && vm.Ready)
+            if (avatar.PersistID == vm.MyUID && !vm.Driver.RunningCatchup)
             {
                 //stub has some functionality here. if we have left lot, disconnect.
                 vm.CloseNet(VMCloseNetReason.LeaveLot);

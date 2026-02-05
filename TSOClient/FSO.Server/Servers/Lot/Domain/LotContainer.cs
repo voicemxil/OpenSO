@@ -99,7 +99,8 @@ namespace FSO.Server.Servers.Lot.Domain
         private bool ActiveYet;
         private Queue<Action> LotThreadActions = new Queue<Action>();
 
-        private LiveSurroundLotConnection SurroundConnection;   
+        private LiveSurroundLotConnection SurroundConnection;
+        private HashSet<uint> FreeRoamLeaving = [];
 
         private bool AllowGuestOpening => Config.Archive != null && Config.Archive.Flags.HasFlag(FSO.Common.ArchiveConfigFlags.AllOpenable);
 
@@ -1077,7 +1078,7 @@ namespace FSO.Server.Servers.Lot.Domain
         {
             object packet = (msg.Type == VMNetMessageType.Direct) ?
                 (object)(new FSOVMDirectToClient() { Data = msg.Data })
-                : (object)(new FSOVMTickBroadcast() { Data = msg.Data });
+                : (object)(new FSOVMTickBroadcast() { Data = msg.Data, Catchup = msg.Type == VMNetMessageType.CatchupTick });
             Host.Send(target.PersistID, packet);
         }
 
@@ -1329,6 +1330,20 @@ namespace FSO.Server.Servers.Lot.Domain
             evt.WaitOne();
         }
 
+        private bool TryBeginFreeRoam(uint persistID)
+        {
+            lock (FreeRoamLeaving)
+            {
+                if (!FreeRoamLeaving.Contains(persistID))
+                {
+                    FreeRoamLeaving.Add(persistID);
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
         public void TickFreeRoam()
         {
             foreach (var obj in Lot.Context.ObjectQueries.Avatars)
@@ -1359,6 +1374,8 @@ namespace FSO.Server.Servers.Lot.Domain
 
                         if (Realestate.IsOpenable(coords.X, coords.Y))
                         {
+                            if (!TryBeginFreeRoam(ava.PersistID)) continue;
+
                             LOG.Info($"Edge check {edge} ({coords.X}, {coords.Y}) {Stopwatch.GetTimestamp()}");
 
                             var pid = ava.PersistID;
@@ -1421,6 +1438,8 @@ namespace FSO.Server.Servers.Lot.Domain
 
                         if (Realestate.IsOpenable(coords.X, coords.Y))
                         {
+                            if (!TryBeginFreeRoam(ava.PersistID)) continue;
+
                             var pid = ava.PersistID;
                             var cityEdge = new Point(coords.X - myCoords.X, coords.Y - myCoords.Y);
                             var edge = LotTransitionInfo.RelativeChangeCityToLot(cityEdge);
@@ -1573,6 +1592,7 @@ namespace FSO.Server.Servers.Lot.Domain
         {
             LotActive.WaitOne(); //wait til we're active at least
             SurroundConnection?.AvatarJoin(session.AvatarId);
+            lock (FreeRoamLeaving) FreeRoamLeaving.Remove(session.AvatarId);
             using (var da = DAFactory.Get())
             {
                 ClientCount++;

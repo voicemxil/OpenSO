@@ -208,9 +208,9 @@ namespace FSO.SimAntics.NetPlay.Drivers
             else if (LastSync != null)
             {
                 foreach (var client in ClientsToSync) {
-                    Send(client, new VMNetMessage(VMNetMessageType.BroadcastTick, LastSync));
+                    Send(client, new VMNetMessage(VMNetMessageType.CatchupTick, LastSync));
                     foreach (var tick in TicksSinceSync) //catch this client up with what happened since the last state was created.
-                        Send(client, new VMNetMessage(VMNetMessageType.BroadcastTick, tick));
+                        Send(client, new VMNetMessage(VMNetMessageType.CatchupTick, tick));
                 }
                 ClientsToSync.Clear();
                 NewClients.Clear(); //note that the lock for clientstosync is valid for newclients too.

@@ -354,7 +354,7 @@ namespace FSO.SimAntics
 
         public void CloseNet(VMCloseNetReason reason)
         {
-            if (reason == VMCloseNetReason.LeaveLot && !Ready) return;
+            if (reason == VMCloseNetReason.LeaveLot && Driver.RunningCatchup) return;
             Driver.CloseReason = reason;
             Driver.Shutdown();
         }

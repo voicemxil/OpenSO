@@ -870,7 +870,7 @@ namespace FSO.Client.UI.Screens
                 TransitionCamera(newCameras.Camera3D, TransitionCameras.Camera3D);
                 //TransitionCamera(newCameras.Camera2D, TransitionCameras.Camera2D);
                 //TransitionCamera(newCameras.CameraFirstPerson, TransitionCameras.CameraFirstPerson);
-                TransitionCamera(newCameras.CameraDirect, TransitionCameras.CameraDirect);
+                newCameras.CameraDirect.Inherit(TransitionCameras.CameraDirect);
 
                 if (myAvatar.GetPersonData(SimAntics.Model.VMPersonDataVariable.UnusedAndDoNotUse2) == 32767)
                 {

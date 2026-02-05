@@ -207,17 +207,22 @@ namespace FSO.LotView.Utils.Camera
             }
         }
 
+        public void Inherit(CameraControllerDirect direct)
+        {
+            ThirdPersonDistance = direct.ThirdPersonDistance;
+            ThirdPersonTargetDistance = direct.ThirdPersonTargetDistance;
+            ThirdPersonLimitDistance = direct.ThirdPersonLimitDistance;
+
+            LastWheel = direct.LastWheel;
+        }
+
         public override void OnActive(ICameraController previous, World world)
         {
             base.OnActive(previous, world);
 
             if (previous is CameraControllerDirect direct)
             {
-                ThirdPersonDistance = direct.ThirdPersonDistance;
-                ThirdPersonTargetDistance = direct.ThirdPersonTargetDistance;
-                ThirdPersonLimitDistance = direct.ThirdPersonLimitDistance;
-
-                LastWheel = direct.LastWheel;
+                Inherit(direct);
             }
         }
     }

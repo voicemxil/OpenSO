@@ -120,8 +120,8 @@ namespace FSO.Client.Controllers
                         //doesn't really need to be next update... but we don't want to catch the VM in a half-init state.
                         if (data == null) break;
                         VMNetMessage msg = null;
-                        if (data is FSOVMTickBroadcast)
-                            msg = new VMNetMessage(VMNetMessageType.BroadcastTick, ((FSOVMTickBroadcast)data).Data);
+                        if (data is FSOVMTickBroadcast broadcast)
+                            msg = new VMNetMessage(broadcast.Catchup ? VMNetMessageType.CatchupTick : VMNetMessageType.BroadcastTick, broadcast.Data);
                         else
                             msg = new VMNetMessage(VMNetMessageType.Direct, ((FSOVMDirectToClient)data).Data);
 
@@ -419,7 +419,8 @@ namespace FSO.Client.Controllers
 
         public void HandleVMShutdown(VMCloseNetReason reason)
         {
-            if (JoinLotRegulator.CurrentState.Name != "Disconnected")
+            var state = JoinLotRegulator.CurrentState.Name;
+            if (state != "Disconnected" && state != "Disconnect")
             {
                 JoinLotRegulator.AsyncTransition("Disconnect");
             }

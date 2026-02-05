@@ -1187,7 +1187,7 @@ namespace FSO.Client.UI.Panels
                             {
                                 DirectCancelUIDs.Clear();
                             }
-                            
+
                             frame.SendUserControls(new VMDirectControlInput()
                             {
                                 ID = FirstPersonID++,

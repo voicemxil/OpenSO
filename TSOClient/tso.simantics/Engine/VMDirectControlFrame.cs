@@ -57,6 +57,7 @@ namespace FSO.SimAntics.Engine
 
         private VMDirectControlState State;
         private VMDirectControlInput UserInput;
+        private bool HasUserInput;
 
         private int HasDelayedInputs;
         private VMDirectControlInput DelayedInput;
@@ -76,6 +77,8 @@ namespace FSO.SimAntics.Engine
 
         public void Init()
         {
+            State.Input.LookDirectionInt = (short)((Caller as VMAvatar)?.RadianDirection / Math.PI * 32767);
+            State.Input.Direction = State.Input.LookDirectionInt;
             (Caller as VMAvatar)?.SetPersonData(VMPersonDataVariable.Priority, 1);
         }
 
@@ -143,6 +146,7 @@ namespace FSO.SimAntics.Engine
         public void SendUserControls(VMDirectControlInput input)
         {
             UserInput = input;
+            HasUserInput = true;
         }
 
         public void TakeDelayedInput()
@@ -621,7 +625,7 @@ namespace FSO.SimAntics.Engine
 
             bool notified = (Thread.ActiveAction.NotifyIdle || Thread.Queue.Any(interaction => interaction.Mode != VMQueueMode.Idle));
 
-            if (VM.MyUID == Caller.PersistID)
+            if (VM.MyUID == Caller.PersistID && HasUserInput)
             {
                 VM.SendCommand(new VMNetDirectControlCommand() { Input = UserInput });
 

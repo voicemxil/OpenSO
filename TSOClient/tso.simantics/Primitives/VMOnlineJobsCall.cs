@@ -24,7 +24,7 @@ namespace FSO.SimAntics.Primitives
             switch (operand.Call)
             {
                 case VMOnlineJobsCallMode.GotoJobLot:
-                    if (context.Caller.PersistID == context.VM.MyUID && context.VM.Ready) context.VM.SignalLotSwitch(0x200);
+                    if (context.Caller.PersistID == context.VM.MyUID && !context.VM.Driver.RunningCatchup) context.VM.SignalLotSwitch(0x200);
                     break;
                 case VMOnlineJobsCallMode.SetControllerID:
                     context.VM.SetGlobalValue(21, (context.StackObject == null) ? (short)0 : context.StackObject.ObjectID);
