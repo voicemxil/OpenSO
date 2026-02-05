@@ -155,6 +155,8 @@ namespace FSO.Client.UI.Panels
         private bool LastRectCutNotable = false; //set if the last rect cut made a noticable change to the cuts array. If true refresh regardless of new cut effect.
         private bool HasLanded = false;
 
+        private HashSet<uint> DirectCancelUIDs = [];
+
         /// <summary>
         /// Creates a new UILotControl instance.
         /// </summary>
@@ -1181,6 +1183,11 @@ namespace FSO.Client.UI.Panels
 
                         if (lastStack is VMDirectControlFrame frame)
                         {
+                            if (DirectCancelUIDs.Count > 0)
+                            {
+                                DirectCancelUIDs.Clear();
+                            }
+                            
                             frame.SendUserControls(new VMDirectControlInput()
                             {
                                 ID = FirstPersonID++,
@@ -1195,6 +1202,77 @@ namespace FSO.Client.UI.Panels
                         {
                             if (FirstPersonSinceUpdate > 1/30f)
                             {
+                                if (intensity > 33 && ActiveEntity.Thread.ActiveQueueBlock != -1)
+                                {
+                                    var top = ActiveEntity.Thread.Queue[ActiveEntity.Thread.ActiveQueueBlock];
+                                    if (!DirectCancelUIDs.Contains(top.UID))
+                                    {
+                                        var ava = (ActiveEntity as VMAvatar);
+                                        var priority = ava?.GetPersonData(VMPersonDataVariable.Priority) ?? 50;
+
+                                        if (top.Mode == VMQueueMode.Normal && priority < 50 && !top.NotifyIdle)
+                                        {
+                                            HIT.HITVM.Get().PlaySoundEvent(UISounds.QueueDelete);
+                                            vm.SendCommand(new VMNetInteractionCancelCmd
+                                            {
+                                                ActionUID = top.UID
+                                            });
+                                            DirectCancelUIDs.Add(top.UID);
+                                        }
+
+                                        if (top.Mode == VMQueueMode.Idle &&
+                                            ava?.GetPersonData(VMPersonDataVariable.Posture) == 1 &&
+                                            ActiveEntity.Thread.Queue.Count(x => x.Mode != VMQueueMode.Idle) == 0)
+                                        {
+                                            var basePos = ActiveEntity.Position;
+                                            var baseDir = ActiveEntity.GetValue(VMStackObjectVariable.Direction) / 2;
+                                            for (int i = 0; i < 4; i++)
+                                            {
+                                                var testPos = basePos;
+                                                // Sims tend to get out of chairs in the direction they entered them from, so try route there first.
+                                                var testDir = (byte)(ava?.GetPersonData(VMPersonDataVariable.RouteEntryFlags) ?? 0);
+                                                var notches = (baseDir + i) * 2;
+
+                                                testDir = (byte)((testDir << (notches)) | (testDir >> (8 - (notches))));
+                                                switch ((Direction)testDir)
+                                                {
+                                                    case Direction.SOUTH:
+                                                        testPos.y += 16;
+                                                        break;
+                                                    case Direction.WEST:
+                                                        testPos.x -= 16;
+                                                        break;
+                                                    case Direction.EAST:
+                                                        testPos.x += 16;
+                                                        break;
+                                                    case Direction.NORTH:
+                                                        testPos.y -= 16;
+                                                        break;
+                                                }
+
+                                                var overlapping = vm.Context.ObjectQueries.GetObjectsAt(testPos);
+
+                                                if (overlapping == null || !vm.Context.SolidToAvatars(testPos).Solid)
+                                                {
+                                                    DirectCancelUIDs.Add(top.UID);
+                                                    // Try and stand up
+                                                    vm.SendCommand(new VMNetGotoCmd
+                                                    {
+                                                        Interaction = 4, // Run here
+                                                        Param0 = 0,
+                                                        ActorUID = ActiveEntity.PersistID,
+                                                        x = testPos.x,
+                                                        y = testPos.y,
+                                                        level = testPos.Level,
+                                                    });
+
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 vm.SendCommand(new VMNetDirectControlCommand()
                                 {
                                     Partial = true,
