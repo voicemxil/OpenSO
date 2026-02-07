@@ -621,7 +621,7 @@ namespace FSO.Client.UI.Panels
                                 Build = isBuild
                             });
 
-                            FindController<CoreGameScreenController>()?.UploadLotThumbnail();
+                            FindController<CoreGameScreenController>()?.UploadLotThumbnail(isBuild);
                         }
                         break;
                 }

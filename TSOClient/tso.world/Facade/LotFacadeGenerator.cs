@@ -251,6 +251,12 @@ namespace FSO.LotView.Facade
             {
                 var basetc = new Vector2((1 / 3f) * ((Math.Min(i, 4) % 3) + 1), (1 / 2f) * ((Math.Min(i, 4) / 3) + 1));
                 var data = bp.RoofComp.MeshRectData(i + 1);
+
+                if (data == null)
+                {
+                    continue;
+                }
+
                 if (RoofOnFloor)
                     verts.AddRange(data.Vertices.Select(x => new VertexPositionTexture(x.Position / 3f, basetc - new Vector2((x.Position.X - basepos.X) / (3f * FLOOR_TILES * 3), (x.Position.Z - basepos.Y) / (3f * FLOOR_TILES * 2)))));
                 else
@@ -521,12 +527,13 @@ namespace FSO.LotView.Facade
             tVerts.AddRange(RoofVerts.Select(x => new DGRP3DVert(x.Position, Vector3.Zero, x.TextureCoordinate)));
             tInd.AddRange(RoofIndices.Select(x => x + indOff));
 
-            DGRP3DVert.GenerateNormals(false, tVerts, FloorIndices);
+            DGRP3DVert.GenerateNormals(false, tVerts, tInd);
             result.FloorVertices = tVerts.ToArray();
             result.FloorIndices = tInd.ToArray();
 
             var tempVerts = WallVerts.Select(x => new DGRP3DVert(x.Position, Vector3.Zero, x.TextureCoordinate)).ToList();
-            DGRP3DVert.GenerateNormals(false, tempVerts, WallIndices);
+            var vertsSpan = CollectionsMarshal.AsSpan(tempVerts);
+            DGRP3DVert.GenerateNormals(false, vertsSpan, WallIndices);
             result.WallVertices = tempVerts.ToArray();
             result.WallIndices = WallIndices;
 
@@ -801,6 +808,4 @@ namespace FSO.LotView.Facade
             }
         }
     }
-
-
 }

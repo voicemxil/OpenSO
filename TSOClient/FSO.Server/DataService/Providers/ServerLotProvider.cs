@@ -19,6 +19,7 @@ using System.Collections.Immutable;
 using FSO.Common.Enum;
 using FSO.Server.Common;
 using FSO.Server.Database.DA.Neighborhoods;
+using FSO.Files.RC;
 
 namespace FSO.Server.DataService.Providers
 {
@@ -157,6 +158,7 @@ namespace FSO.Server.DataService.Providers
                 Lot_LastCatChange = lot.category_change_date,
                 Lot_Description = lot.description,
                 Lot_Thumbnail = new cTSOGenericData(new byte[0]),
+                Lot_Facade = new cTSOGenericData(new byte[0]),
                 Lot_NeighborhoodID = (uint)(nhood?.neighborhood_id ?? 0),
                 Lot_NeighborhoodName = nhood?.name ?? ""
             };
@@ -198,6 +200,7 @@ namespace FSO.Server.DataService.Providers
                 Lot_RoommateVec = ImmutableList.Create<uint>(),
 
                 Lot_Thumbnail = new cTSOGenericData(new byte[0]),
+                Lot_Facade = new cTSOGenericData(new byte[0]),
                 Lot_ThumbnailCheckSum = key
             };
         }
@@ -214,20 +217,40 @@ namespace FSO.Server.DataService.Providers
                     }
                     break;
                 case "Lot_Thumbnail":
-                    var imgpath = Path.Combine(NFS.GetBaseDirectory(), "Lots/" + lot.DbId.ToString("x8") + "/thumb.png");
-                    var data = (cTSOGenericData)value;
-
-                    using (var db = DAFactory.Get())
                     {
-                        db.Lots.SetDirty(lot.DbId, 1);
+                        var imgpath = Path.Combine(NFS.GetBaseDirectory(), "Lots/" + lot.DbId.ToString("x8") + "/thumb.png");
+                        var data = (cTSOGenericData)value;
+
+                        using (var db = DAFactory.Get())
+                        {
+                            db.Lots.SetDirty(lot.DbId, 1);
+                        }
+
+                        using (FileStream fs = File.Open(imgpath, FileMode.Create, FileAccess.Write, FileShare.None))
+                        {
+                            fs.Write(data.Data, 0, data.Data.Length);
+                        }
+                        lot.Lot_Thumbnail = new cTSOGenericData(new byte[0]);
+                        break;
                     }
 
-                    using (FileStream fs = File.Open(imgpath, FileMode.Create, FileAccess.Write, FileShare.None))
+                case "Lot_Facade":
                     {
-                        fs.Write(data.Data, 0, data.Data.Length);
+                        var imgpath = Path.Combine(NFS.GetBaseDirectory(), "Lots/" + lot.DbId.ToString("x8") + "/facade.fsov");
+                        var data = (cTSOGenericData)value;
+
+                        using (var db = DAFactory.Get())
+                        {
+                            db.Lots.SetDirty(lot.DbId, 0); // Facade worker doesn't need to regen if the user sent it in
+                        }
+
+                        using (FileStream fs = File.Open(imgpath, FileMode.Create, FileAccess.Write, FileShare.None))
+                        {
+                            fs.Write(data.Data, 0, data.Data.Length);
+                        }
+                        lot.Lot_Facade = new cTSOGenericData(new byte[0]);
+                        break;
                     }
-                    lot.Lot_Thumbnail = new cTSOGenericData(new byte[0]);
-                    break;
                 case "Lot_Category":
                     uint minSkill;
                     if (!SkillGameplayCategory.TryGetValue((LotCategory)lot.Lot_Category, out minSkill)) minSkill = 0;
@@ -329,12 +352,38 @@ namespace FSO.Server.DataService.Providers
                     break;
                 //roommate only
                 case "Lot_Thumbnail":
-                    if (!context.HasModerationLevel(1))
                     {
-                        if (lot.Lot_Category == 11) context.DemandAvatar(lot.Lot_LeaderID, AvatarPermissions.WRITE);
-                        else context.DemandAvatars(roomies, AvatarPermissions.WRITE);
+                        if (!context.HasModerationLevel(1))
+                        {
+                            if (lot.Lot_Category == 11) context.DemandAvatar(lot.Lot_LeaderID, AvatarPermissions.WRITE);
+                            else context.DemandAvatars(roomies, AvatarPermissions.WRITE);
+                        }
+
+                        var dataValue = (cTSOGenericData)value;
+                        if (dataValue.Data.Length > 1024 * 1024)
+                        {
+                            throw new SecurityException("Thumbnail is too large");
+                        }
+                        //TODO: needs to be generic data, png, size 288x288
                     }
-                    //TODO: needs to be generic data, png, size 288x288, less than 1MB
+                    break;
+
+                case "Lot_Facade":
+                    {
+                        if (!context.HasModerationLevel(1))
+                        {
+                            if (lot.Lot_Category == 11) context.DemandAvatar(lot.Lot_LeaderID, AvatarPermissions.WRITE);
+                            else context.DemandAvatars(roomies, AvatarPermissions.WRITE);
+                        }
+
+                        var dataValue = (cTSOGenericData)value;
+
+                        var fsof = new FSOF();
+
+                        using var mem = new MemoryStream(dataValue.Data);
+
+                        fsof.ValidateFSO(mem);
+                    }
                     break;
                 case "Lot_IsOnline":
                 case "Lot_NumOccupants":

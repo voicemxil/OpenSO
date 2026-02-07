@@ -3,6 +3,7 @@ using FSO.Client.Model;
 using FSO.Client.Regulators;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Screens;
+using FSO.Client.Utils;
 using FSO.Common;
 using FSO.Common.DataService;
 using FSO.Common.DataService.Model;
@@ -255,7 +256,7 @@ namespace FSO.Client.Controllers
             });
         }
 
-        public void UploadLotThumbnail()
+        public void UploadLotThumbnail(bool buildMode)
         {
             if (!Screen.InLot) return;
             var lotID = JoinLotRegulator.GetCurrentLotID();
@@ -269,12 +270,36 @@ namespace FSO.Client.Controllers
                 //tex.Dispose();
                 data = stream.ToArray();
             }
+
+            byte[] facadeData = null;
+
+            if (buildMode && FSOEnvironment.Enable3D)
+            {
+                var result = new FSOFHelper(GameFacade.GraphicsDevice, Screen.vm, Screen.vm.Context.World).GenerateIngameFSOF();
+                Terrain.OverrideLotFacade(lotID, result);
+
+                using var mem = new MemoryStream();
+
+                result.Save(mem);
+
+                facadeData = mem.ToArray();
+            }
+
             DataService.Get<Lot>(lotID).ContinueWith(x =>
             {
                 var lot = x.Result;
                 if (lot == null) return; //uh, oops!
                 lot.Lot_Thumbnail = new Common.Serialization.Primitives.cTSOGenericData(data);
-                DataService.Sync(lot, new string[] { "Lot_Thumbnail" });
+
+                if (facadeData != null)
+                {
+                    lot.Lot_Facade = new Common.Serialization.Primitives.cTSOGenericData(facadeData);
+                    DataService.Sync(lot, ["Lot_Thumbnail", "Lot_Facade"]);
+                }
+                else
+                {
+                    DataService.Sync(lot, ["Lot_Thumbnail"]);
+                }
             });
         }
 
