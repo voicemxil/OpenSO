@@ -1,6 +1,7 @@
 ﻿using FSO.Client.Controllers;
 using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
+using FSO.Client.UI.Panels;
 using FSO.Client.Utils;
 using FSO.Common;
 using Microsoft.Xna.Framework;
@@ -128,7 +129,7 @@ namespace FSO.Client.UI.Archive
 
         private void ConnectServer(Framework.UIElement button)
         {
-            FSOFacade.Controller.ShowServerLogin();
+            UIScreen.GlobalShowDialog(new UIServerConnectDialog(), true);
         }
 
         private void QuickStart(Framework.UIElement button)

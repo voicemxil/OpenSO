@@ -280,7 +280,7 @@ namespace FSO.Server.Database.DA.Lots
         }
 
         private static string NHoodQuery =
-                "UPDATE fso_lots l" +
+                "UPDATE fso_lots l " +
                 "SET neighborhood_id = " +
                 "COALESCE((SELECT neighborhood_id " +
                 "FROM fso_neighborhoods n " +

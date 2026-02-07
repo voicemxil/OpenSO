@@ -88,4 +88,7 @@ TSOClient/.vs/config/applicationhost.config
 # Rider IDE
 .idea/
 
+# Docker
+docker/nfs/
+
 TSOClient/Mario

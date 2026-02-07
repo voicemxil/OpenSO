@@ -12,8 +12,8 @@
       "enabled": true,
       "call_sign": "callisto",
       "binding": "0.0.0.0:35100",
-      "internal_host": "127.0.0.1:35",
-      "public_host": "host.docker.internal:35",
+      "internal_host": "127.0.0.1:35101",
+      "public_host": "localhost:35101",
       "schedule": [
         {
           "cron": "0 3 * * *",
@@ -77,8 +77,8 @@
         "call_sign": "ganymede",
         "id": 1,
         "binding": "0.0.0.0:33100",
-        "internal_host": "127.0.0.1:33",
-        "public_host": "host.docker.internal:33",
+        "internal_host": "127.0.0.1:33101",
+        "public_host": "localhost:33101",
         "neighborhoods": {
           "mayor_elegibility_limit": 4,
           "mayor_elegibility_falloff": 4,
@@ -92,8 +92,8 @@
       {
         "call_sign": "europa",
         "binding": "0.0.0.0:34100",
-        "internal_host": "127.0.0.1:34",
-        "public_host": "host.docker.internal:34",
+        "internal_host": "127.0.0.1:34101",
+        "public_host": "localhost:34101",
         "max_lots": 25,
         "cities": [
           {
