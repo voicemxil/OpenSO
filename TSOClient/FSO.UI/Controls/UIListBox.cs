@@ -499,6 +499,7 @@ namespace FSO.Client.UI.Controls
                 var hover = rowIndex == m_HoverRow;
                 if (selected)
                 {
+                    /** Draw selection background **/
                     var fillColor = IsFocused ? m_SelectionFillColor : m_SelectionFillColor * 0.8f;
                     DrawLocalTexture(batch, m_SelectionTexture, null, new Vector2(0, rowY), new Vector2(m_Width, RowHeight), fillColor);
                 }

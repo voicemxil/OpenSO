@@ -328,6 +328,9 @@ namespace FSO.Client.UI
 
             HandleFocusNavigation(state, mainUI);
 
+            if (state.NewKeys.Contains(Keys.Escape) && Dialogs.Count > 0)
+                RemoveDialog(Dialogs[Dialogs.Count - 1]);
+
             Tooltip = state.UIState.Tooltip;
             TooltipProperties = state.UIState.TooltipProperties;
         }
@@ -339,6 +342,9 @@ namespace FSO.Client.UI
             // Scope focus navigation to the top-most modal dialog if one exists
             var topModal = Dialogs.LastOrDefault(x => x.Modal);
             UIElement tabRoot = topModal != null ? topModal.Dialog : root;
+
+            // If nothing is focused and no dialogs are open, let Tab pass through to gameplay (e.g. free cam)
+            if (inputManager.GetFocus() == null && Dialogs.Count == 0) return;
 
             var focusables = new List<IFocusableUI>();
             CollectFocusables(tabRoot, focusables);
@@ -474,6 +480,7 @@ namespace FSO.Client.UI
                 dialog.Dialog.Parent.Remove(dialog.Dialog);
             }
             Dialogs.Remove(dialog);
+            inputManager.SetFocus(null);
             AdjustModal();
         }
 
@@ -484,6 +491,7 @@ namespace FSO.Client.UI
             {
                 Dialogs.Remove(reference);
                 dialog.Parent.Remove(reference.Dialog);
+                inputManager.SetFocus(null);
                 AdjustModal();
             }
         }

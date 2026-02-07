@@ -53,6 +53,7 @@ namespace FSO.Client.UI.Panels
         public int TabIndex { get; set; } = -1;
         private UIMouseEventRef MouseEvt;
         public bool MouseIsOn;
+
         private UIPieMenu PieMenu;
         public UIChatPanel ChatPanel;
         private UIAlert LotSaveDialog;

@@ -430,6 +430,8 @@ namespace FSO.Client.UI.Controls
 
             if (Width != 0)
             {
+                //TODO: Work out these numbers once & cache them. Invalidate when texture or width changes
+
                 /** left **/
                 base.DrawLocalTexture(SBatch, m_Texture, new Rectangle(offset, vOffset, m_WidthDiv3, m_Height), Vector2.Zero);
 
