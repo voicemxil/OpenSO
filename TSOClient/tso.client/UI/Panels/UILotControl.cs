@@ -49,9 +49,10 @@ namespace FSO.Client.UI.Panels
     /// </summary>
     public class UILotControl : UIContainer, IDisposable, ITouchable, IFocusableUI
     {
+        public bool IsFocused { get; set; }
+        public int TabIndex { get; set; } = -1;
         private UIMouseEventRef MouseEvt;
         public bool MouseIsOn;
-
         private UIPieMenu PieMenu;
         public UIChatPanel ChatPanel;
         private UIAlert LotSaveDialog;
@@ -1604,9 +1605,5 @@ namespace FSO.Client.UI.Panels
         {
         }
 
-        public void OnFocusChanged(FocusEvent newFocus)
-        {
-
-        }
     }
 }

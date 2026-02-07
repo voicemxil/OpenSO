@@ -13,6 +13,8 @@ namespace FSO.Client.UI.Controls
 {
     public class UIListBox : UIElement, IFocusableUI
     {
+        public bool IsFocused { get; set; }
+        public int TabIndex { get; set; } = 0;
         private UIMouseEventRef MouseHandler;
         public event ChangeDelegate OnChange;
         public event ButtonClickDelegate OnDoubleClick;
@@ -22,7 +24,6 @@ namespace FSO.Client.UI.Controls
 
         public bool AllowDisabledSelection = false;
         public bool Mask = false;
-        private bool IsFocused;
 
         public UIListBox()
         {
@@ -244,6 +245,14 @@ namespace FSO.Client.UI.Controls
         public override void Update(UpdateState state)
         {
             base.Update(state);
+
+            // Mouse wheel scrolling
+            if (state.MouseWheelDelta != 0)
+            {
+                ScrollOffset = Math.Max(0, Math.Min(Items.Count - NumVisibleRows, ScrollOffset - state.MouseWheelDelta));
+                if (m_Slider != null)
+                    m_Slider.Value = ScrollOffset;
+            }
 
             if (UseChildElements)
             {
@@ -656,10 +665,6 @@ namespace FSO.Client.UI.Controls
             base.Removed();
         }
 
-        public void OnFocusChanged(FocusEvent newFocus)
-        {
-            IsFocused = newFocus == FocusEvent.FocusIn;
-        }
     }
 
     public class UIListBoxColumn
