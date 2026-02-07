@@ -30,7 +30,7 @@ namespace FSO.Client.Utils
             {
                 light.Item1.SetValue(FSO.SimAntics.Model.VMStackObjectVariable.LightingContribution, contribution);
             }
-            vm.Context.Architecture.SignalAllDirty();
+            vm.Context.Architecture.SignalRedraw();
             vm.Context.Architecture.Tick();
             SetOutsideTime(outsideTime);
         }
@@ -41,7 +41,7 @@ namespace FSO.Client.Utils
             {
                 light.Item1.SetValue(FSO.SimAntics.Model.VMStackObjectVariable.LightingContribution, light.Item2);
             }
-            vm.Context.Architecture.SignalAllDirty();
+            vm.Context.Architecture.SignalRedraw();
             vm.Context.Architecture.Tick();
             vm.Context.Architecture.SetTimeOfDay();
             world.Force2DPredraw(gd);
