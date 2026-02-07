@@ -91,25 +91,15 @@ namespace FSO.Client
         /// </summary>
         public void ShowLogin()
         {
-            bool archiveMode = true;
+            InitializeArchive();
+        }
 
-            if (archiveMode)
+        public void ShowServerLogin()
+        {
+            ChangeState<LoginScreen, LoginController>((view, controller) =>
             {
-                InitializeArchive();
-            }
-            else
-            {
-                ChangeState<LoginScreen, LoginController>((view, controller) =>
-                {
-                    DiscordRpcEngine.SendFSOPresence("In Main Menu");
-                });
-            }
-
-            /*
-            var screen = Kernel.Get<LoginScreen>();
-            GameFacade.Screens.RemoveCurrent();
-            GameFacade.Screens.AddScreen(screen);
-            */
+                DiscordRpcEngine.SendFSOPresence("In Main Menu");
+            });
         }
 
         /// <summary>
