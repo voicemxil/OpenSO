@@ -15,7 +15,7 @@ namespace FSO.Client.UI.Controls
     public class UISlider : UIElement, IFocusableUI
     {
         public bool IsFocused { get; set; }
-        public int TabIndex { get; set; } = 0;
+        public int TabIndex { get; set; } = -1;
         private MathCache m_LayoutCache = new MathCache();
         private Texture2D m_Texture;
 
@@ -178,7 +178,7 @@ namespace FSO.Client.UI.Controls
             base.Update(state);
 
             // Mouse wheel scrolling
-            if (state.MouseWheelDelta != 0)
+            if (IsFocused && state.MouseWheelDelta != 0)
             {
                 float step = AllowDecimals ? 0.25f : 1f;
                 Value += state.MouseWheelDelta * step;
@@ -355,6 +355,9 @@ namespace FSO.Client.UI.Controls
             this.increase = increase;
             this.decrease = decrease;
             this.Change = change;
+
+            increase.TabIndex = -1;
+            decrease.TabIndex = -1;
 
             increase.OnButtonClick += new ButtonClickDelegate(increase_OnButtonClick);
             decrease.OnButtonClick += new ButtonClickDelegate(decrease_OnButtonClick);

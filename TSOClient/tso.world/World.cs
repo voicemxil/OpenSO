@@ -612,7 +612,7 @@ namespace FSO.LotView
             {
                 if (FSOEnvironment.Enable3D && CanSwitchCameras)
                 {
-                    if (state.NewKeys.Contains(Microsoft.Xna.Framework.Input.Keys.Tab))
+                    if (state.NewKeys.Contains(Microsoft.Xna.Framework.Input.Keys.Tab) && state.InputManager.GetFocus() == null)
                     {
                         ToggleFirstPerson(CameraControllerType.FirstPerson);
                     }

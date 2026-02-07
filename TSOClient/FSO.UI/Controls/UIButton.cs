@@ -48,6 +48,12 @@ namespace FSO.Client.UI.Controls
 
         private UIElementState m_State = UIElementState.Normal;
         public bool IsFocused { get; set; }
+        public void OnFocusChanged(FocusEvent newFocus)
+        {
+            if (newFocus == FocusEvent.FocusOut) CurrentFrame = 0;
+            Invalidate();
+        }
+
         private int _tabIndex = 0;
         public virtual int TabIndex
         {
@@ -335,6 +341,7 @@ namespace FSO.Client.UI.Controls
             {
                 case UIMouseEventType.MouseOver:
                     m_isOver = true;
+                    if (TabIndex >= 0) state.InputManager.SetFocus(this);
                     if (!m_isDown)
                     {
                         CurrentFrame = 2;
@@ -423,6 +430,8 @@ namespace FSO.Client.UI.Controls
 
             if (Width != 0)
             {
+                //TODO: Work out these numbers once & cache them. Invalidate when texture or width changes
+
                 /** left **/
                 base.DrawLocalTexture(SBatch, m_Texture, new Rectangle(offset, vOffset, m_WidthDiv3, m_Height), Vector2.Zero);
 

@@ -326,26 +326,31 @@ namespace FSO.Client.UI
                 item.Update(state);
             }
 
-            HandleTabCycling(state, mainUI);
+            HandleFocusNavigation(state, mainUI);
+
+            if (state.NewKeys.Contains(Keys.Escape) && Dialogs.Count > 0)
+                RemoveDialog(Dialogs[Dialogs.Count - 1]);
 
             Tooltip = state.UIState.Tooltip;
             TooltipProperties = state.UIState.TooltipProperties;
         }
 
-        private void HandleTabCycling(UpdateState state, UIContainer root)
+        private void HandleFocusNavigation(UpdateState state, UIContainer root)
         {
-            if (!state.NewKeys.Contains(Keys.Tab)) return;
+            if (!state.FocusNextPressed && !state.FocusPrevPressed) return;
 
-            // Scope tab cycling to the top-most modal dialog if one exists
+            // Scope focus navigation to the top-most modal dialog if one exists
             var topModal = Dialogs.LastOrDefault(x => x.Modal);
             UIElement tabRoot = topModal != null ? topModal.Dialog : root;
+
+            // If nothing is focused and no dialogs are open, let Tab pass through to gameplay (e.g. free cam)
+            if (inputManager.GetFocus() == null && Dialogs.Count == 0) return;
 
             var focusables = new List<IFocusableUI>();
             CollectFocusables(tabRoot, focusables);
             if (focusables.Count == 0) return;
 
             // Sort: explicit TabIndex > 0 first (ascending), then TabIndex == 0 by screen position (Y, X).
-            // Stable sort preserves tree order as tiebreaker.
             focusables.Sort((a, b) =>
             {
                 int aIdx = a.TabIndex, bIdx = b.TabIndex;
@@ -361,7 +366,7 @@ namespace FSO.Client.UI
 
             var current = inputManager.GetFocus();
             int currentIdx = current != null ? focusables.IndexOf(current) : -1;
-            int dir = state.ShiftDown ? -1 : 1;
+            int dir = state.FocusPrevPressed ? -1 : 1;
             int next = (currentIdx + dir + focusables.Count) % focusables.Count;
             inputManager.SetFocus(focusables[next]);
         }
@@ -475,6 +480,7 @@ namespace FSO.Client.UI
                 dialog.Dialog.Parent.Remove(dialog.Dialog);
             }
             Dialogs.Remove(dialog);
+            inputManager.SetFocus(null);
             AdjustModal();
         }
 
@@ -485,6 +491,7 @@ namespace FSO.Client.UI
             {
                 Dialogs.Remove(reference);
                 dialog.Parent.Remove(reference.Dialog);
+                inputManager.SetFocus(null);
                 AdjustModal();
             }
         }
