@@ -161,7 +161,7 @@ namespace FSO.LotView.Facade
 
                     var objs = bp.Objects.Where(x =>
                     {
-                        if (x.Level == floor || x.Level == floor - 1) return false;
+                        if (!(x.Level == floor || x.Level == floor - 1)) return false;
                         var pos = x.Position;
                         return (Math.Abs(Vector2.Dot(wallNormal, new Vector2(pos.X, pos.Y)) - wallDot) < wallMaxDist) &&
                              frustrum.Intersects(x.GetBounds());
