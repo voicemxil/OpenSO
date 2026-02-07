@@ -332,6 +332,7 @@ namespace FSO.Client.UI.Controls
 
                 case UIMouseEventType.MouseOver:
                     GameFacade.Cursor.SetCursor(CursorType.IBeam);
+                    state.InputManager.SetFocus(this);
                     break;
 
                 case UIMouseEventType.MouseOut:
@@ -418,7 +419,7 @@ namespace FSO.Client.UI.Controls
             if (m_IsReadOnly) { return; }
 
             // Mouse wheel scrolling
-            if (state.MouseWheelDelta != 0)
+            if (IsFocused && state.MouseWheelDelta != 0)
             {
                 VerticalScrollPosition -= state.MouseWheelDelta;
                 if (m_Slider != null)

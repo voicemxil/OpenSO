@@ -326,17 +326,17 @@ namespace FSO.Client.UI
                 item.Update(state);
             }
 
-            HandleTabCycling(state, mainUI);
+            HandleFocusNavigation(state, mainUI);
 
             Tooltip = state.UIState.Tooltip;
             TooltipProperties = state.UIState.TooltipProperties;
         }
 
-        private void HandleTabCycling(UpdateState state, UIContainer root)
+        private void HandleFocusNavigation(UpdateState state, UIContainer root)
         {
-            if (!state.NewKeys.Contains(Keys.Tab)) return;
+            if (!state.FocusNextPressed && !state.FocusPrevPressed) return;
 
-            // Scope tab cycling to the top-most modal dialog if one exists
+            // Scope focus navigation to the top-most modal dialog if one exists
             var topModal = Dialogs.LastOrDefault(x => x.Modal);
             UIElement tabRoot = topModal != null ? topModal.Dialog : root;
 
@@ -345,7 +345,6 @@ namespace FSO.Client.UI
             if (focusables.Count == 0) return;
 
             // Sort: explicit TabIndex > 0 first (ascending), then TabIndex == 0 by screen position (Y, X).
-            // Stable sort preserves tree order as tiebreaker.
             focusables.Sort((a, b) =>
             {
                 int aIdx = a.TabIndex, bIdx = b.TabIndex;
@@ -361,7 +360,7 @@ namespace FSO.Client.UI
 
             var current = inputManager.GetFocus();
             int currentIdx = current != null ? focusables.IndexOf(current) : -1;
-            int dir = state.ShiftDown ? -1 : 1;
+            int dir = state.FocusPrevPressed ? -1 : 1;
             int next = (currentIdx + dir + focusables.Count) % focusables.Count;
             inputManager.SetFocus(focusables[next]);
         }

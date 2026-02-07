@@ -48,6 +48,12 @@ namespace FSO.Client.UI.Controls
 
         private UIElementState m_State = UIElementState.Normal;
         public bool IsFocused { get; set; }
+        public void OnFocusChanged(FocusEvent newFocus)
+        {
+            if (newFocus == FocusEvent.FocusOut) CurrentFrame = 0;
+            Invalidate();
+        }
+
         private int _tabIndex = 0;
         public virtual int TabIndex
         {
@@ -335,6 +341,7 @@ namespace FSO.Client.UI.Controls
             {
                 case UIMouseEventType.MouseOver:
                     m_isOver = true;
+                    if (TabIndex >= 0) state.InputManager.SetFocus(this);
                     if (!m_isDown)
                     {
                         CurrentFrame = 2;

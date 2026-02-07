@@ -44,6 +44,10 @@ namespace FSO.Common.Rendering.Framework.Model
             get { return KeyboardState.IsKeyDown(Keys.LeftAlt) || KeyboardState.IsKeyDown(Keys.RightAlt); }
         }
         public bool ActivationKeyPressed => NewKeys.Contains(Keys.Enter) || NewKeys.Contains(Keys.Space);
+        public bool FocusNextPressed => (NewKeys.Contains(Keys.Tab) && !ShiftDown)
+            || NewKeys.Contains(Keys.Right) || NewKeys.Contains(Keys.Down);
+        public bool FocusPrevPressed => (NewKeys.Contains(Keys.Tab) && ShiftDown)
+            || NewKeys.Contains(Keys.Left) || NewKeys.Contains(Keys.Up);
 
         public UIState UIState = new UIState();
         public InputManager InputManager;

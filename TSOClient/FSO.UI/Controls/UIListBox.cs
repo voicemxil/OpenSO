@@ -15,6 +15,12 @@ namespace FSO.Client.UI.Controls
     {
         public bool IsFocused { get; set; }
         public int TabIndex { get; set; } = 0;
+        public void OnFocusChanged(FocusEvent newFocus)
+        {
+            if (newFocus == FocusEvent.FocusIn && m_SelectedRow < 0 && Items != null && Items.Count > 0)
+                InternalSelect(0);
+            Invalidate();
+        }
         private UIMouseEventRef MouseHandler;
         public event ChangeDelegate OnChange;
         public event ButtonClickDelegate OnDoubleClick;
@@ -247,7 +253,7 @@ namespace FSO.Client.UI.Controls
             base.Update(state);
 
             // Mouse wheel scrolling
-            if (state.MouseWheelDelta != 0)
+            if (m_MouseOver && state.MouseWheelDelta != 0)
             {
                 ScrollOffset = Math.Max(0, Math.Min(Items.Count - NumVisibleRows, ScrollOffset - state.MouseWheelDelta));
                 if (m_Slider != null)
@@ -284,13 +290,13 @@ namespace FSO.Client.UI.Controls
 
             if (IsFocused)
             {
-                if (state.NewKeys.Contains(Keys.Up) && Items.Count > 0) 
+                if ((state.NewKeys.Remove(Keys.Up) || state.NewKeys.Remove(Keys.Left)) && Items.Count > 0)
                     InternalSelect((m_SelectedRow < 0 ? Items.Count - 1 : (m_SelectedRow - 1 + Items.Count) % Items.Count));
 
-                if (state.NewKeys.Contains(Keys.Down) && Items.Count > 0) 
+                if ((state.NewKeys.Remove(Keys.Down) || state.NewKeys.Remove(Keys.Right)) && Items.Count > 0)
                     InternalSelect((m_SelectedRow + 1) % Items.Count);
 
-                if (SelectedItem != null && state.NewKeys.Contains(Keys.Enter)) 
+                if (SelectedItem != null && state.NewKeys.Contains(Keys.Enter))
                     OnDoubleClick?.Invoke(this);
             }
 
@@ -319,6 +325,7 @@ namespace FSO.Client.UI.Controls
             {
                 case UIMouseEventType.MouseOver:
                     m_MouseOver = true;
+                    update.InputManager.SetFocus(this);
                     break;
 
                 case UIMouseEventType.MouseOut:
@@ -333,7 +340,6 @@ namespace FSO.Client.UI.Controls
                         /** Cant deselect once selected **/
                         InternalSelect(row);
                     }
-                    GameFacade.Screens.inputManager.SetFocus(this);
                     break;
             }
         }
@@ -493,9 +499,8 @@ namespace FSO.Client.UI.Controls
                 var hover = rowIndex == m_HoverRow;
                 if (selected)
                 {
-                    /** Draw selection background **/
-                    var white = TextureGenerator.GetPxWhite(batch.GraphicsDevice);
-                    DrawLocalTexture(batch, white, null, new Vector2(0, rowY), new Vector2(m_Width, RowHeight), m_SelectionFillColor);
+                    var fillColor = IsFocused ? m_SelectionFillColor : m_SelectionFillColor * 0.8f;
+                    DrawLocalTexture(batch, m_SelectionTexture, null, new Vector2(0, rowY), new Vector2(m_Width, RowHeight), fillColor);
                 }
 
                 var ts = TextStyle;
