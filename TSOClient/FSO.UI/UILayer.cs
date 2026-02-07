@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using Microsoft.Xna.Framework.Input;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Controls;
 using FSO.Common.Rendering.Framework.Model;
@@ -325,8 +326,58 @@ namespace FSO.Client.UI
                 item.Update(state);
             }
 
+            HandleTabCycling(state, mainUI);
+
             Tooltip = state.UIState.Tooltip;
             TooltipProperties = state.UIState.TooltipProperties;
+        }
+
+        private void HandleTabCycling(UpdateState state, UIContainer root)
+        {
+            if (!state.NewKeys.Contains(Keys.Tab)) return;
+
+            // Scope tab cycling to the top-most modal dialog if one exists
+            var topModal = Dialogs.LastOrDefault(x => x.Modal);
+            UIElement tabRoot = topModal != null ? topModal.Dialog : root;
+
+            var focusables = new List<IFocusableUI>();
+            CollectFocusables(tabRoot, focusables);
+            if (focusables.Count == 0) return;
+
+            // Sort: explicit TabIndex > 0 first (ascending), then TabIndex == 0 by screen position (Y, X).
+            // Stable sort preserves tree order as tiebreaker.
+            focusables.Sort((a, b) =>
+            {
+                int aIdx = a.TabIndex, bIdx = b.TabIndex;
+                bool aExplicit = aIdx > 0, bExplicit = bIdx > 0;
+                if (aExplicit != bExplicit) return aExplicit ? -1 : 1;
+                if (aExplicit && aIdx != bIdx) return aIdx.CompareTo(bIdx);
+
+                var aPos = ((UIElement)a).LocalPoint(Vector2.Zero);
+                var bPos = ((UIElement)b).LocalPoint(Vector2.Zero);
+                int cmp = aPos.Y.CompareTo(bPos.Y);
+                return cmp != 0 ? cmp : aPos.X.CompareTo(bPos.X);
+            });
+
+            var current = inputManager.GetFocus();
+            int currentIdx = current != null ? focusables.IndexOf(current) : -1;
+            int dir = state.ShiftDown ? -1 : 1;
+            int next = (currentIdx + dir + focusables.Count) % focusables.Count;
+            inputManager.SetFocus(focusables[next]);
+        }
+
+        private void CollectFocusables(UIElement element, List<IFocusableUI> result)
+        {
+            if (!element.Visible) return;
+
+            if (element is IFocusableUI focusable && focusable.TabIndex >= 0 && element.WillDraw())
+                result.Add(focusable);
+
+            if (element is UIContainer container)
+            {
+                foreach (var child in container.GetChildren())
+                    CollectFocusables(child, result);
+            }
         }
 
         public void PreDraw(UISpriteBatch SBatch)
@@ -406,6 +457,14 @@ namespace FSO.Client.UI
 
             Dialogs.Add(dialog);
             AdjustModal();
+
+            if (dialog.Modal)
+            {
+                var focusables = new List<IFocusableUI>();
+                CollectFocusables(dialog.Dialog, focusables);
+                if (focusables.Count > 0)
+                    inputManager.SetFocus(focusables[0]);
+            }
         }
 
         public void RemoveDialog(DialogReference dialog)
