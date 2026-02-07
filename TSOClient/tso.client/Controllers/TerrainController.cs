@@ -246,6 +246,11 @@ namespace FSO.Client.Controllers
             LotThumbs.OverrideLotThumb(ShardId, location, tex);
         }
 
+        public void OverrideLotFacade(uint location, FSOF tex)
+        {
+            LotThumbs.OverrideLotFacade(ShardId, location, tex);
+        }
+
         public LotThumbEntry LockLotThumb(uint location)
         {
             return LotThumbs.GetLotEntry(ShardId, location, false);

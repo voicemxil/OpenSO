@@ -33,7 +33,7 @@ namespace FSO.Client.UI.Screens
 {
     public class SandboxGameScreen : FSO.Client.UI.Framework.GameScreen, IGameScreen
     {
-        public UIUCP ucp;
+        public UIUCP ucp { get; set; }
         public UIGameTitle Title;
 
         public UIContainer WindowContainer;

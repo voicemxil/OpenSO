@@ -33,6 +33,8 @@ namespace FSO.LotView.Components
         public bool ShapeDirty = true;
         public float TexRescale = 1f;
 
+        private float HeightAdjust;
+
         public void SetStylePitch(uint style, float pitch)
         {
             RoofStyle = style;
@@ -46,6 +48,11 @@ namespace FSO.LotView.Components
             RoofRects = new List<RoofRect>[bp.Stories];
             Drawgroups = new RoofDrawGroup[bp.Stories];
             this.Effect = WorldContent.GrassEffect;
+        }
+
+        public void AdjustHeight(float diff)
+        {
+            HeightAdjust += diff;
         }
 
         private void PrepTextures(GraphicsDevice device)
@@ -147,6 +154,7 @@ namespace FSO.LotView.Components
 
         public void RemeshRoof(GraphicsDevice device)
         {
+            HeightAdjust = 0;
             EnsureTextures(device);
 
             for (int i = 1; i <= blueprint.Stories; i++)
@@ -803,6 +811,8 @@ namespace FSO.LotView.Components
 
             var enableParallax = WorldConfig.Current.Complex && ParallaxTexture != null;
 
+            Matrix worldMat = HeightAdjust == 0 ? Matrix.Identity : Matrix.CreateTranslation(0, HeightAdjust, 0);
+
             device.RasterizerState = RasterizerState.CullClockwise;
             device.BlendState = BlendState.AlphaBlend;
             int maxLevel = world.ScrollAnchor?.MyMario != null ? world.Level - 2 : world.Level - 1;
@@ -818,7 +828,7 @@ namespace FSO.LotView.Components
                     {
                         Effect.View = world.View;
                         Effect.Projection = world.Projection;
-                        Effect.World = Matrix.Identity;
+                        Effect.World = worldMat;
                         Effect.DiffuseColor = new Vector4(world.OutsideColor.R / 255f, world.OutsideColor.G / 255f, world.OutsideColor.B / 255f, 1.0f);
                         Effect.UseTexture = true;
                         Effect.BaseTex = Texture;

@@ -123,6 +123,7 @@ namespace FSO.Client.UI.Panels
         public I3DRotate Rotate { get { return World.State.Cameras.Camera3D; } } //(I3DRotate)World.State; } }
         public bool TVisible { get { return Visible; } }
         public bool UserModZoom { get; set; }
+        public bool StealFocus { get; set; }
 
         public bool EnableTransitions = true;
 
@@ -135,7 +136,6 @@ namespace FSO.Client.UI.Panels
         // and that the code actually blocks further dialogs from appearing while waiting for a response.
         // If we are to implement controlling multiple sims, this must be changed.
         private UIAlert BlockingDialog;
-        private UIAlert DialogTakeFocus;
         private UINeighborhoodSelectionPanel TS1NeighSelector;
         private ulong LastDialogID;
 
@@ -154,6 +154,8 @@ namespace FSO.Client.UI.Panels
         private int LastWallMode = -1; //invalidates last roomcuts
         private bool LastRectCutNotable = false; //set if the last rect cut made a noticable change to the cuts array. If true refresh regardless of new cut effect.
         private bool HasLanded = false;
+
+        private HashSet<uint> DirectCancelUIDs = [];
 
         /// <summary>
         /// Creates a new UILotControl instance.
@@ -354,7 +356,7 @@ namespace FSO.Client.UI.Panels
                 LastDialogID = info.DialogID;
             }
 
-            DialogTakeFocus = alert;
+            StealFocus = true;
 
             var entity = info.Icon;
             if (entity is VMGameObject)
@@ -438,15 +440,15 @@ namespace FSO.Client.UI.Panels
             }
         }
 
-        private short GetFloorBlockableHover(Point pt, out Vector3 tilePos)
+        private short GetFloorBlockableHover(Point pt, out Vector3? tilePos)
         {
-            tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y));
+            tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y), canFail: true);
             var newHover = World.GetObjectIDAtScreenPos(pt.X,
                     pt.Y,
                     GameFacade.GraphicsDevice);
 
             var hobj = vm.GetObjectById(newHover);
-            if (hobj == null || hobj.Position.Level < tilePos.Z) newHover = 0;
+            if (!tilePos.HasValue || hobj == null || hobj.Position.Level < tilePos.Value.Z) newHover = 0;
             return newHover;
         }
 
@@ -462,10 +464,13 @@ namespace FSO.Client.UI.Panels
             {
                 VMEntity obj;
                 //get new pie menu, make new pie menu panel for it
-                var tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y));
+                var tilePos = World.EstTileAtPosWithScroll3D(new Vector2(pt.X, pt.Y), canFail: true);
 
-                LotTilePos targetPos = LotTilePos.FromBigTile((short)tilePos.X, (short)tilePos.Y, (sbyte)tilePos.Z);
-                if (vm.Context.SolidToAvatars(targetPos).Solid) targetPos = LotTilePos.OUT_OF_WORLD;
+                LotTilePos targetPos = tilePos.HasValue ? LotTilePos.FromBigTile((short)tilePos.Value.X, (short)tilePos.Value.Y, (sbyte)tilePos.Value.Z) : LotTilePos.OUT_OF_WORLD;
+                if (vm.Context.SolidToAvatars(targetPos).Solid)
+                {
+                    targetPos = LotTilePos.OUT_OF_WORLD;
+                }
 
                 GotoObject.SetPosition(targetPos, Direction.NORTH, vm.Context);
 
@@ -480,7 +485,7 @@ namespace FSO.Client.UI.Panels
                 }
 
                 var hobj = GetHoverById(newHover);
-                if (hobj == null || hobj.Position.Level < tilePos.Z) newHover = 0;
+                if (!tilePos.HasValue || hobj == null || hobj.Position.Level < tilePos.Value.Z) newHover = 0;
                 ObjectHover = newHover;
 
                 bool objSelected = ObjectHover != 0;
@@ -630,6 +635,13 @@ namespace FSO.Client.UI.Panels
             Point targetCityOffset = LotTransitionInfo.RelativeChangeLotToCity(targetLotOffset);
             var newLocation = new MapCoordinate(myLocation + targetCityOffset);
 
+            // TODO: pull map data from screen?
+
+            if (!MapCoordinates.InBounds(newLocation.X, newLocation.Y))
+            {
+                return false;
+            }
+
             var packed = MapCoordinates.Pack(newLocation.X, newLocation.Y);
 
             TransitionObject.SetAttribute(1, (short)newLocation.Y); // lot id (low)
@@ -660,9 +672,9 @@ namespace FSO.Client.UI.Panels
                     OldMX = state.MouseState.X;
                     OldMY = state.MouseState.Y;
                     var scaled = GetScaledPoint(state.MouseState.Position);
-                    var newHover = GetFloorBlockableHover(scaled, out Vector3 tilePos);
+                    var newHover = GetFloorBlockableHover(scaled, out Vector3? tilePos);
 
-                    if (newHover == 0 && TryPrepareLotTransition(tilePos))
+                    if (newHover == 0 && tilePos.HasValue && TryPrepareLotTransition(tilePos.Value))
                     {
                         newHover = -1;
                     }
@@ -1053,11 +1065,11 @@ namespace FSO.Client.UI.Panels
                 }
             }
 
-            if (DialogTakeFocus != null)
+            if (StealFocus)
             {
-                // Right now just steal it from the game. In future it should be given to the OK button.
+                // Right now just steal it from the game. In future dialog focus could be given to the OK button.
                 state.InputManager.SetFocus(this);
-                DialogTakeFocus = null;
+                StealFocus = false;
             }
 
             if (Visible)
@@ -1171,6 +1183,11 @@ namespace FSO.Client.UI.Panels
 
                         if (lastStack is VMDirectControlFrame frame)
                         {
+                            if (DirectCancelUIDs.Count > 0)
+                            {
+                                DirectCancelUIDs.Clear();
+                            }
+
                             frame.SendUserControls(new VMDirectControlInput()
                             {
                                 ID = FirstPersonID++,
@@ -1185,6 +1202,77 @@ namespace FSO.Client.UI.Panels
                         {
                             if (FirstPersonSinceUpdate > 1/30f)
                             {
+                                if (intensity > 33 && ActiveEntity.Thread.ActiveQueueBlock != -1)
+                                {
+                                    var top = ActiveEntity.Thread.Queue[ActiveEntity.Thread.ActiveQueueBlock];
+                                    if (!DirectCancelUIDs.Contains(top.UID))
+                                    {
+                                        var ava = (ActiveEntity as VMAvatar);
+                                        var priority = ava?.GetPersonData(VMPersonDataVariable.Priority) ?? 50;
+
+                                        if (top.Mode == VMQueueMode.Normal && priority < 50 && !top.NotifyIdle)
+                                        {
+                                            HIT.HITVM.Get().PlaySoundEvent(UISounds.QueueDelete);
+                                            vm.SendCommand(new VMNetInteractionCancelCmd
+                                            {
+                                                ActionUID = top.UID
+                                            });
+                                            DirectCancelUIDs.Add(top.UID);
+                                        }
+
+                                        if (top.Mode == VMQueueMode.Idle &&
+                                            ava?.GetPersonData(VMPersonDataVariable.Posture) == 1 &&
+                                            ActiveEntity.Thread.Queue.Count(x => x.Mode != VMQueueMode.Idle) == 0)
+                                        {
+                                            var basePos = ActiveEntity.Position;
+                                            var baseDir = ActiveEntity.GetValue(VMStackObjectVariable.Direction) / 2;
+                                            for (int i = 0; i < 4; i++)
+                                            {
+                                                var testPos = basePos;
+                                                // Sims tend to get out of chairs in the direction they entered them from, so try route there first.
+                                                var testDir = (byte)(ava?.GetPersonData(VMPersonDataVariable.RouteEntryFlags) ?? 0);
+                                                var notches = (baseDir + i) * 2;
+
+                                                testDir = (byte)((testDir << (notches)) | (testDir >> (8 - (notches))));
+                                                switch ((Direction)testDir)
+                                                {
+                                                    case Direction.SOUTH:
+                                                        testPos.y += 16;
+                                                        break;
+                                                    case Direction.WEST:
+                                                        testPos.x -= 16;
+                                                        break;
+                                                    case Direction.EAST:
+                                                        testPos.x += 16;
+                                                        break;
+                                                    case Direction.NORTH:
+                                                        testPos.y -= 16;
+                                                        break;
+                                                }
+
+                                                var overlapping = vm.Context.ObjectQueries.GetObjectsAt(testPos);
+
+                                                if (overlapping == null || !vm.Context.SolidToAvatars(testPos).Solid)
+                                                {
+                                                    DirectCancelUIDs.Add(top.UID);
+                                                    // Try and stand up
+                                                    vm.SendCommand(new VMNetGotoCmd
+                                                    {
+                                                        Interaction = 4, // Run here
+                                                        Param0 = 0,
+                                                        ActorUID = ActiveEntity.PersistID,
+                                                        x = testPos.x,
+                                                        y = testPos.y,
+                                                        level = testPos.Level,
+                                                    });
+
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
                                 vm.SendCommand(new VMNetDirectControlCommand()
                                 {
                                     Partial = true,

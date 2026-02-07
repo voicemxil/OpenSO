@@ -35,3 +35,94 @@ To connect with other players, select "Host Server" on the menu and uncheck "Off
 33 ^Copy^
 34 ^Copied to clipboard!^
 35 ^(could not determine IP - are you offline?)^
+
+36 ^Export Config^
+37 ^Exports a config.json file that can be used by FSO.Server.Core to run a standalone version of the Archive server.
+
+If you use this on a different system, you will need to copy the archive data (usually in Content/), TSO game data and possibly adjust paths in the config.json.^
+38 ^Use absolute path for archive data^
+39 ^Use absolute path for TSO game data^
+40 ^Export^
+41 ^Export Error^
+42 ^Couldn't export config to "%s". Make sure FreeSO has the permission to write to the specified location.^
+43 ^Config successfully exported to "%s".^
+44 ^Path:^
+45 ^Config successfully exported to "%s".
+
+This path has been copied to your clipboard.^
+46 ^Can't export configuration without preparing the archive data first. Try running the server within the game client first.^
+47 ^Success^
+
+48 ^User List^
+49 ^Username^
+50 ^Avatar Count^
+51 ^Status^
+52 ^View Avatars^
+53 ^Show IP^
+54 ^Ban User^
+55 ^Unban User^
+
+56 ^IP Bans^
+
+57 ^Avatars owned by %s^
+58 ^Name^
+59 ^Lot^
+
+60 ^IP^
+61 ^Associated Accounts^
+62 ^Unban^
+63 ^Ban IP^
+
+64 ^Search: ^
+65 ^Delete Avatar^
+66 ^Delete User^
+
+67 ^Enter an IPv4 address to ban.^
+68 ^Are you sure you want to unban IP %s? This will also unban any user accounts that last used this IP.^
+
+69 ^Are you sure you want to delete the sim "%s"? This will remove everything that they own, and might also delete properties if their removal leaves no roommates.^
+
+70 ^User "%s"'s IP is %s.
+
+IP has been copied to your clipboard.^
+71 ^Are you sure you want to unban the user "%s"? This will also unban the last IP that used this account.^
+72 ^Are you sure you want to ban the user "%s"? This will also ban the last IP that used this account.^
+73 ^Are you sure you want to delete the user "%s"? This will transfer any avatars they own to the archive user.^
+
+74 ^Transfer to User^
+75 ^Select a user to transfer the sim %s to.^
+76 ^Transfer^
+77 ^Are you sure you want to transfer the sim %s to %s? This may affect some user generated content belonging to this avatar.^
+
+78 ^An unknown error occurred.^
+
+79 ^^
+
+80 ^Banned^
+81 ^Your user account/IP has been banned from this server. Contact the host to have the ban removed.^
+82 ^Invalid Name^
+83 ^The provided display name is invalid. It may be too long, short, or contain invalid characters.^
+84 ^Display Name Taken^
+85 ^The provided display name is already in use. Please choose another one.
+
+If you're the user of this display name, you should either copy the configuration ini files from the installation you previously used to log into this server, or join with another display name and get the server owner to migrate any avatars to your new account.^
+86 ^Invalid Client ID^
+87 ^The server couldn't read your client ID. This may be a problem with the server or client key configuration.^
+88 ^Encryption Failure^
+89 ^The client and server were unable to exchange authentication keys. The public/private key configuration on the server may be incorrect.^
+90 ^Encryption Failure^
+91 ^Your client didn't respond correctly to the encryption challenge. Not sure how you'd get here.^
+92 ^Verification Rejected^
+93 ^An admin or moderator has rejected your verification request.^
+
+96 ^This client is already hosting a server. Please select an option:^
+97 ^User Management^
+98 ^Close Server^
+99 ^Join Server^
+
+100 ^Unable to select Avatar^
+101 ^The specified avatar was not found. Maybe it was just deleted?^
+102 ^You don't have permission to play as this avatar.^
+103 ^This avatar is currently in use by a client with the same ID (likely yourself), and the server was unable to fully disconnect the avatar to give it to this client. Please try again later.^
+104 ^This avatar is currently in use by another user. Please try again later.^
+105 ^An unknown error occurred while selecting that avatar.^

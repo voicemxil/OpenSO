@@ -230,8 +230,9 @@ float dpth(float4 v) {
 float4 MainPS(ParticleOutput input) : COLOR
 {
 	float level = (input.ModelPos.y) / (2.95*3);
-	if (level >= ClipLevel || round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories) > level) discard;
-	return gammaMul(tex2D(TexSampler, input.TexCoord)*input.Color * Color, lightInterp(input.ModelPos, 1)) - SubColor;
+	float indoorsLevel = round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories);
+	if (level >= ClipLevel || indoorsLevel > max(0.0, level)) discard;
+	return gammaMul(tex2D(TexSampler, input.TexCoord)*input.Color * Color, lightInterpClamp(input.ModelPos, 1)) - SubColor;
 }
 
 float4 SimplePS(ParticleOutput input) : COLOR
@@ -242,8 +243,9 @@ float4 SimplePS(ParticleOutput input) : COLOR
 float4 RainPS(ParticleOutput input) : COLOR
 {
 	float level = (input.ModelPos.y) / (2.95 * 3);
-	if (level >= ClipLevel || round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories) > level) discard;
-	return gammaMul(((1-cos(input.TexCoord.y*3.1415*2)) * (1 - cos(input.TexCoord.x*3.1415 * 2))/4) *input.Color, lightInterp(input.ModelPos, 1)) - SubColor;
+	float indoorsLevel = round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories);
+	if (level >= ClipLevel || indoorsLevel > max(0.0, level)) discard;
+	return gammaMul(((1-cos(input.TexCoord.y*3.1415*2)) * (1 - cos(input.TexCoord.x*3.1415 * 2))/4) *input.Color, lightInterpClamp(input.ModelPos, 1)) - SubColor;
 }
 
 float4 RainSimplePS(ParticleOutput input) : COLOR

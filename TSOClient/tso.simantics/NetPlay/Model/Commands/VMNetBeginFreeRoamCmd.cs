@@ -1,5 +1,4 @@
 ﻿using FSO.Common.Model;
-using System.IO;
 
 namespace FSO.SimAntics.NetPlay.Model.Commands
 {
@@ -19,10 +18,13 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
                 return false;
             }
 
+            avatar.Thread.Interrupt = true;
+
             // Starts leaving lot, but the player will disconnect a lot earlier.
             avatar.UserLeaveLot(false);
 
-            if (vm.MyUID == AvatarPID)
+            // If this command is meant for this client, and we're not fast forwarding through state, then begin the lot switch.
+            if (vm.MyUID == AvatarPID && !vm.Driver.RunningCatchup)
             {
                 // Prepare to transition to the new lot. We'll do this as soon as we disconnect.
                 vm.SignalLotSwitch(TargetLot, Transition);

@@ -157,6 +157,14 @@ namespace FSO.LotView.Model
             this.SM64 = new SM64Component(this);
         }
 
+        public void AdjustBaseAlt(int altDiff)
+        {
+            float heightDiff = altDiff * TerrainFactor * -3;
+
+            WCRC?.AdjustHeight(heightDiff / 3);
+            RoofComp?.AdjustHeight(heightDiff);
+        }
+
         public void BoundAltPoint(ref int x, ref int y)
         {
             x = Math.Max(1, Math.Min(Width - 1, x));
@@ -533,6 +541,20 @@ namespace FSO.LotView.Model
             }
 
             return false;
+        }
+
+        public bool IsIndoorsPrecise(Vector3 pos)
+        {
+            var terrainHeight = InterpAltitude(pos);
+            var effectiveHeight = pos.Z - terrainHeight;
+
+            int floor = (int)Math.Floor(effectiveHeight / 2.95f);
+            if (floor < 0 || floor >= Stories)
+            {
+                return false;
+            }
+
+            return IsIndoorsPrecise(new Vector2(pos.X, pos.Y), floor);
         }
 
         private byte[] GrassMask;

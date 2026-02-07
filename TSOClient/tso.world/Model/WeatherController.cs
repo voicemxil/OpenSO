@@ -25,6 +25,7 @@ namespace FSO.LotView.Model
         public bool IsManual => (WeatherData & (1 << 8)) > 0;
         public WeatherType WeatherType => (WeatherType)((WeatherData >> 9) & 3);
         public bool IsThunder => (WeatherData & (1 << 11)) > 0;
+        public ParticleType ParticleType => Current?.Mode ?? ParticleType.GENERIC_BOX;
 
         public float[] ModeToIntensity = new float[]
         {

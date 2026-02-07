@@ -1,27 +1,27 @@
 ﻿using FSO.Client.Controllers;
 using FSO.Client.Model.Archive;
+using FSO.Client.UI.Archive.Management;
 using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Panels;
 using FSO.Client.Utils;
 using FSO.Common;
-using FSO.Common.Rendering.Framework.Model;
+using FSO.Common.DataService.Model;
 using FSO.Common.Utils;
-using FSO.Server.Servers.Lot.Domain;
+using FSO.Server.Embedded;
 using FSO.UI.Controls;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using System;
-using System.Collections.Generic;
-using System.IO;
-using System.IO.Compression;
-using System.Linq;
-using System.Threading.Tasks;
 
 namespace FSO.Client.UI.Archive
 {
     internal class UIArchiveCreateServer : UIDialog
     {
+        private const int CITY_IMAGE_WIDTH = 148;
+        private const int CITY_IMAGE_HEIGHT = 112;
+        private const int CITY_IMAGE_RADIUS = 8;
+        private const int CITY_IMAGE_MARGIN = 4;
+
         private struct ServerFlag
         {
             public ArchiveConfigFlags Value;
@@ -57,17 +57,23 @@ namespace FSO.Client.UI.Archive
             new ServerFlag(ArchiveConfigFlags.LockArchivedSims, "Lock archived characters", false, 1, ArchivedCharacterHelp),
         };
 
+        private UIButton ExportButton;
         private UIButton UsersButton;
         private UIButton CustomPortsButton;
+        private UIButton EventsButton;
         private UIButton StartButton;
         private UITextBox NameInput;
         private ArchiveConfiguration Config;
         private Texture2D HelpButtonTexture = GetTexture(0x0000034200000001);
+        private UIImage CityImage;
 
         private UICombobox SaveCombo;
 
         public UIArchiveCreateServer() : base(UIDialogStyle.Close, true)
         {
+            var gd = GameFacade.GraphicsDevice;
+            var custom = Content.Content.Get().CustomUI;
+
             var clientConfig = ClientArchiveConfiguration.Default;
             Config = clientConfig.ToHostConfig();
 
@@ -75,31 +81,47 @@ namespace FSO.Client.UI.Archive
 
             var vbox = new UIVBoxContainer();
 
-            vbox.Add(new UILabel()
+            var headHbox = new UIHBoxContainer() { VerticalAlignment = UIContainerVerticalAlignment.Middle, Spacing = 10 };
+
+            var imageBg = new UIImage(custom.Get("archive_translist.png").Get(gd)).With9Slice(13, 13, 13, 13);
+            imageBg.SetSize(CITY_IMAGE_WIDTH + CITY_IMAGE_MARGIN * 2, CITY_IMAGE_HEIGHT + CITY_IMAGE_MARGIN * 2);
+            headHbox.Add(imageBg);
+
+            var saveVbox = new UIVBoxContainer();
+
+            saveVbox.Add(new UILabel()
             {
                 Caption = "Save File:"
             });
 
             SaveCombo = new UICombobox()
             {
-                Width = 200
+                Width = 160
             };
+            SaveCombo.OnSelect += UpdateSelectedSave;
 
-            vbox.Add(SaveCombo);
+            saveVbox.Add(SaveCombo);
 
             PopulateSaves();
             SelectSaveByName(clientConfig.SelectedArchiveName);
 
-            vbox.Add(new UILabel()
+            saveVbox.Add(new UILabel()
             {
                 Caption = "Display name:"
             });
 
-            vbox.Add(NameInput = new UITextBox()
+            saveVbox.Add(NameInput = new UITextBox()
             {
-                Size = new Microsoft.Xna.Framework.Vector2(150, 25),
+                Size = new Microsoft.Xna.Framework.Vector2(160, 25),
                 CurrentText = clientConfig.PlayerName,
             });
+
+            saveVbox.AutoSize();
+
+            headHbox.Add(saveVbox);
+
+            headHbox.AutoSize();
+            vbox.Add(headHbox);
 
             var flagsVbox = new UIVBoxContainer();
 
@@ -152,23 +174,37 @@ namespace FSO.Client.UI.Archive
                 }
             }
 
+            vbox.Add(new UISpacer(5));
+
             flagsVbox.AutoSize();
 
             vbox.Add(flagsVbox);
 
-            var actionsHbox = new UIHBoxContainer();
+            vbox.Add(new UISpacer(10));
 
-            actionsHbox.Add(UsersButton = new UIButton()
+            var actionsHbox = new UIHBoxContainer() { Spacing = 10 };
+
+            actionsHbox.Add(ExportButton = new UIButton(custom.Get("archive_configexport.png").Get(gd))
             {
-                Caption = "Users"
+                Tooltip = "Export Config"
             });
 
-            actionsHbox.Add(CustomPortsButton = new UIButton()
+            actionsHbox.Add(UsersButton = new UIButton(custom.Get("archive_configusers.png").Get(gd))
             {
-                Caption = "Custom Ports"
+                Tooltip = "Users"
             });
 
-            actionsHbox.Add(StartButton = new UIButton()
+            actionsHbox.Add(CustomPortsButton = new UIButton(custom.Get("archive_configports.png").Get(gd))
+            {
+                Tooltip = "Ports"
+            });
+
+            actionsHbox.Add(EventsButton = new UIButton(custom.Get("archive_configevents.png").Get(gd))
+            {
+                Tooltip = "Events"
+            });
+
+            Add(StartButton = new UIButton()
             {
                 Caption = "Start"
             });
@@ -179,21 +215,118 @@ namespace FSO.Client.UI.Archive
             vbox.AutoSize();
             vbox.Position = new Vector2(20, 45);
 
+            // Manually position the start button at the bottom right of the box.
+
+            StartButton.Position = vbox.Position + vbox.Size - StartButton.Size + new Vector2(0, 5);
+
             // (hack) Move to end so it draws on top.
-            vbox.Remove(SaveCombo);
-            vbox.Add(SaveCombo);
+            saveVbox.Remove(SaveCombo);
+            saveVbox.Add(SaveCombo);
+
+            vbox.Remove(headHbox);
+            vbox.Add(headHbox);
+
+            // Added after auto sizing, since it floats on top.
+            headHbox.Add(CityImage = new UIImage()
+            {
+                Position = imageBg.Position + new Vector2(CITY_IMAGE_MARGIN),
+                Size = new Vector2(CITY_IMAGE_WIDTH, CITY_IMAGE_HEIGHT),
+            });
+
+            UpdateSelectedSave(SaveCombo);
 
             SetSize((int)vbox.Size.X + 40, (int)vbox.Size.Y + 70);
             Add(vbox);
 
             NameInput.OnChange += ValidateInputs;
             CustomPortsButton.OnButtonClick += ChangePorts;
+            EventsButton.OnButtonClick += EditEvents;
             StartButton.OnButtonClick += Start;
             CloseButton.OnButtonClick += Close;
+            ExportButton.OnButtonClick += Export;
+            UsersButton.OnButtonClick += Users;
 
             ValidateInputs(NameInput);
 
             UpdateButtons();
+        }
+
+        private void UpdateSelectedSave(object obj)
+        {
+            if (CityImage == null)
+            {
+                return;
+            }
+
+            if (CityImage.Texture != null)
+            {
+                CityImage.Texture.Dispose();
+            }
+
+            if (SaveCombo.SelectedIndex == -1)
+            {
+                CityImage.Texture = null;
+                return;
+            }
+
+            var selected = SaveCombo.SelectedItem as ArchiveManifest;
+
+            // Load the city image.
+
+            string map = selected.Map;
+
+            var fsoMap = int.Parse(map) >= 100;
+
+            try
+            {
+                var cityThumb = (fsoMap) ?
+                Path.Combine(FSOEnvironment.ContentDir, "Cities/city_" + map + "/thumbnail.png")
+                : GameFacade.GameFilePath("cities/city_" + map + "/thumbnail.bmp");
+
+                //Take a copy so we dont change the original when we alpha mask it
+                Texture2D cityThumbTex = TextureUtils.Resize(GameFacade.GraphicsDevice, TextureUtils.TextureFromFile(
+                   GameFacade.GraphicsDevice, cityThumb), CITY_IMAGE_WIDTH, CITY_IMAGE_HEIGHT);
+
+                var mask = TextureGenerator.GenerateRoundedRectangle(GameFacade.GraphicsDevice, Color.White, CITY_IMAGE_WIDTH, CITY_IMAGE_HEIGHT, CITY_IMAGE_RADIUS);
+                TextureUtils.CopyAlpha(ref cityThumbTex, mask);
+
+                mask.Dispose();
+
+                CityImage.Texture = cityThumbTex;
+            }
+            catch
+            {
+                CityImage.Texture = null;
+                return;
+            }
+        }
+
+        private void EditEvents(UIElement button)
+        {
+            var selected = SaveCombo.SelectedItem as ArchiveManifest;
+
+            var factory = new ArchiveServerFactory(Config, null);
+            factory.Prepare(selected, (success) =>
+            {
+                if (success)
+                {
+                    UIScreen.GlobalShowDialog(new UIArchiveEventsDialog(factory.GetConfig()), true);
+                }
+            });
+        }
+
+        private void Users(UIElement button)
+        {
+            var selected = SaveCombo.SelectedItem as ArchiveManifest;
+
+            var factory = new ArchiveServerFactory(Config, null);
+            factory.Prepare(selected, (success) =>
+            {
+                if (success)
+                {
+                    UIScreen.GlobalShowDialog(new UIArchiveUserManageDialog(new ArchiveManagement(factory.GetConfig())), true);
+                }
+            });
         }
 
         private void SelectSaveByName(string name)
@@ -218,6 +351,12 @@ namespace FSO.Client.UI.Archive
             });
 
             UIScreen.GlobalShowDialog(portDialog, true);
+        }
+
+        private void Export(UIElement button)
+        {
+            var selected = SaveCombo.SelectedItem as ArchiveManifest;
+            UIScreen.GlobalShowDialog(new UIArchiveConfigExportDialog(Config, selected), true);
         }
 
         private void PopulateSaves()
@@ -247,7 +386,7 @@ namespace FSO.Client.UI.Archive
         private void UpdateButtons()
         {
             CustomPortsButton.Disabled = Config.Flags.HasFlag(ArchiveConfigFlags.UPnP);
-            CustomPortsButton.Tooltip = CustomPortsButton.Disabled ? GameFacade.Strings.GetString("f128", "18") : null;
+            CustomPortsButton.Tooltip = CustomPortsButton.Disabled ? GameFacade.Strings.GetString("f128", "18") : "Ports";
         }
 
         private void ToggleFlag(ArchiveConfigFlags flag)

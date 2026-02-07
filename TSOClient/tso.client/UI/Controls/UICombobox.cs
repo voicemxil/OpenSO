@@ -127,6 +127,13 @@ namespace FSO.Client.UI.Controls
 
             MenuListBox.OnChange += SelectComboboxElement;
 
+            MenuListBox.TextStyle = new UIListBoxTextStyle(MenuListBox.FontStyle)
+            {
+                SelectedColor = Color.Black,
+                HighlightedColor = new Color(255, 255, 255),
+                DisabledColor = new Color(150, 150, 150)
+            };
+
             UpdateSize();
         }
 

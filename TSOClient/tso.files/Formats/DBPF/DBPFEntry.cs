@@ -56,5 +56,8 @@
 
         //A 4-byte unsigned integer specifying the size of the entry's data
         public uint FileSize;
+
+        //Literal data for a DBPF entry inserted at runtime
+        public byte[] Data;
     }
 }

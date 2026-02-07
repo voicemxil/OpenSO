@@ -14,6 +14,7 @@ namespace FSO.Client.Model.Archive
             { "Name", "Untitled" },
             { "Description", "" },
             { "Size", "0" },
+            { "Map", "0100" },
             { "ZipLocation", ""},
             { "ZipHash", ""},
             { "LocalDir", ""},
@@ -28,6 +29,7 @@ namespace FSO.Client.Model.Archive
         public string Name { get; set; }
         public string Description { get; set; }
         public string Size { get; set; }
+        public string Map { get; set; }
         public string ZipLocation { get; set; }
         public string ZipHash { get; set; }
         public string LocalDir { get; set; }

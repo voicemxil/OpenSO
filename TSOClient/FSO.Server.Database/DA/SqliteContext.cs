@@ -72,12 +72,23 @@ namespace FSO.Server.Database.DA
 
         public string CompatLayer(string sql, string updateKey = null)
         {
+            if (sql.StartsWith("INSERT IGNORE"))
+            {
+                sql = "INSERT OR " + sql.Substring("INSERT ".Length);
+            }
+
             sql = sql.Replace("LAST_INSERT_ID()", "last_insert_rowid()");
             sql = sql.Replace("NOW()", "CURRENT_TIMESTAMP");
 
             if (updateKey != null)
             {
                 sql = sql.Replace("ON DUPLICATE KEY UPDATE", $"ON CONFLICT({updateKey}) DO UPDATE SET");
+
+                var valuesPatch = "VALUES(`value`);";
+                if (sql.EndsWith(valuesPatch))
+                {
+                    sql = string.Concat(sql.AsSpan(0, sql.Length - valuesPatch.Length), "excluded.`value`;");
+                }
             }
 
             return sql;

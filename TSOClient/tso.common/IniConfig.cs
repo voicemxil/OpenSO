@@ -64,7 +64,7 @@ namespace FSO.Common
             }
         }
 
-        public void Save()
+        public virtual void Save()
         {
             try
             {

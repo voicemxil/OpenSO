@@ -1,4 +1,6 @@
 ﻿using FSO.Client.UI.Controls;
+using FSO.Client.UI.Framework;
+using FSO.Client.UI.Screens;
 using FSO.Common.DataService;
 using FSO.Common.Model;
 using FSO.Common.Utils;
@@ -22,6 +24,7 @@ namespace FSO.Client.Regulators
         private bool IsDisconnecting = true;
         private string LastAddress;
         private int _ReestablishAttempt;
+        private int _ConnectionId;
         private int ReestablishAttempt
         {
             get
@@ -133,6 +136,7 @@ namespace FSO.Client.Regulators
             {
                 case "SelectLot":
                     IsDisconnecting = false;
+                    _ConnectionId++;
                     LeavingLot = false;
                     AsyncTransition("FindLot", data);
                     break;
@@ -214,16 +218,22 @@ namespace FSO.Client.Regulators
                     }
                     else
                     {
+                        var oldId = _ConnectionId;
+                        // We might be deliberately disconnecting, so wait a bit before re-establishing.
                         GameThread.SetTimeout(() =>
                         {
-                            if (CurrentState?.Name == "UnexpectedDisconnect")
+                            // If we started a new connection, we don't care anymore.
+                            if (_ConnectionId == oldId)
                             {
-                                AsyncTransition("Reestablish");
-                            }
-                            else if (CurrentState?.Name != "Disconnected")
-                            {
-                                IsDisconnecting = true;
-                                AsyncTransition("Disconnected");
+                                if (CurrentState?.Name == "UnexpectedDisconnect")
+                                {
+                                    AsyncTransition("Reestablish");
+                                }
+                                else if (CurrentState?.Name != "Disconnected")
+                                {
+                                    IsDisconnecting = true;
+                                    AsyncTransition("Disconnected");
+                                }
                             }
                         }, 100);
                     }
@@ -344,6 +354,13 @@ namespace FSO.Client.Regulators
                         }
                         UIAlert.Alert(msg.Title, msg.Message, true);
                         });
+                }
+
+                if (message is FSOVMSurroundPuppets puppets)
+                {
+                    GameThread.InUpdate(() => {
+                        (UIScreen.Current as CoreGameScreen)?.SurroundPuppets?.Process(puppets);
+                    });
                 }
             }
         }

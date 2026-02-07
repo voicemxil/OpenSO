@@ -18,6 +18,7 @@ using FSO.Server.Framework.Voltron;
 using FSO.Server.Protocol.Electron.Packets;
 using FSO.Server.Protocol.Gluon.Model;
 using FSO.Server.Servers.City.Domain;
+using FSO.Server.Servers.Lot.Surround;
 using FSO.SimAntics;
 using FSO.SimAntics.Engine;
 using FSO.SimAntics.Marshals;
@@ -49,6 +50,8 @@ namespace FSO.Server.Servers.Lot.Domain
         private const bool TIME_DILATION_ENABLED = true;
         private const int TIME_DILATION_THRESHOLD_MS = 500; // Accelerate through half second pauses.
         private const int TIME_DILATION_SKIP_THRESHOLD_MS = 5000; // 5 seconds, or 1 ingame minute
+        private const int HOLLOW_UPDATE_FREQ_MS = 5000; // 5 seconds
+        private const uint HOLLOW_LOAD_ALL = 0b111111111;
 
         private const uint TRANSITION_GUID = 0x746ED02B;
 
@@ -62,6 +65,8 @@ namespace FSO.Server.Servers.Lot.Domain
         private DbLot LotPersist;
         private List<DbLot> LotAdj;
         private List<DbRoommate> LotRoommates;
+        private CancellationTokenSource ClosedToken = new();
+        private long LastHollowBroadcast;
 
         private VM Lot;
         private VMServerDriver VMDriver;
@@ -93,6 +98,9 @@ namespace FSO.Server.Servers.Lot.Domain
         private ManualResetEvent LotActive = new ManualResetEvent(false);
         private bool ActiveYet;
         private Queue<Action> LotThreadActions = new Queue<Action>();
+
+        private LiveSurroundLotConnection SurroundConnection;
+        private HashSet<uint> FreeRoamLeaving = [];
 
         private bool AllowGuestOpening => Config.Archive != null && Config.Archive.Flags.HasFlag(FSO.Common.ArchiveConfigFlags.AllOpenable);
 
@@ -730,6 +738,12 @@ namespace FSO.Server.Servers.Lot.Domain
         {
             LOG.Info("Resetting VM for lot with dbid = " + Context.DbId);
             VMGlobalLink = Kernel.Get<LotServerGlobalLink>();
+            if (AllowGuestOpening && !JobLot)
+            {
+                var host = Kernel.Get<LiveSurroundHost>();
+                SurroundConnection = host.Connect(LotPersist.location, this, Host);
+            }
+
             VMDriver = new VMServerDriver(VMGlobalLink);
             VMDriver.TicksPerPacket = Config.Tick_Rate_Divider;
             VMDriver.OnTickBroadcast += TickBroadcast;
@@ -751,6 +765,7 @@ namespace FSO.Server.Servers.Lot.Domain
 
             Lot = new VM(new VMContext(null), VMDriver, new VMNullHeadlineProvider());
             Lot.OnChatEvent += Lot_OnChatEvent;
+            Lot.OnGenericVMEvent += Lot_OnGenericVMEvent;
             Lot.Init();
 
             bool isNew = false;
@@ -836,8 +851,9 @@ namespace FSO.Server.Servers.Lot.Domain
                 {
                     Tuning = Tuning
                 });
-                Lot.Tick();
             }
+
+            Lot.Tick();
 
             Lot.Context.UpdateTSOBuildableArea();
 
@@ -902,6 +918,83 @@ namespace FSO.Server.Servers.Lot.Domain
                     Run = false,
                 });
             }
+        }
+
+        private void Lot_OnGenericVMEvent(VMEventType type, object data)
+        {
+            if (type == VMEventType.TSOUserLeaveBuildBuy)
+            {
+                var msg = (VMNetLeaveBuildBuyCmd)data;
+
+                bool broadcastUpdate = msg.Build || true;
+                if (broadcastUpdate)
+                {
+                    if (LastHollowBroadcast == -1)
+                    {
+                        // In flight...
+                        return;
+                    }
+
+                    var msSinceLast = (Stopwatch.GetTimestamp() - LastHollowBroadcast) / (Stopwatch.Frequency / 1000);
+
+                    if (msSinceLast > HOLLOW_UPDATE_FREQ_MS)
+                    {
+                        HollowBroadcast();
+                    }
+                    else
+                    {
+                        LastHollowBroadcast = -1;
+                        Task.Delay((int)(HOLLOW_UPDATE_FREQ_MS - msSinceLast), ClosedToken.Token).ContinueWith((task) =>
+                        {
+                            if (!task.IsCanceled)
+                            {
+                                BlockOnLotThread(HollowBroadcast);
+                            }
+                        });
+                    }
+                }
+            }
+        }
+
+        private void HollowBroadcast()
+        {
+            var didBroadcast = SurroundConnection?.HollowBroadcast((Action<byte[]> onData) =>
+            {
+                var hmarshal = Lot.HollowSave();
+
+                Host.InBackground(() => {
+                    try
+                    {
+
+                        byte[] data;
+                        using (var output = new MemoryStream())
+                        {
+                            hmarshal.SerializeInto(new BinaryWriter(output));
+                            data = output.ToArray();
+                        }
+
+                        onData(data);
+
+                        if (!TransientLot)
+                        {
+                            var lotStr = LotPersist.lot_id.ToString("x8");
+                            string path = Path.Combine(Config.SimNFS, "Lots/" + lotStr + "/hollow.fsoh");
+
+                            using (var output = new FileStream(path, FileMode.Create))
+                            {
+                                output.Write(data);
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        LOG.Warn(e, "Failed to save hollow lot (to disk/db) with dbid = " + Context.DbId);
+                        LOG.Warn(e.StackTrace);
+                    }
+                });
+            }) ?? false;
+
+            LastHollowBroadcast = didBroadcast ? Stopwatch.GetTimestamp() : 0;
         }
 
         public void UpdateTuning(IEnumerable<DynTuningEntry> tuning)
@@ -985,14 +1078,14 @@ namespace FSO.Server.Servers.Lot.Domain
         {
             object packet = (msg.Type == VMNetMessageType.Direct) ?
                 (object)(new FSOVMDirectToClient() { Data = msg.Data })
-                : (object)(new FSOVMTickBroadcast() { Data = msg.Data });
+                : (object)(new FSOVMTickBroadcast() { Data = msg.Data, Catchup = msg.Type == VMNetMessageType.CatchupTick });
             Host.Send(target.PersistID, packet);
         }
 
-        private void TickBroadcast(VMNetMessage msg, HashSet<VMNetClient> ignore)
+        private void TickBroadcast(VMNetMessage msg, HashSet<VMNetClient> clients)
         {
-            HashSet<uint> ignoreIDs = new HashSet<uint>(ignore.Select(x => x.PersistID));
-            Host.Broadcast(ignoreIDs, new FSOVMTickBroadcast() { Data = msg.Data });
+            HashSet<uint> clientIDs = new HashSet<uint>(clients.Select(x => x.PersistID));
+            Host.Broadcast(clientIDs, new FSOVMTickBroadcast() { Data = msg.Data });
         }
 
         private void DereferenceLot()
@@ -1089,7 +1182,7 @@ namespace FSO.Server.Servers.Lot.Domain
                             //no roommates are here, so all visitors must be kicked out.
                             if (preTickAvatars.Count > 0)
                             {
-                                Host.Broadcast(new HashSet<uint>(), new FSOVMProtocolMessage(true, "21", "22"));
+                                Host.Broadcast(null, new FSOVMProtocolMessage(true, "21", "22"));
                             }
                             foreach (var avatar in preTickAvatars)
                             {
@@ -1127,6 +1220,8 @@ namespace FSO.Server.Servers.Lot.Domain
 
                         Host.UpdateActiveVisitRecords();
                     }
+
+                    SurroundConnection?.SubmitTick(Lot, false);
 
                     if (AllowGuestOpening && !JobLot)
                     {
@@ -1235,6 +1330,20 @@ namespace FSO.Server.Servers.Lot.Domain
             evt.WaitOne();
         }
 
+        private bool TryBeginFreeRoam(uint persistID)
+        {
+            lock (FreeRoamLeaving)
+            {
+                if (!FreeRoamLeaving.Contains(persistID))
+                {
+                    FreeRoamLeaving.Add(persistID);
+                    return true;
+                }
+
+                return false;
+            }
+        }
+
         public void TickFreeRoam()
         {
             foreach (var obj in Lot.Context.ObjectQueries.Avatars)
@@ -1265,6 +1374,8 @@ namespace FSO.Server.Servers.Lot.Domain
 
                         if (Realestate.IsOpenable(coords.X, coords.Y))
                         {
+                            if (!TryBeginFreeRoam(ava.PersistID)) continue;
+
                             LOG.Info($"Edge check {edge} ({coords.X}, {coords.Y}) {Stopwatch.GetTimestamp()}");
 
                             var pid = ava.PersistID;
@@ -1327,6 +1438,8 @@ namespace FSO.Server.Servers.Lot.Domain
 
                         if (Realestate.IsOpenable(coords.X, coords.Y))
                         {
+                            if (!TryBeginFreeRoam(ava.PersistID)) continue;
+
                             var pid = ava.PersistID;
                             var cityEdge = new Point(coords.X - myCoords.X, coords.Y - myCoords.Y);
                             var edge = LotTransitionInfo.RelativeChangeCityToLot(cityEdge);
@@ -1347,8 +1460,6 @@ namespace FSO.Server.Servers.Lot.Domain
                                 RoutingTargetLocation = location
                             };
 
-                            ava.Thread.Interrupt = true;
-
                             SaveAvatar(ava, () =>
                             {
                                 Host.ReleaseDbAvatarClaim(pid);
@@ -1366,20 +1477,100 @@ namespace FSO.Server.Servers.Lot.Domain
             }
         }
 
-        public bool IsAvatarOnLot(uint pid)
+        public void SendHollowLotData(uint location, byte[] data)
+        {
+            // Sends the given hollow lot data to the players on the lot.
+
+            var update = new VMHollowAdjEntry[9];
+
+            var myLocation = LotPersist?.location ?? 0;
+
+            if (LotPersist == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < 9; i++)
+            {
+                int x = (i % 3) - 1;
+                int y = (i / 3) - 1;
+
+                if (myLocation + (x * 65536) + y == location)
+                {
+                    var existingData = HollowLots.Result;
+                    existingData[i] = data;
+                    update[i] = new VMHollowAdjEntry(VMHollowAdjType.Hollow, data);
+                }
+                else
+                {
+                    update[i] = new VMHollowAdjEntry(VMHollowAdjType.None);
+                }
+            }
+
+            Lot?.SendCommand(new VMNetAdjHollowSyncCmd()
+            {
+                HollowAdj = update
+            });
+        }
+
+        public bool IsAvatarOnLot(uint pid, Dictionary<uint, IVoltronSession> visitors)
         {
             //we need to check if the avatar's sim is still on the lot. their data + claim might have left, but the avatar could still be here.
             bool result = false;
             if (!ActiveYet) return false; //we are not on an inactive lot.
 
+            bool waitForDeletion = false;
+
             BlockOnLotThread(() =>
             {
                 var ava = Lot.GetAvatarByPersist(pid);
 
-                // TODO: kick free roam avatars out faster if they're still waiting for the kill timeout when checking this
+                lock (visitors)
+                {
+                    result = ava != null || visitors.ContainsKey(pid);
+                }
 
-                result = ava != null;
+                if (result && ava == null)
+                {
+                    // Their visitor entry should disappear soon.
+                    waitForDeletion = true;
+                }
+                else if (result && ava.KillTimeout != -1)
+                { 
+                    // If this avatar has started the leave lot animation, we might be able to get rid of them instantly.
+                    if (ava.Thread.Stack.Any(x => x.CalleePrivate.Name == "templateperson" && x.Routine.ID == 8373))
+                    {
+                        Lot.ForwardCommand(new VMNetDeleteObjectCmd()
+                        {
+                            ObjectID = ava.ObjectID,
+                            CleanupAll = true,
+                            Verified = true,
+                        });
+
+                        waitForDeletion = true;
+                    }
+                }
             });
+
+            if (waitForDeletion)
+            {
+                for (int i = 0; i < 30; i++)
+                {
+                    BlockOnLotThread(() =>
+                    {
+                        lock (visitors)
+                        {
+                            result = Lot.GetAvatarByPersist(pid) != null || visitors.ContainsKey(pid);
+                        }
+                    });
+
+                    if (!result)
+                    {
+                        break;
+                    }
+                }
+            }
+
             return result;
         }
 
@@ -1400,6 +1591,8 @@ namespace FSO.Server.Servers.Lot.Domain
         public void AvatarJoin(IVoltronSession session)
         {
             LotActive.WaitOne(); //wait til we're active at least
+            SurroundConnection?.AvatarJoin(session.AvatarId);
+            lock (FreeRoamLeaving) FreeRoamLeaving.Remove(session.AvatarId);
             using (var da = DAFactory.Get())
             {
                 ClientCount++;
@@ -1450,8 +1643,10 @@ namespace FSO.Server.Servers.Lot.Domain
                 }
                 Host.RecordStartVisit(session, visitorType);
 
+                var hollowLoadMask = (transitionInfo?.GetSurroundingLotMask() ?? HOLLOW_LOAD_ALL);
+
                 VMDriver.ConnectClient(client);
-                VMDriver.SendDirectCommand(client, new VMNetAdjHollowSyncCmd { HollowAdj = HollowLots.Result });
+                VMDriver.SendDirectCommand(client, BuildHollowAsyncCmd(hollowLoadMask));
 
                 var vmInventory = new List<VMInventoryItem>();
                 foreach (var item in inventory)
@@ -1467,6 +1662,29 @@ namespace FSO.Server.Servers.Lot.Domain
                     VMDriver.SendDirectCommand(client, new VMNetSM64AnimDataCmd { AnimData = sm64Data });
                 }
             }
+        }
+
+        private VMNetAdjHollowSyncCmd BuildHollowAsyncCmd(uint loadMask)
+        {
+            return new VMNetAdjHollowSyncCmd
+            {
+                HollowAdj = [.. HollowLots.Result.Select((x, index) =>
+                    {
+                        uint bit = 1u << index;
+
+                        VMHollowAdjType type;
+                        if ((loadMask & bit) != 0)
+                        {
+                            type = x == null ? VMHollowAdjType.Terrain : VMHollowAdjType.Hollow;
+                        }
+                        else
+                        {
+                            type = VMHollowAdjType.Reuse;
+                        }
+
+                        return new VMHollowAdjEntry(type, x);
+                    })]
+            };
         }
 
         public static VMInventoryItem InventoryItemFromDB(DbObject obj)
@@ -1550,7 +1768,7 @@ namespace FSO.Server.Servers.Lot.Domain
                     db.Avatars.UpdateAvatarLotSave(pid, dbState);
                     if (jobLevel != null) db.Avatars.UpdateAvatarJobLevel(jobLevel);
 
-                    postSave();
+                    postSave?.Invoke();
                 }
             });
         }
@@ -1629,23 +1847,26 @@ namespace FSO.Server.Servers.Lot.Domain
             }
             state.MotiveData = motives;
 
-            var relDict = new Dictionary<uint, List<int>>();
+            var relDict = new Dictionary<uint, List<int>>(rels.Count);
             foreach (var rel in rels)
             {
-                if (!relDict.ContainsKey(rel.to_id)) relDict[rel.to_id] = new List<int>();
-                var list = relDict[rel.to_id];
+                if (!relDict.TryGetValue(rel.to_id, out var list))
+                {
+                    list = [];
+                    relDict[rel.to_id] = list;
+                }
                 while (list.Count <= rel.index) list.Add(0);
                 list[(int)rel.index] = rel.value;
             }
 
             state.Relationships = new VMEntityPersistRelationshipMarshal[relDict.Count];
-            for (int i=0; i<relDict.Count; i++)
+            int relI = 0;
+            foreach (var dictItem in relDict)
             {
-                var dictItem = relDict.ElementAt(i);
                 var marshal = new VMEntityPersistRelationshipMarshal();
                 marshal.Target = dictItem.Key;
-                marshal.Values = dictItem.Value.ConvertAll(x => (short)x).ToArray();
-                state.Relationships[i] = marshal;
+                marshal.Values = [.. dictItem.Value.Select(x => (short)x)];
+                state.Relationships[relI++] = marshal;
             }
 
             return state;
@@ -1785,6 +2006,8 @@ namespace FSO.Server.Servers.Lot.Domain
         public void Shutdown()
         {
             //shut down this lot. Do a final save and close everything down.
+            ClosedToken?.Cancel();
+
             VMDriver.EndRecord();
             LOG.Info("Lot with dbid = " + Context.DbId + " shutting down.");
             if ((LotPersist.move_flags & 4) > 0)
@@ -1826,12 +2049,17 @@ namespace FSO.Server.Servers.Lot.Domain
                 }
             }
 
+            SurroundConnection?.Dispose();
+            SurroundConnection = null;
+
             Host.Shutdown();
         }
 
         //Run on the background thread
         public void AvatarLeave(IVoltronSession session)
         {
+            SurroundConnection?.AvatarLeave(session.AvatarId);
+
             //Exit lot, Persist the avatars data, remove avatar lock
             LOG.Info("Avatar "+session.AvatarId+" left lot "+Context.DbId);
 

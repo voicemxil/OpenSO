@@ -1,5 +1,6 @@
 ﻿using FSO.Client.Regulators;
 using FSO.Client.UI.Archive;
+using FSO.Client.UI.Archive.Management;
 using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Model;
@@ -11,7 +12,6 @@ using FSO.HIT;
 using FSO.Server.Embedded;
 using FSO.Server.Protocol.CitySelector;
 using FSO.Server.Protocol.Electron.Packets;
-using System;
 
 namespace FSO.Client.Controllers
 {
@@ -32,6 +32,7 @@ namespace FSO.Client.Controllers
         public LoadAvatarByIDResponse AvatarData;
 
         private ConnectArchiveMode LastMode;
+        private ArchiveAvatarSelectCode LastSelectCode = ArchiveAvatarSelectCode.Success;
 
         public ShardSelectorServletRequest Shard => CityConnectionRegulator.CurrentShard;
 
@@ -64,11 +65,54 @@ namespace FSO.Client.Controllers
                     ShowMainDialog(new UIArchiveLandingDialog());
                     break;
                 case ConnectArchiveMode.Create:
-                    ShowMainDialog(new UIArchiveCreateServer());
+                    if (FSOFacade.Controller.HasServer())
+                    {
+                        ExistingServerDialog();
+                    }
+                    else
+                    {
+                        ShowMainDialog(new UIArchiveCreateServer());
+                    }
                     break;
             }
 
             View.SetSandboxVisibility(sandboxVisible);
+        }
+
+        private void ExistingServerDialog()
+        {
+            var config = FSOFacade.Controller.GetServerConfig();
+
+            UIAlert alert = null;
+            alert = UIScreen.GlobalShowAlert(new UIAlertOptions()
+            {
+                Message = GameFacade.Strings.GetString("f128", "96"),
+                Width = 400,
+                Buttons = [
+                    new UIAlertButton(UIAlertButtonType.Yes, (btn =>
+                    {
+                        // User management
+                        UIScreen.RemoveDialog(alert);
+                        UIScreen.GlobalShowDialog(new UIArchiveUserManageDialog(new ArchiveManagement(config)), true);
+                    }), GameFacade.Strings.GetString("f128", "97")),
+                    new UIAlertButton(UIAlertButtonType.No, (btn =>
+                    {
+                        // Close server
+                        UIScreen.RemoveDialog(alert);
+                        FSOFacade.Controller.CloseServer(() =>
+                        {
+                            ShowMainDialog(new UIArchiveCreateServer());
+                        });
+                    }), GameFacade.Strings.GetString("f128", "98")),
+                    new UIAlertButton(UIAlertButtonType.Cancel, (btn =>
+                    {
+                        // Join server
+                        UIScreen.RemoveDialog(alert);
+                        ShowMainDialog(null);
+                        FSOFacade.Controller.ConnectToArchive(ClientArchiveConfiguration.Default.PlayerName, $"127.0.0.1:{config.CityPort}", true);
+                    }), GameFacade.Strings.GetString("f128", "99")),
+                ],
+            }, true);
         }
 
         public void ReturnToSAS(Callback onConnect, Callback onError)
@@ -186,6 +230,7 @@ namespace FSO.Client.Controllers
                         break;
                     case "ArchiveConnect":
                         //4  ^Starting engines^                 # City is Selected...
+                        LastSelectCode = ArchiveAvatarSelectCode.Success;
                         View.SetSandboxVisibility(false);
                         ShowMainDialog(null);
                         View.SetProgress((1.0f / 14.0f) * 100, 4);
@@ -207,10 +252,23 @@ namespace FSO.Client.Controllers
 
                         ShowMainDialog(select);
 
+                        if (LastSelectCode != ArchiveAvatarSelectCode.Success)
+                        {
+                            select.ShowSelectionError(LastSelectCode);
+                            LastSelectCode = ArchiveAvatarSelectCode.Success;
+                        }
+
                         break;
                     case "ArchiveSelectAvatar":
                         View.SetProgressArchive((5.5f / 14.0f) * 100, "Selecting avatar");
                         ShowMainDialog(null);
+                        break;
+
+                    case "ArchiveSelectedAvatar":
+                        if (data is ArchiveAvatarSelectResponse sel)
+                        {
+                            LastSelectCode = sel.Code;
+                        }
                         break;
 
                     case "AskForAvatarData":

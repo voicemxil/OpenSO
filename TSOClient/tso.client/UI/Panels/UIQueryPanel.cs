@@ -487,7 +487,7 @@ namespace FSO.Client.UI.Panels
                 CodeOwner = ent.Object,
                 StackObject = ent,
                 Routine = null,
-                Args = new short[4],
+                Args = default,
                 Thread = ent.Thread,
             };
 

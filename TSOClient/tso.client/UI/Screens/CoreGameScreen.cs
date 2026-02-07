@@ -1,41 +1,45 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using FSO.Client.UI.Framework;
-using FSO.Client.UI.Panels;
-using FSO.Client.UI.Model;
-using FSO.Client.Rendering.City;
-using Microsoft.Xna.Framework;
-using FSO.Client.Utils;
-using FSO.Common.Rendering.Framework.Model;
-using FSO.Common.Rendering.Framework.IO;
-using FSO.Common.Rendering.Framework;
-using FSO.LotView;
-using FSO.LotView.Model;
-using FSO.SimAntics;
-using FSO.HIT;
-using FSO.SimAntics.NetPlay.Drivers;
-using FSO.SimAntics.NetPlay.Model.Commands;
-using FSO.SimAntics.NetPlay;
-using FSO.Client.UI.Controls;
-using FSO.Client.Controllers;
+﻿using FSO.Client.Controllers;
 using FSO.Client.Controllers.Panels;
 using FSO.Client.Debug;
-using FSO.Client.UI.Panels.WorldUI;
-using FSO.Common.Utils;
-using FSO.UI.Model;
-using FSO.Client.UI.Panels.Neighborhoods;
-using FSO.Server.Clients;
-using FSO.LotView.Utils.Camera;
+using FSO.Client.Rendering;
+using FSO.Client.Rendering.City;
 using FSO.Client.UI.Archive;
-using FSO.Common.Model;
+using FSO.Client.UI.Controls;
+using FSO.Client.UI.Framework;
+using FSO.Client.UI.Model;
+using FSO.Client.UI.Panels;
+using FSO.Client.UI.Panels.Neighborhoods;
+using FSO.Client.UI.Panels.WorldUI;
+using FSO.Client.Utils;
 using FSO.Common.Domain.Realestate;
+using FSO.Common.Model;
+using FSO.Common.Rendering.Framework;
+using FSO.Common.Rendering.Framework.IO;
+using FSO.Common.Rendering.Framework.Model;
+using FSO.Common.Utils;
+using FSO.HIT;
+using FSO.LotView;
+using FSO.LotView.Components;
+using FSO.LotView.Model;
+using FSO.LotView.Utils.Camera;
+using FSO.Server.Clients;
+using FSO.SimAntics;
+using FSO.SimAntics.NetPlay;
+using FSO.SimAntics.NetPlay.Drivers;
+using FSO.SimAntics.NetPlay.Model.Commands;
+using FSO.SimAntics.Utils;
+using FSO.UI.Model;
+using Microsoft.Xna.Framework;
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text.RegularExpressions;
 
 namespace FSO.Client.UI.Screens
 {
     public class CoreGameScreen : FSO.Client.UI.Framework.GameScreen, IGameScreen
     {
-        public UIUCP ucp;
+        public UIUCP ucp { get; set; }
         public UIGizmo gizmo;
         public UIInbox Inbox;
         public UIGameTitle Title;
@@ -75,6 +79,7 @@ namespace FSO.Client.UI.Screens
 
         public VM VisualVM => TransitionVM ?? vm;
         public World VisualWorld => TransitionWorld ?? World;
+        public VisualSurroundPuppets SurroundPuppets { get; private set; }
 
         public bool InLot
         {
@@ -324,6 +329,8 @@ namespace FSO.Client.UI.Screens
 
             var status = new UINetStatusTray();
             Add(status);
+
+            SurroundPuppets = new(this);
         }
 
         public override void GameResized()
@@ -517,6 +524,8 @@ namespace FSO.Client.UI.Screens
         public override void PreDraw(UISpriteBatch batch)
         {
             base.PreDraw(batch);
+            SurroundPuppets?.PreDraw();
+
             if (vm != null)
             {
                 if (vm.FSOVAsyncLoading) { }
@@ -571,6 +580,7 @@ namespace FSO.Client.UI.Screens
                 GameFacade.Scenes.Remove(TransitionWorld);
                 TransitionWorld.Dispose();
                 TransitionWorld = null;
+
                 CityRenderer.DisposeOnLot();
             }
         }
@@ -598,6 +608,11 @@ namespace FSO.Client.UI.Screens
                 TimedReferenceController.Clear();
 
                 if (ZoomLevel < 4) ZoomLevel = 5;
+            }
+
+            if (localTransition)
+            {
+                vm.Context.Ambience.BeginTransition();
             }
 
             vm.Context.Ambience.Kill();
@@ -655,6 +670,7 @@ namespace FSO.Client.UI.Screens
                     Buttons = new UIAlertButton[]
                     {
                     new UIAlertButton(UIAlertButtonType.Yes, (btn) => {
+                        controller.ReconnectTransition = null;
                         controller.ReconnectLotID = id;
                         vm?.SendCommand(new VMNetSimLeaveCmd());
                         RemoveDialog(SwitchLotDialog); SwitchLotDialog = null; }),
@@ -780,19 +796,81 @@ namespace FSO.Client.UI.Screens
 
                 if (lastWorld != null)
                 {
+                    var surroundsToKeep = info.GetSurroundingLotMask() ^ 0b111111111;
+                    var oldSubworlds = lastWorld.Architecture.Blueprint.SubWorlds;
+                    var newSubworlds = World.Architecture.Blueprint.SubWorlds;
+                    var size = World.Architecture.Blueprint.Width;
+                    int baseHeight = VMLotTerrainRestoreTools.GetBaseLevel(vm, 1, 1);
+                    bool anySubworldsMigrated = false;
+
+                    for (int i = 0; i < 9; i++)
+                    {
+                        if (i == 4) continue;
+
+                        uint bit = 1u << i;
+
+                        if ((surroundsToKeep & bit) != 0)
+                        {
+                            var oldIndex = info.GetOldSubworldForIndex(i);
+                            var oldSurround = oldSubworlds.Find(x => x.Index == oldIndex);
+
+                            if (oldSurround != null)
+                            {
+                                oldSubworlds.Remove(oldSurround);
+
+                                oldSurround.Index = i;
+                                int x = (i % 3);
+                                int y = (i / 3);
+                                oldSurround.GlobalPosition = new Vector2((1 - y) * (size - 2), (x - 1) * (size - 2));
+                                int newHeight = VMLotTerrainRestoreTools.GetBaseLevel(vm, x, y);
+                                var bp = oldSurround.Architecture.Blueprint;
+                                var oldAlt = bp.BaseAlt;
+                                bp.BaseAlt = baseHeight - newHeight;
+
+                                if (oldAlt != bp.BaseAlt)
+                                {
+                                    foreach (var obj in bp.Objects)
+                                    {
+                                        // Need to update the object altitudes
+                                        obj.Position = obj.UnmoddedPosition;
+                                    }
+
+                                    bp.AdjustBaseAlt(bp.BaseAlt - oldAlt);
+                                }
+
+                                newSubworlds.Add(oldSurround);
+                                anySubworldsMigrated = true;
+                            }
+                        }
+                    }
+
+                    if (anySubworldsMigrated)
+                    {
+                        World.InitSubWorlds();
+                    }
+
                     var lastState = TransitionWorld.State;
                     if (World.State.Level != lastState.Level) World.State.Level = lastState.Level;
                     if (World.State.Rotation != lastState.Rotation) World.State.Rotation = lastState.Rotation;
                     if (World.State.Zoom != lastState.Zoom) World.State.Zoom = lastState.Zoom;
                     World.State.PreciseZoom = lastState.PreciseZoom;
                     World.State.CenterTile = lastState.CenterTile - new Vector2(info.RelativeChangeX * (TransitionWorld.Architecture.Blueprint.Width - 2), info.RelativeChangeY * (TransitionWorld.Architecture.Blueprint.Height - 2));
+                    if (lastWorld.State.ScrollAnchor != null)
+                    {
+                        var myOldAvatar = TransitionVM?.GetAvatarByPersist(TransitionVM.MyUID);
+
+                        if (lastWorld.State.ScrollAnchor == myOldAvatar.WorldUI)
+                        {
+                            World.State.ScrollAnchor = myAvatar.WorldUI as AvatarComponent;
+                        }
+                    }
                 }
 
                 // TODO: shift camera height by surrounding lot height?
                 TransitionCamera(newCameras.Camera3D, TransitionCameras.Camera3D);
                 //TransitionCamera(newCameras.Camera2D, TransitionCameras.Camera2D);
                 //TransitionCamera(newCameras.CameraFirstPerson, TransitionCameras.CameraFirstPerson);
-                //TransitionCamera(newCameras.CameraDirect, TransitionCameras.CameraDirect);
+                newCameras.CameraDirect.Inherit(TransitionCameras.CameraDirect);
 
                 if (myAvatar.GetPersonData(SimAntics.Model.VMPersonDataVariable.UnusedAndDoNotUse2) == 32767)
                 {

@@ -47,6 +47,7 @@ namespace FSO.Client.UI.Screens
 
         public LoginRegulator LoginRegulator;
         public UIButton CASButton { get; set; }
+        public UIButton AcceptButton { get; set; }
 
         public UITextBox SearchBox;
         public UIListBox AvatarListBox;
@@ -262,6 +263,8 @@ namespace FSO.Client.UI.Screens
             CreditsButton.OnButtonClick += new ButtonClickDelegate(CreditsButton_OnButtonClick);
             m_ExitButton.OnButtonClick += new ButtonClickDelegate(m_ExitButton_OnButtonClick);
             CASButton.OnButtonClick += OpenCAS;
+            AcceptButton.OnButtonClick += AcceptSelection;
+            AcceptButton.Disabled = true;
             SearchBox.OnChange += (elem) =>
             {
                 RefreshList();
@@ -286,9 +289,15 @@ namespace FSO.Client.UI.Screens
             });
         }
 
+        private void AcceptSelection(UIElement button)
+        {
+            SelectAvatar(button, false);
+        }
+
         private void ChangedSelectedAvatar(UIElement element)
         {
             PersonSlot.AvatarButton.Disabled = AvatarListBox.SelectedItem == null;
+            AcceptButton.Disabled = PersonSlot.AvatarButton.Disabled;
 
             if (PersonSlot.AvatarButton.Disabled)
             {
@@ -345,7 +354,7 @@ namespace FSO.Client.UI.Screens
             }
             else
             {
-                var recentIds = new HashSet<uint>(Data.RecentAvatars);
+                var recentIds = Data.RecentAvatars;
 
                 var myItems = Data.UserAvatars
                     .Where(x => x.Name.ToLower().Contains(query) || x.LotName.ToLower().Contains(query))
@@ -357,8 +366,19 @@ namespace FSO.Client.UI.Screens
                         };
                     });
 
-                var recentItems = Data.SharedAvatars
-                    .Where(x => recentIds.Contains(x.AvatarId) && (x.Name.ToLower().Contains(query) || x.LotName.ToLower().Contains(query)))
+                var recentSorted = new ArchiveAvatar[Data.RecentAvatars.Length];
+
+                foreach (var shared in Data.SharedAvatars)
+                {
+                    int index = Array.IndexOf(recentIds, shared.AvatarId);
+                    if (index != -1)
+                    {
+                        recentSorted[index] = shared;                        
+                    }
+                }
+
+                var recentItems = recentSorted
+                    .Where(x => x.AvatarId != 0 && (x.Name.ToLower().Contains(query) || x.LotName.ToLower().Contains(query)))
                     .Select((ArchiveAvatar x) =>
                     {
                         return new UIListBoxItem(x, new object[] { SimIconRecent, x.Name, x.LotName })
@@ -462,6 +482,19 @@ namespace FSO.Client.UI.Screens
                 onOk(cityPicker.SelectedShard);
             };
             ShowDialog(cityPicker, true);
+        }
+
+        public void ShowSelectionError(ArchiveAvatarSelectCode code)
+        {
+            UIAlert alert = null;
+            alert = GlobalShowAlert(new UIAlertOptions()
+            {
+                Title = GameFacade.Strings.GetString("f128", "100"),
+                Message = GameFacade.Strings.GetString("f128", (100 + (int)code).ToString()) ,
+                Buttons = UIAlertButton.Ok(x => {
+                    RemoveDialog(alert);
+                }),
+            }, true);
         }
     }
 

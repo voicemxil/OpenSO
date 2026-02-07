@@ -19,6 +19,7 @@ using FSO.HIT;
 using FSO.Client.UI.Model;
 using FSO.LotView.Utils.Camera;
 using FSO.LotView.Model;
+using FSO.SimAntics.NetPlay.Model.Commands;
 
 namespace FSO.Client.UI.Panels
 {
@@ -607,11 +608,21 @@ namespace FSO.Client.UI.Panels
 
             if (CurrentPanel != -1)
             {
+                var permissions = (Game.vm?.GetAvatarByPersist(Game.vm.MyUID)?.TSOState as VMTSOAvatarState)?.Permissions ?? VMTSOAvatarPermissions.Visitor;
                 switch (CurrentPanel)
                 {
                     case 3:
                     case 2:
-                        if (Game.InLot && (true || Game.vm.TSOState.Roommates.Contains(Game.vm.MyUID))) FindController<CoreGameScreenController>()?.UploadLotThumbnail();
+                        if (permissions >= VMTSOAvatarPermissions.Roommate)
+                        {
+                            var isBuild = CurrentPanel == 3 && permissions >= VMTSOAvatarPermissions.BuildBuyRoommate;
+                            Game.vm?.SendCommand(new VMNetLeaveBuildBuyCmd()
+                            {
+                                Build = isBuild
+                            });
+
+                            FindController<CoreGameScreenController>()?.UploadLotThumbnail(isBuild);
+                        }
                         break;
                 }
                 DynamicOverlay.Remove(Panel);

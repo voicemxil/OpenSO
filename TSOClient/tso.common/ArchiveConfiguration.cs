@@ -1,6 +1,8 @@
-﻿using System;
+﻿using Newtonsoft.Json;
+using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Security.Cryptography;
 
 namespace FSO.Common
 {
@@ -29,16 +31,57 @@ namespace FSO.Common
 
     public class ArchiveConfiguration
     {
+        [JsonProperty("flags")]
         public ArchiveConfigFlags Flags { get; set; }
+        [JsonProperty("archiveDataDirectory")]
         public string ArchiveDataDirectory { get; set; } // Effectively equal to the nfs
+        [JsonProperty("cityPort")]
         public ushort CityPort { get; set; }
+        [JsonProperty("lotPort")]
         public ushort LotPort { get; set; }
+        [JsonProperty("serverKey")]
         public string ServerKey { get; set; }
+        [JsonProperty("serverPublicKey")]
+        public string ServerPublicKey { get; set; }
+        [JsonProperty("gameScale")]
         public float GameScale { get; set; } = 1;
+        [JsonProperty("allowUserApi")]
         public bool AllowUserApi { get; set; }
 
         // Runtime
         public IDisposable[] Disposables;
+        public EventConfig? Events;
+
+        public void LoadEvents()
+        {
+            // Try and load associated event config
+            var eventPath = Path.Combine(Path.GetDirectoryName(ArchiveDataDirectory), "events.json");
+
+            try
+            {
+                var eventJson = File.ReadAllText(eventPath);
+
+                Events = EventConfig.FromJson(eventJson);
+            }
+            catch { }
+        }
+
+        public void SaveEvents()
+        {
+            if (Events == null)
+            {
+                return;
+            }
+
+            // Try and save associated event config
+            var eventPath = Path.Combine(Path.GetDirectoryName(ArchiveDataDirectory), "events.json");
+
+            try
+            {
+                File.WriteAllText(eventPath, Events.Value.ToJson());
+            }
+            catch { }
+        }
     }
 
     public class ClientArchiveConfiguration : IniConfig
@@ -55,25 +98,7 @@ namespace FSO.Common
                 {
                     defaultInstance = new ClientArchiveConfiguration(Path.Combine(FSOEnvironment.UserDir, "archiveConfig.ini"));
 
-                    if (defaultInstance.ServerPrivateKey == "")
-                    {
-                        defaultInstance.ServerPrivateKey = GenerateGUID();
-                    }
-
-                    if (defaultInstance.ServerPublicKey == "")
-                    {
-                        defaultInstance.ServerPublicKey = GenerateGUID();
-                    }
-
-                    if (defaultInstance.ClientPrivateKey == "")
-                    {
-                        defaultInstance.ClientPrivateKey = GenerateGUID();
-                    }
-
-                    if (defaultInstance.ClientPublicKey == "")
-                    {
-                        defaultInstance.ClientPublicKey = GenerateGUID();
-                    }
+                    defaultInstance.VerifyKeys();
                 }
                 return defaultInstance;
             }
@@ -84,7 +109,9 @@ namespace FSO.Common
             return Guid.NewGuid().ToString();
         }
 
-        public ClientArchiveConfiguration(string path) : base(path) { }
+        public ClientArchiveConfiguration(string path) : base(path)
+        {
+        }
 
         private Dictionary<string, string> _DefaultValues = new Dictionary<string, string>()
         {
@@ -128,6 +155,8 @@ namespace FSO.Common
         public ushort LotPort { get; set; }
         public float GameScale { get; set; } = 1;
 
+        public EventConfig? Events;
+
         public ArchiveConfiguration ToHostConfig()
         {
             return new ArchiveConfiguration()
@@ -138,7 +167,8 @@ namespace FSO.Common
                 LotPort = LotPort,
                 GameScale = GameScale,
 
-                ServerKey = ServerPrivateKey
+                ServerKey = ServerPrivateKey,
+                ServerPublicKey = ServerPublicKey,
             };
         }
 
@@ -148,6 +178,81 @@ namespace FSO.Common
             CityPort = config.CityPort;
             LotPort = config.LotPort;
             GameScale = config.GameScale;
+        }
+
+        private void GenerateServerRsaKeys()
+        {
+            var rsa = RSA.Create();
+
+            ServerPublicKey = rsa.ExportRSAPublicKeyPem().Replace('\n', '^');
+            ServerPrivateKey = rsa.ExportRSAPrivateKeyPem().Replace('\n', '^');
+        }
+
+        private bool VerifyServerRsaKeys()
+        {
+            if (ServerPrivateKey == "" || ServerPublicKey == "")
+            {
+                return false;
+            }
+
+            var rsa = RSA.Create();
+
+            try
+            {
+                var rsaParams = rsa.ExportParameters(false);
+
+                rsa.ImportFromPem(ServerPublicKey.Replace('^', '\n'));
+
+                // If the parameters were updated, it was valid.
+
+                var publicRsaParams = rsa.ExportParameters(false);
+
+                if (rsaParams.Equals(publicRsaParams))
+                {
+                    // No public key replacement...
+                    return false;
+                }
+
+                rsa.ImportFromPem(ServerPrivateKey.Replace('^', '\n'));
+
+                // If the parameters were updated, it was valid.
+
+                // This will fail if a private key wasn't imported.
+                var privateRsaParams = rsa.ExportParameters(true);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        public void VerifyKeys()
+        {
+            bool changed = false;
+            if (!VerifyServerRsaKeys())
+            {
+                GenerateServerRsaKeys();
+                changed = true;
+            }
+
+            if (ClientPrivateKey == "")
+            {
+                ClientPrivateKey = GenerateGUID();
+                changed = true;
+            }
+
+            if (ClientPublicKey == "")
+            {
+                ClientPublicKey = GenerateGUID();
+                changed = true;
+            }
+
+            if (changed)
+            {
+                Save();
+            }
         }
     }
 }

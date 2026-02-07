@@ -9,9 +9,8 @@
     <ApplicationIcon>../FSO.Server/FreeSO.ico</ApplicationIcon>
     <IsAotCompatible>True</IsAotCompatible>
     <PublishAot>false</PublishAot>
-    <PublishTrimmed>true</PublishTrimmed>
     <IsAotCompatible>false</IsAotCompatible>
-    <TrimMode>full</TrimMode>
+	<SelfContained>False</SelfContained>
   </PropertyGroup>
 
   <ItemGroup>
@@ -25,6 +24,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\FSO.Content.TSO\FSO.Content.TSO.csproj" />
     <ProjectReference Include="..\FSO.Server.Api.Core\FSO.Server.Api.Core.csproj" />
     <ProjectReference Include="..\FSO.Server\FSO.Server.csproj" />
     <ProjectReference Include="..\tso.content\FSO.Content.csproj" />

@@ -39,6 +39,7 @@ namespace FSO.Server.Protocol.Electron
         ArchiveModerationRequest,
         VerificationNotification,
         JoinLotWithTransitionRequest,
+        FSOVMSurroundPuppets,
         Unknown = 0xFFFF
     }
 

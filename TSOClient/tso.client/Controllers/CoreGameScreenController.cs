@@ -3,6 +3,7 @@ using FSO.Client.Model;
 using FSO.Client.Regulators;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Screens;
+using FSO.Client.Utils;
 using FSO.Common;
 using FSO.Common.DataService;
 using FSO.Common.DataService.Model;
@@ -120,8 +121,8 @@ namespace FSO.Client.Controllers
                         //doesn't really need to be next update... but we don't want to catch the VM in a half-init state.
                         if (data == null) break;
                         VMNetMessage msg = null;
-                        if (data is FSOVMTickBroadcast)
-                            msg = new VMNetMessage(VMNetMessageType.BroadcastTick, ((FSOVMTickBroadcast)data).Data);
+                        if (data is FSOVMTickBroadcast broadcast)
+                            msg = new VMNetMessage(broadcast.Catchup ? VMNetMessageType.CatchupTick : VMNetMessageType.BroadcastTick, broadcast.Data);
                         else
                             msg = new VMNetMessage(VMNetMessageType.Direct, ((FSOVMDirectToClient)data).Data);
 
@@ -138,6 +139,7 @@ namespace FSO.Client.Controllers
             {
                 JoinLotRegulator.JoinLot(id, transition);
                 ReconnectLotID = 0;
+                ReconnectTransition = transition;
             }
             else if (lot == id)
             {
@@ -157,6 +159,7 @@ namespace FSO.Client.Controllers
             {
                 JoinLotRegulator.JoinLot(id, transition);
                 ReconnectLotID = 0;
+                ReconnectTransition = null;
             }
             else
             {
@@ -253,7 +256,7 @@ namespace FSO.Client.Controllers
             });
         }
 
-        public void UploadLotThumbnail()
+        public void UploadLotThumbnail(bool buildMode)
         {
             if (!Screen.InLot) return;
             var lotID = JoinLotRegulator.GetCurrentLotID();
@@ -267,12 +270,36 @@ namespace FSO.Client.Controllers
                 //tex.Dispose();
                 data = stream.ToArray();
             }
+
+            byte[] facadeData = null;
+
+            if (buildMode && FSOEnvironment.Enable3D)
+            {
+                var result = new FSOFHelper(GameFacade.GraphicsDevice, Screen.vm, Screen.vm.Context.World).GenerateIngameFSOF();
+                Terrain.OverrideLotFacade(lotID, result);
+
+                using var mem = new MemoryStream();
+
+                result.Save(mem);
+
+                facadeData = mem.ToArray();
+            }
+
             DataService.Get<Lot>(lotID).ContinueWith(x =>
             {
                 var lot = x.Result;
                 if (lot == null) return; //uh, oops!
                 lot.Lot_Thumbnail = new Common.Serialization.Primitives.cTSOGenericData(data);
-                DataService.Sync(lot, new string[] { "Lot_Thumbnail" });
+
+                if (facadeData != null)
+                {
+                    lot.Lot_Facade = new Common.Serialization.Primitives.cTSOGenericData(facadeData);
+                    DataService.Sync(lot, ["Lot_Thumbnail", "Lot_Facade"]);
+                }
+                else
+                {
+                    DataService.Sync(lot, ["Lot_Thumbnail"]);
+                }
             });
         }
 
@@ -417,7 +444,8 @@ namespace FSO.Client.Controllers
 
         public void HandleVMShutdown(VMCloseNetReason reason)
         {
-            if (JoinLotRegulator.CurrentState.Name != "Disconnected")
+            var state = JoinLotRegulator.CurrentState.Name;
+            if (state != "Disconnected" && state != "Disconnect")
             {
                 JoinLotRegulator.AsyncTransition("Disconnect");
             }

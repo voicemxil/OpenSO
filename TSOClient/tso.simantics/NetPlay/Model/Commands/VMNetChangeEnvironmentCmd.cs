@@ -14,9 +14,9 @@ namespace FSO.SimAntics.NetPlay.Model.Commands
         {
             var amb = vm.Context.Ambience;
             foreach (var guid in GUIDsToClear)
-                amb.SetAmbience(amb.GetAmbienceFromGUID(guid), false);
+                amb.SetUserAmbience(amb.GetAmbienceFromGUID(guid), false);
             foreach (var guid in GUIDsToAdd)
-                amb.SetAmbience(amb.GetAmbienceFromGUID(guid), true);
+                amb.SetUserAmbience(amb.GetAmbienceFromGUID(guid), true);
             return true;
         }
 

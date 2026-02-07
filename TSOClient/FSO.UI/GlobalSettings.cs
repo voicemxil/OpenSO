@@ -31,11 +31,6 @@ namespace FSO.Client
                     {
                         defaultInstance.ArchiveClientGUID = GenerateGUID();
                     }
-
-                    if (defaultInstance.ArchiveServerGUID == "")
-                    {
-                        defaultInstance.ArchiveServerGUID = GenerateGUID();
-                    }
                 }
                 return defaultInstance;
             }
@@ -65,7 +60,7 @@ namespace FSO.Client
             { "FXVolume", "10"},
             { "MusicVolume", "10"},
             { "VoxVolume", "10"},
-            { "AmbienceVolume", "1"},
+            { "AmbienceVolume", "8"},
             { "StartupPath", ""},
             { "DocumentsPath", ""},
             { "Windowed", "true"},
@@ -91,6 +86,8 @@ namespace FSO.Client
 
             { "TS1HybridPath", "D:/Games/The Sims/" },
             { "TS1HybridEnable", "false" },
+            { "TS1IsSteamInstall", "false" },
+            { "TS1InstallationConfigured", "false" },
 
             { "Shadows3D", "false" },
             { "CitySkybox", "true" },
@@ -162,6 +159,8 @@ namespace FSO.Client
 
         public string TS1HybridPath { get; set; }
         public bool TS1HybridEnable { get; set; }
+        public bool TS1IsSteamInstall { get; set; }
+        public bool TS1InstallationConfigured { get; set; }
 
         public bool Shadows3D { get; set; }
         public bool CitySkybox { get; set; }
@@ -189,7 +188,6 @@ namespace FSO.Client
         public bool EnableTransitions { get; set; }
 
 
-        public string ArchiveServerGUID { get; set; }
         public string ArchiveClientGUID { get; set; }
 
         public static int TARGET_COMPAT_STATE = 2;

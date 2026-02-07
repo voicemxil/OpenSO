@@ -44,7 +44,7 @@ namespace FSO.Server.Framework.Aries
         public int UnexpectedDisconnectWaitSeconds = 0;
         public bool TimeoutIfNoAuth;
 
-        protected virtual RequestClientSessionArchive ArchiveHandshake => null;
+        protected virtual RequestClientSessionArchive ArchiveHandshake(IoSession session) => null;
 
         public AbstractAriesServer(AbstractAriesServerConfig config, IKernel kernel)
         {
@@ -203,7 +203,7 @@ namespace FSO.Server.Framework.Aries
             if (TimeoutIfNoAuth) ariesSession.TimeoutIfNoAuth(20000);
 
             //Ask for session info
-            var handshake = ArchiveHandshake;
+            var handshake = ArchiveHandshake(session);
             if (handshake != null)
             {
                 session.Write(handshake);

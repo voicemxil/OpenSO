@@ -318,7 +318,7 @@ namespace FSO.Server.Servers.City.Domain
                                 var lot = db.Lots.GetByLocation(Context.ShardId, lotId);
                                 if (lot != null)
                                 {
-                                    if (lot.admit_mode > 0 && lot.admit_mode < 4)
+                                    if (lot.admit_mode > 0 && lot.admit_mode < 4 && !AllowGuestOpening)
                                     {
                                         //special admit mode
 

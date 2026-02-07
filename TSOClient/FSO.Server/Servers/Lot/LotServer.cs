@@ -10,6 +10,7 @@ using FSO.Server.Protocol.Voltron.Packets;
 using FSO.Server.Servers.Lot.Domain;
 using FSO.Server.Servers.Lot.Handlers;
 using FSO.Server.Servers.Lot.Lifecycle;
+using FSO.Server.Servers.Lot.Surround;
 using FSO.Server.Servers.Shared.Handlers;
 using Ninject;
 using NLog;
@@ -37,6 +38,7 @@ namespace FSO.Server.Servers.Lot
             Kernel.Bind<LotServerConfiguration>().ToConstant(Config);
             Kernel.Bind<LotHost>().To<LotHost>().InSingletonScope();
             Kernel.Bind<CityConnections>().To<CityConnections>().InSingletonScope();
+            Kernel.Bind<LiveSurroundHost>().To<LiveSurroundHost>().InSingletonScope();
             Kernel.Bind<LotServer>().ToConstant(this);
 
             LotLivenessTimer.AutoReset = true;
