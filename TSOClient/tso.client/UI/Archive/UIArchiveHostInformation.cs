@@ -192,7 +192,7 @@ namespace FSO.Client.UI.Archive
         {
             var screenWidth = GameFacade.Screens.CurrentUIScreen.ScreenWidth;
 
-            var pos = new Vector2((screenWidth - Size.X) / 2, 24);
+            var pos = new Vector2(MathF.Round((screenWidth - Size.X) / 2), 24);
 
             if (Position != pos)
             {
