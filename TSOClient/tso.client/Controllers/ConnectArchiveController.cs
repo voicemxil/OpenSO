@@ -12,6 +12,7 @@ using FSO.HIT;
 using FSO.Server.Embedded;
 using FSO.Server.Protocol.CitySelector;
 using FSO.Server.Protocol.Electron.Packets;
+using FSO.UI.Model;
 
 namespace FSO.Client.Controllers
 {
@@ -19,7 +20,8 @@ namespace FSO.Client.Controllers
     {
         Landing,
         Create,
-        Join
+        Join,
+        JoinRPC
     }
 
     public class ConnectArchiveController : IDisposable
@@ -59,6 +61,9 @@ namespace FSO.Client.Controllers
             {
                 case ConnectArchiveMode.Join:
                     ShowMainDialog(new UIArchiveJoinDialog());
+                    break;
+                case ConnectArchiveMode.JoinRPC:
+                    ShowMainDialog(new UIArchiveJoinRPCDialog());
                     break;
                 case ConnectArchiveMode.Landing:
                     sandboxVisible = true;
@@ -217,6 +222,27 @@ namespace FSO.Client.Controllers
 
             SwitchMode(LastMode);
             View.SetProgressArchive(0, "Awaiting user input");
+        }
+
+        public void TickRPC()
+        {
+            var rpc = DiscordRpcEngine.Secret;
+
+            if (rpc != null)
+            {
+                if (rpc.Value.ArchiveMode)
+                {
+                    if (!string.IsNullOrEmpty(rpc.Value.ServerHostname))
+                    {
+                        SwitchMode(ConnectArchiveMode.JoinRPC);
+                    }
+                }
+                else
+                {
+                    UIAlert.Alert("", GameFacade.Strings.GetString("f128", "114"), true);
+                    DiscordRpcEngine.Secret = null;
+                }
+            }
         }
 
         private void CityConnectionRegulator_OnTransition(string state, object data)

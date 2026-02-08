@@ -502,14 +502,39 @@ namespace FSO.Client.UI.Screens
                 }
             }
 
-            var joinAttempt = DiscordRpcEngine.Secret;
-            if (joinAttempt != null)
+            var secret = DiscordRpcEngine.Secret;
+            if (secret != null)
             {
-                var split = joinAttempt.Split('#');
-                uint lotID;
-                if (uint.TryParse(split[0], out lotID))
+                var joinAttempt = secret.Value;
+                bool joinLot = true;
+                // TODO: if the join attempt archive mode doesn't match archive mode enable, let the player know
+                if (joinAttempt.ArchiveMode)
                 {
-                    FindController<CoreGameScreenController>()?.JoinLot(lotID);
+                    if (joinAttempt.ServerID != DiscordRpcEngine.ArchiveID)
+                    {
+                        if (joinAttempt.ServerHostname == "")
+                        {
+                            UIAlert.Alert("", GameFacade.Strings.GetString("f128", "115"), true);
+                        }
+                        else
+                        {
+                            UIAlert.YesNo("", GameFacade.Strings.GetString("f128", "116"), true, (bool result) =>
+                            {
+                                if (result)
+                                {
+                                    FSOFacade.Controller.Disconnect(true);
+                                    GameThread.SetTimeout(() => { DiscordRpcEngine.Secret = joinAttempt; }, 100);
+                                }
+                            });
+                        }
+                        joinLot = false;
+                    }
+                }
+
+                if (joinLot)
+                {
+                    var lotId = joinAttempt.LotID;
+                    FindController<CoreGameScreenController>()?.JoinLot(lotId);
                 }
 
                 DiscordRpcEngine.Secret = null;

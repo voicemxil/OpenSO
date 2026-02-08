@@ -126,3 +126,16 @@ If you're the user of this display name, you should either copy the configuratio
 103 ^This avatar is currently in use by a client with the same ID (likely yourself), and the server was unable to fully disconnect the avatar to give it to this client. Please try again later.^
 104 ^This avatar is currently in use by another user. Please try again later.^
 105 ^An unknown error occurred while selecting that avatar.^
+
+110 ^Enable Discord Game Invites^
+111 ^Invites are now enabled. Sending a Discord game invite to someone will supply them with the public IP of this server, so be careful who you send an invite to.
+You can send an invite from the + menu that appears next to the chat input.^
+112 ^Discord Game Invites are Enabled^
+113 ^Unable to enable invites. This could be due to an issue with discord RPC, or the hostname is too complex.^
+114 ^This invite is for a FreeSO-based server, and you're in archive mode. Please find the appropriate client for the server you're connecting to.^
+115 ^This invite is for a different game server than the one you're currently on, and the person who sent the invite has not enabled server invites.^
+116 ^This invite is for a different game server than the one you're currently on. Would you like to switch servers?^
+117 ^Joining a server from Discord^
+118 ^Enter a Display Name to use on this server:^
+119 ^Unable to enable invites, as the address for this server could not be determined.^
+120 ^This invite to a specific property needs you to be on the same game server as the inviter, and they haven't enabled server invites.^

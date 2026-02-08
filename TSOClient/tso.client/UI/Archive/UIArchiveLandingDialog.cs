@@ -3,6 +3,7 @@ using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
 using FSO.Client.Utils;
 using FSO.Common;
+using FSO.Common.Rendering.Framework.Model;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
@@ -144,6 +145,12 @@ namespace FSO.Client.UI.Archive
         private void Create(Framework.UIElement button)
         {
             FindController<ConnectArchiveController>().SwitchMode(ConnectArchiveMode.Create);
+        }
+
+        public override void Update(UpdateState state)
+        {
+            base.Update(state);
+            FindController<ConnectArchiveController>().TickRPC();
         }
     }
 }

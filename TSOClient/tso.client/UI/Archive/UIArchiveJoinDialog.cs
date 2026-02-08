@@ -1,7 +1,7 @@
 ﻿using FSO.Client.Controllers;
-using FSO.Client.Model.Archive;
 using FSO.Client.UI.Controls;
 using FSO.Common;
+using FSO.Common.Rendering.Framework.Model;
 using Microsoft.Xna.Framework;
 
 namespace FSO.Client.UI.Archive
@@ -101,6 +101,12 @@ namespace FSO.Client.UI.Archive
         private void ValidateInputs(Framework.UIElement element)
         {
             JoinButton.Disabled = NameInput.CurrentText.Length == 0 || AddressInput.CurrentText.Length == 0;
+        }
+
+        public override void Update(UpdateState state)
+        {
+            base.Update(state);
+            FindController<ConnectArchiveController>().TickRPC();
         }
     }
 }

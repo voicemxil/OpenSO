@@ -16,6 +16,7 @@ using FSO.Server.Protocol.CitySelector;
 using FSO.Server.Protocol.Electron.Packets;
 using FSO.Server.Protocol.Utils;
 using FSO.Server.Protocol.Voltron.Packets;
+using FSO.UI.Model;
 using Ninject;
 using System;
 using System.Collections.Generic;
@@ -38,6 +39,7 @@ namespace FSO.Client.Regulators
         public ArchiveClientList UserList { get; internal set; }
 
         public ConnectArchiveRequest ArchiveSettings { get; private set; }
+        public string ArchiveServerID { get; private set; }
         private string ArchiveToken;
         public ArchiveConfigFlags ArchiveConfig { get; private set; }
 
@@ -193,6 +195,17 @@ namespace FSO.Client.Regulators
                     Client.Write(new Server.Protocol.Electron.Packets.KeepAlive());
                 }
             }, 10000); //keep alive every 10 seconds. prevents disconnection by aggressive NAT.
+        }
+
+        public string ServerIdFromPublicKey(string client)
+        {
+            HashAlgorithm algorithm = SHA1.Create();
+            StringBuilder sb = new StringBuilder();
+            var hash = algorithm.ComputeHash(Encoding.UTF8.GetBytes(client));
+            foreach (byte b in hash)
+                sb.Append(b.ToString("X2"));
+
+            return sb.ToString().Substring(0, 8);
         }
 
         public string ArchiveHash(string client, string server)
@@ -390,6 +403,8 @@ namespace FSO.Client.Regulators
 
                         // Our ID for this server is derived from our client GUID - we don't send it directly.
                         var archiveUserID = ArchiveHash(GlobalSettings.Default.ArchiveClientGUID, serverRequest.ServerKey);
+                        ArchiveServerID = ServerIdFromPublicKey(serverRequest.ServerKey);
+                        DiscordRpcEngine.SetArchiveID(ArchiveServerID);
 
                         // It's encrypted with the server's public key, so only the owner of this public key should be able to decrypt the id we use for their server.
                         ArchiveToken = Convert.ToBase64String(rsa.Encrypt(Encoding.UTF8.GetBytes($"{serverRequest.Nonce}\\{archiveUserID}"), RSAEncryptionPadding.Pkcs1));
@@ -592,6 +607,7 @@ namespace FSO.Client.Regulators
 
                     break;
                 case "Disconnected":
+                    DiscordRpcEngine.Reset();
                     ((ClientShards)Shards).CurrentShard = null;
                     ReestablishAttempt = 0;
                     CanReestablish = false;
