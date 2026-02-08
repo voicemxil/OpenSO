@@ -1,29 +1,30 @@
 ﻿using System;
-using System.Drawing.Imaging;
-using System.Runtime.InteropServices;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using FSO.Client;
 using FSO.Client.UI.Panels;
 using FSO.Common;
-using FSO.Common.Rendering.Framework.IO;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
 using SixLabors.ImageSharp.Formats.Png;
 
-namespace FSO.MacOS
+namespace FSO.Unix
 {
     public static class Program
     {
-
         /// <summary>
         /// The main entry point for the application.
         /// </summary>
-
         public static void Main(string[] args)
         {
-            InitMacOS();
-            
+            InitUnix();
+
+            var mgAssembly = typeof(Microsoft.Xna.Framework.Game).Assembly;
+            var platform = mgAssembly.GetType("MonoGame.Framework.Utilities.PlatformInfo");
+            var backend = platform?.GetProperty("GraphicsBackend")?.GetValue(null);
+            Console.WriteLine($"[FreeSO] MonoGame: {mgAssembly.GetName().Version} | Backend: {backend ?? "Unknown"}");
+
             FSOEnvironment.Enable3D = true;
 
             if ((new FSOProgram()).InitWithArguments(args))
@@ -35,10 +36,9 @@ namespace FSO.MacOS
             Environment.Exit(0);
         }
 
-        public static void InitMacOS()
+        public static void InitUnix()
         {
             FSO.Files.ImageLoaderHelpers.BitmapFunction = BitmapReader;
-            // ClipboardHandler.Default = new WinFormsClipboard();
             FSO.Files.ImageLoaderHelpers.SavePNGFunc = SavePNG;
             AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
             FSOProgram.ShowDialog = ShowDialog;
@@ -48,36 +48,52 @@ namespace FSO.MacOS
         {
             ShowDialog(text, "FreeSO Message");
         }
-        
+
+        private static string Escape(string s) => s.Replace("\"", "\\\"");
+
         private static void ShowDialog(string text, string title)
         {
             if (text.Length > 1500) text = text.Substring(0, 1500) + "...";
 
-            var psi = new ProcessStartInfo
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
             {
-                FileName = "osascript",
-                Arguments = $"-e \"display alert \\\"{title.Replace("\"", "\\\"")}\\\" message \\\"{text.Replace("\"", "\\\"")}\\\" giving up after 15\"",
-                UseShellExecute = true
-            };
-            Process.Start(psi)?.WaitForExit();
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "osascript",
+                    Arguments = $"-e \"display alert \\\"{Escape(title)}\\\" message \\\"{Escape(text)}\\\" giving up after 15\"",
+                    UseShellExecute = true
+                };
+                Process.Start(psi)?.WaitForExit();
+            }
+            else
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = "zenity",
+                        Arguments = $"--error --title=\"{Escape(title)}\" --text=\"{Escape(text)}\"",
+                        UseShellExecute = false
+                    };
+                    Process.Start(psi)?.WaitForExit();
+                }
+                catch
+                {
+                    Console.Error.WriteLine($"[{title}] {text}");
+                }
+            }
         }
 
         private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
-            var exception = e.ExceptionObject;
-            
-            if (exception is OutOfMemoryException)
-            {
-                ShowDialog(e.ExceptionObject.ToString(), "Out of Memory! FreeSO needs to close.");
-            }
-            else
-            {
-                ShowDialog(e.ExceptionObject.ToString(), "A fatal error occured! Screenshot this dialog and post it on Discord.");
-            }
-            
+            string title = e.ExceptionObject is OutOfMemoryException
+                ? "Out of Memory! FreeSO needs to close."
+                : "A fatal error occured! Screenshot this dialog and post it on Discord.";
+
+            ShowDialog(e.ExceptionObject.ToString(), title);
             Environment.Exit(1);
         }
-        
+
         public static void SavePNG(byte[] data, int width, int height, Stream str)
         {
             using var image = new Image<Rgba32>(width, height);

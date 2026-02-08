@@ -4,22 +4,25 @@
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net9.0</TargetFramework>
-        <RootNamespace>FSO.MacOS</RootNamespace>
+        <RootNamespace>FSO.Unix</RootNamespace>
         <AssemblyName>FreeSO</AssemblyName>
         <ApplicationIcon>fso.ico</ApplicationIcon>
         <PublishReadyToRun>false</PublishReadyToRun>
         <TieredPGO>true</TieredPGO>
-        <SelfContained>true</SelfContained>
         <_EnableMacOSCodeSign>false</_EnableMacOSCodeSign>
-        <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
-        <ApplicationIcon>fso.ico</ApplicationIcon>
-        <PublishSingleFile>true</PublishSingleFile>
         <PublishAot>false</PublishAot>
         <PublishTrimmed>false</PublishTrimmed>
     </PropertyGroup>
 
     <ItemGroup>
         <Content Include="fso.ico" />
+        <EmbeddedResource Include="Icon.bmp" >
+            <LogicalName>Icon.bmp</LogicalName>
+        </EmbeddedResource>
+    </ItemGroup>
+
+    <!-- macOS-only items: Info.plist and Icon.icns -->
+    <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx'))">
         <None Include="Info.plist">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
@@ -28,9 +31,6 @@
         </None>
         <EmbeddedResource Include="Icon.icns" >
             <LogicalName>Icon.icns</LogicalName>
-        </EmbeddedResource>
-        <EmbeddedResource Include="Icon.bmp" >
-            <LogicalName>Icon.bmp</LogicalName>
         </EmbeddedResource>
     </ItemGroup>
 
