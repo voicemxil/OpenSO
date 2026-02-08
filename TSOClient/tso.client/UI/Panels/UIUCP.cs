@@ -613,7 +613,8 @@ namespace FSO.Client.UI.Panels
                 {
                     case 3:
                     case 2:
-                        if (permissions >= VMTSOAvatarPermissions.Roommate)
+                        var changes = (Panel as UIAbstractCatalogPanel)?.AnyChanges ?? false;
+                        if (permissions >= VMTSOAvatarPermissions.Roommate && changes)
                         {
                             var isBuild = CurrentPanel == 3 && permissions >= VMTSOAvatarPermissions.BuildBuyRoommate;
                             Game.vm?.SendCommand(new VMNetLeaveBuildBuyCmd()
