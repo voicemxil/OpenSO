@@ -312,7 +312,7 @@ namespace FSO.Client
 
         public void GotoCAS(bool archive = false){
             ChangeState<PersonSelectionEdit, PersonSelectionEditController>((view, controller) => {
-                controller.Archive = true;
+                controller.Archive = archive;
             });
         }
 

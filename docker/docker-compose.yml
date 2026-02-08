@@ -1,3 +1,5 @@
+name: freeso
+
 services:
   mariadb:
     image: mariadb:11

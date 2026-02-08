@@ -27,14 +27,7 @@ namespace FSO.Server.Clients.Framework
             {
                 var options = new RestClientOptions(BaseUrl)
                 {
-                    ConfigureMessageHandler = handler =>
-                    {
-                        if (handler is SocketsHttpHandler socketsHandler)
-                            socketsHandler.CookieContainer = Cookies;
-                        else if (handler is HttpClientHandler httpHandler)
-                            httpHandler.CookieContainer = Cookies;
-                        return handler;
-                    }
+                    CookieContainer = Cookies
                 };
 
                 _client = new RestClient(options);

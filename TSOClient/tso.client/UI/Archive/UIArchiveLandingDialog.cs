@@ -1,16 +1,10 @@
 ﻿using FSO.Client.Controllers;
 using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
-using FSO.Client.UI.Panels;
 using FSO.Client.Utils;
 using FSO.Common;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace FSO.Client.UI.Archive
 {
@@ -19,8 +13,6 @@ namespace FSO.Client.UI.Archive
         public UIButton CreateButton;
         public UIButton JoinButton;
         public UIButton QuickStartButton;
-        public UIButton ConnectServerButton;
-
         public Texture2D FreeSOLogoImage;
         public Texture2D HostServerButtonImage;
         public Texture2D JoinServerButtonImage;
@@ -110,26 +102,6 @@ namespace FSO.Client.UI.Archive
             QuickStartButton.OnButtonClick += QuickStart;
 
             QuickStartButton.Tooltip = "Quick Start will begin a singleplayer session of the last used archive data.";
-
-            var connectServerStyle = TextStyle.DefaultLabel.Clone();
-            connectServerStyle.Size = 10;
-            connectServerStyle.Color = new Color(100, 130, 200);
-
-            ConnectServerButton = new UIButton()
-            {
-                Position = new Vector2(Width / 2, Height - 4),
-                Caption = "Connect to Server",
-                CaptionStyle = connectServerStyle,
-                Size = new Vector2(0, 1),
-            };
-
-            DynamicOverlay.Add(ConnectServerButton);
-            ConnectServerButton.OnButtonClick += ConnectServer;
-        }
-
-        private void ConnectServer(Framework.UIElement button)
-        {
-            UIScreen.GlobalShowDialog(new UIServerConnectDialog(), true);
         }
 
         private void QuickStart(Framework.UIElement button)

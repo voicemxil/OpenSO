@@ -5,7 +5,7 @@ using FSO.Server.Database.DA.Roommates;
 using FSO.Server.Database.DA.Utils;
 using System;
 using System.Collections.Generic;
-using System.Data.SQLite;
+using Microsoft.Data.Sqlite;
 using System.Linq;
 
 namespace FSO.Server.Database.DA.Lots
@@ -301,7 +301,7 @@ namespace FSO.Server.Database.DA.Lots
 
         public int UpdateAllNeighborhoods(int shard_id)
         {
-            if (Context.Connection is SQLiteConnection)
+            if (Context.Connection is SqliteConnection)
             {
                 return Context.Connection.Execute(
                     NHoodSqliteQuery +
@@ -319,7 +319,7 @@ namespace FSO.Server.Database.DA.Lots
 
         public bool UpdateNeighborhood(int lot_id)
         {
-            if (Context.Connection is SQLiteConnection)
+            if (Context.Connection is SqliteConnection)
             {
                 return (Context.Connection.Execute(
                     NHoodSqliteQuery +
