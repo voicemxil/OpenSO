@@ -33,8 +33,8 @@ services:
       - "35101:35101"
     volumes:
       - ~/Documents/Documents/The Sims Online/TSOClient:/game:ro
-      - ./nfs:/nfs
-      - ./config.json:/app/config.json:ro
+      - ./nfs:/nfs:rw
+      - ./config.json:/app/config.json:cached
 
 volumes:
   mariadb_data:
