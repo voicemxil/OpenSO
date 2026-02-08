@@ -32,7 +32,7 @@ Windows:
 ```
 MacOS:
 ```yaml
-- ~/Documents/Documents/The Sims Online/TSOClient:/game:ro
+- ~/Documents/The Sims Online/TSOClient:/game:ro
 ```
 
 

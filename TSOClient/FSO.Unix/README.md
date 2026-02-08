@@ -27,13 +27,17 @@ Or to publish a self-contained release:
 dotnet publish -c Release -r linux-x64 --self-contained true
 ```
 
-## Deploy (macOS only)
+## Deploy
 
-To build, install to /Applications, and launch in one step:
+To build, install, and launch in one step:
 
 ```bash
 ./deploy.sh
 ```
+
+This script works on both macOS and Linux:
+- **macOS**: Installs to `/Applications/FreeSO.app` and opens the app
+- **Linux**: Installs to `~/.local/share/FreeSO` and creates a desktop entry
 
 ## Launch 3D
 
@@ -51,4 +55,14 @@ open /Applications/FreeSO.app --args -3d
 
 ```bash
 ./FreeSO -3d
+```
+
+## Troubleshooting
+
+### Deploy Script Permissions
+
+If you get a permission denied error when running `deploy.sh`, make it executable:
+
+```bash
+chmod +x deploy.sh
 ```
