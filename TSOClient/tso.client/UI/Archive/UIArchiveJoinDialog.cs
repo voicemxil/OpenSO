@@ -1,8 +1,8 @@
 ﻿using FSO.Client.Controllers;
-using FSO.Client.Model.Archive;
 using FSO.Client.UI.Controls;
 using FSO.Client.UI.Framework;
 using FSO.Common;
+using FSO.Common.Rendering.Framework.Model;
 using FSO.Server.Clients;
 using Microsoft.Xna.Framework;
 using Ninject;
@@ -151,6 +151,12 @@ namespace FSO.Client.UI.Archive
                 SaveArchiveConfig();
                 FSOFacade.Controller.ConnectToArchive(NameInput.CurrentText, AddressInput.CurrentText, false);
             }
+        }
+
+        public override void Update(UpdateState state)
+        {
+            base.Update(state);
+            FindController<ConnectArchiveController>().TickRPC();
         }
     }
 }
