@@ -1,5 +1,6 @@
-<Project Sdk="Microsoft.NET.Sdk">
-    
+<Project>
+    <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
+
     <PropertyGroup>
         <OutputType>Exe</OutputType>
         <TargetFramework>net9.0</TargetFramework>
@@ -9,13 +10,14 @@
         <PublishReadyToRun>false</PublishReadyToRun>
         <TieredPGO>true</TieredPGO>
         <SelfContained>true</SelfContained>
-        <EnableMacOSCodeSign>false</EnableMacOSCodeSign>
+        <_EnableMacOSCodeSign>false</_EnableMacOSCodeSign>
         <RuntimeIdentifier>osx-arm64</RuntimeIdentifier>
         <ApplicationIcon>fso.ico</ApplicationIcon>
+        <PublishSingleFile>true</PublishSingleFile>
         <PublishAot>false</PublishAot>
         <PublishTrimmed>false</PublishTrimmed>
     </PropertyGroup>
-    
+
     <ItemGroup>
         <Content Include="fso.ico" />
         <None Include="Info.plist">
@@ -31,17 +33,22 @@
             <LogicalName>Icon.bmp</LogicalName>
         </EmbeddedResource>
     </ItemGroup>
-    
+
     <ItemGroup>
         <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.5-preview.2"/>
         <PackageReference Include="System.IO.FileSystem.Primitives" Version="4.3.0"/>
         <ProjectReference Include="..\tso.client\FSO.Client.csproj"/>
         <ProjectReference Include="..\tso.common\FSO.Common.csproj"/>
     </ItemGroup>
-    
+
     <ItemGroup>
         <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11"/>
     </ItemGroup>
+
+    <Import Project="Sdk.targets" Sdk="Microsoft.NET.Sdk" />
+
+    <!-- Override SDK target to prevent it from deleting native dylibs on repeated publishes -->
+    <Target Name="_IncrementalCleanPublishDirectory" />
 
     <Target Name="CreateMacAppBundle" AfterTargets="Publish" Condition=" '$(RuntimeIdentifier)' == 'osx-arm64' ">
         <RemoveDir Directories="$(PublishDir)/FreeSO.app"/>
@@ -54,6 +61,7 @@
         <Copy SourceFiles="$(PublishDir)/FreeSO" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
         <Copy SourceFiles="$(PublishDir)/libSDL2-2.0.0.dylib" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
         <Copy SourceFiles="$(PublishDir)/libopenal.dylib" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
+        <Copy SourceFiles="$(PublishDir)/libe_sqlite3.dylib" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS" Condition="Exists('$(PublishDir)/libe_sqlite3.dylib')"/>
 
         <ItemGroup>
             <GameContent Include="$(PublishDir)/Content/**"/>
@@ -61,7 +69,7 @@
 
         <Copy SourceFiles="@(GameContent)" DestinationFiles="@(GameContent->'$(PublishDir)/FreeSO.app/Contents/MacOS/Content/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true"/>
         <Copy SourceFiles="$(PublishDir)/version.txt" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
-        
+
         <!-- Clean up existing symlink/folder if present -->
         <RemoveDir Directories="$(PublishDir)/FreeSO.app/Contents/Resources/Content" />
 

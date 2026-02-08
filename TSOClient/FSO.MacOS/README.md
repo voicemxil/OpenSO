@@ -4,11 +4,19 @@
 2. Run the following command in Terminal in that folder to build a release publish:
 
 ```bash
-dotnet publish -c Release --self-contained true /p:PublishSingleFile=true
+dotnet publish -c Release --self-contained true
 ```
 
 This will generate a .app bundle in: bin/Release/net9.0/osx-arm64/publish folder.
 You can then copy the app to your Applications folder.
+
+## Deploy
+
+To build, install to /Applications, and launch in one step:
+
+```bash
+./deploy.sh
+```
 
 ## Launch 3D
 
