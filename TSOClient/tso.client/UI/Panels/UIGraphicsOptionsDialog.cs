@@ -104,11 +104,23 @@ namespace FSO.Client.UI.Panels
             AALowButton = aa.Item1;
             AAMedButton = aa.Item2;
             AAHighButton = aa.Item3;
-
-            AALowButton.OnButtonClick += new ButtonClickDelegate(ChangeAA);
-            AAMedButton.OnButtonClick += new ButtonClickDelegate(ChangeAA);
-            AAHighButton.OnButtonClick += new ButtonClickDelegate(ChangeAA);
             aa.Item4.Caption = AntiAliasLabel.Caption;
+
+            // The three fixed AA presets are replaced by a granular Anti-Aliasing dialog (MSAA, supersampling,
+            // post-process AA and sharpening). Hide the preset buttons and open the new dialog from a button.
+            AALowButton.Visible = false;
+            AAMedButton.Visible = false;
+            AAHighButton.Visible = false;
+            aa.Item4.Visible = false;
+            var aaSettingsButton = new UIButton()
+            {
+                Caption = AntiAliasLabel.Caption,
+                Position = aa.Item4.Position + new Vector2(0, -2),
+                Size = new Vector2(120, 24),
+                Tooltip = AntiAliasLabel.Caption
+            };
+            aaSettingsButton.OnButtonClick += (b) => UIScreen.GlobalShowDialog(new UIAADialog(), true);
+            Add(aaSettingsButton);
 
             var clone = CloneCheckbox();
             Wall3DButton = clone.Item1; Wall3DLabel = clone.Item2;
@@ -338,9 +350,24 @@ namespace FSO.Client.UI.Panels
         private void ChangeAA(UIElement button)
         {
             var settings = GlobalSettings.Default;
-            if (button == AALowButton) settings.AntiAlias = 0;
-            else if (button == AAMedButton) settings.AntiAlias = 1;
-            else if (button == AAHighButton) settings.AntiAlias = 2;
+            // Three quality presets over the decoupled AA pipeline (MSAA + supersampling are now independent
+            // and combine). PostAA/Sharpen stay off here until the FXAA/SMAA/FSR shader passes are built.
+            // The legacy AntiAlias summary is kept in sync for UI/icon render targets that still read it.
+            if (button == AALowButton) // Off
+            {
+                settings.MSAALevel = 0; settings.SuperSampling = 1;
+                settings.PostAA = 0; settings.Sharpen = 0; settings.AntiAlias = 0;
+            }
+            else if (button == AAMedButton) // MSAA 4x
+            {
+                settings.MSAALevel = 4; settings.SuperSampling = 1;
+                settings.PostAA = 0; settings.Sharpen = 0; settings.AntiAlias = 1;
+            }
+            else if (button == AAHighButton) // MSAA 4x + Supersample 2x
+            {
+                settings.MSAALevel = 4; settings.SuperSampling = 2;
+                settings.PostAA = 0; settings.Sharpen = 0; settings.AntiAlias = 2;
+            }
             GlobalSettings.Default.Save();
             SettingsChanged();
         }
@@ -385,9 +412,9 @@ namespace FSO.Client.UI.Panels
             TerrainDetailMedButton.Selected = (settings.SurroundingLotMode == 1);
             TerrainDetailHighButton.Selected = (settings.SurroundingLotMode == 2);
 
-            AALowButton.Selected = (settings.AntiAlias == 0);
-            AAMedButton.Selected = (settings.AntiAlias == 1);
-            AAHighButton.Selected = (settings.AntiAlias == 2);
+            AALowButton.Selected = (settings.MSAALevel == 0 && settings.SuperSampling <= 1);
+            AAMedButton.Selected = (settings.MSAALevel > 0 && settings.SuperSampling <= 1);
+            AAHighButton.Selected = (settings.SuperSampling > 1);
 
             InternalChange = true;
             LightingSlider.Value = settings.LightingMode;
@@ -406,6 +433,11 @@ namespace FSO.Client.UI.Panels
                 SmoothZoom = settings.SmoothZoom,
                 SurroundingLots = settings.SurroundingLotMode,
                 AA = settings.AntiAlias,
+                MSAA = settings.MSAALevel,
+                SuperSampling = settings.SuperSampling,
+                PostAA = settings.PostAA,
+                Sharpen = settings.Sharpen,
+                SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,
                 Directional = settings.DirectionalLight3D,
                 Complex = settings.ComplexShaders,
@@ -491,6 +523,157 @@ namespace FSO.Client.UI.Panels
             DPILabel.Caption = (FSOEnvironment.DPIScaleFactor * 100).ToString() + "%";
             base.Update(state);
             Position = Vector2.Zero;
+        }
+    }
+
+    /// <summary>
+    /// Granular anti-aliasing settings: a quality preset plus independent Hardware MSAA, Supersampling,
+    /// Post-process AA (FXAA/SMAA) and Sharpening (FSR) controls. Writes GlobalSettings and re-applies the
+    /// live WorldConfig. The post-process passes activate once their shaders are built (Windows build).
+    /// </summary>
+    public class UIAADialog : UIDialog
+    {
+        private bool InternalChange;
+        private UICombobox PresetCombo, MSAACombo, SSCombo, PostAACombo, SharpenCombo;
+        private object[] _presetObjs, _msaaObjs, _ssObjs, _postObjs, _sharpenObjs;
+
+        // preset -> { MSAA, SuperSampling, PostAA, Sharpen }
+        private static readonly int[][] Presets =
+        {
+            new[] { 0, 1, 0, 0 }, // Off
+            new[] { 0, 1, 1, 0 }, // FXAA (fast)
+            new[] { 2, 1, 0, 0 }, // MSAA 2x
+            new[] { 4, 1, 0, 0 }, // MSAA 4x
+            new[] { 4, 2, 0, 0 }, // MSAA 4x + Supersample 2x
+            new[] { 4, 2, 2, 1 }, // Ultra: MSAA 4x + SS 2x + SMAA + sharpen
+        };
+        private const int PRESET_CUSTOM = 99;
+
+        public UIAADialog() : base(UIDialogStyle.OK, true)
+        {
+            Caption = "Anti-Aliasing";
+            SetSize(440, 300);
+
+            var msaa = FSOEnvironment.MSAASupport;
+
+            // Added bottom-to-top so each combo's drop-down renders over the rows beneath it.
+            SharpenCombo = AddRow("Sharpening", 202,
+                new[] { "Off", "FSR" }, new[] { 0, 1 }, out _sharpenObjs,
+                v => { GlobalSettings.Default.Sharpen = v; ApplyAndRefresh(); });
+
+            PostAACombo = AddRow("Post-process AA", 164,
+                new[] { "Off", "FXAA", "SMAA Low", "SMAA High" }, new[] { 0, 1, 2, 3 }, out _postObjs,
+                v => { GlobalSettings.Default.PostAA = v; ApplyAndRefresh(); });
+
+            SSCombo = AddRow("Supersampling", 126,
+                new[] { "Off", "2×" }, new[] { 1, 2 }, out _ssObjs,
+                v => { GlobalSettings.Default.SuperSampling = v; ApplyAndRefresh(); });
+
+            MSAACombo = AddRow("Hardware MSAA", 88,
+                msaa ? new[] { "Off", "2×", "4×", "8×" } : new[] { "Off (unsupported)" },
+                msaa ? new[] { 0, 2, 4, 8 } : new[] { 0 }, out _msaaObjs,
+                v => { GlobalSettings.Default.MSAALevel = v; ApplyAndRefresh(); });
+
+            PresetCombo = AddRow("Quality preset", 46,
+                new[] { "Off", "FXAA (fast)", "MSAA 2×", "MSAA 4×", "MSAA 4× + Supersample 2×", "Ultra (SMAA + sharpen)", "Custom" },
+                new[] { 0, 1, 2, 3, 4, 5, PRESET_CUSTOM }, out _presetObjs, OnPreset);
+
+            RefreshSelections();
+
+            OKButton.OnButtonClick += (btn) => UIScreen.RemoveDialog(this);
+        }
+
+        private UICombobox AddRow(string label, int y, string[] names, int[] values, out object[] valueObjs, Action<int> onPick)
+        {
+            var lbl = new UILabel() { Caption = label, Position = new Vector2(25, y + 2) };
+            DynamicOverlay.Add(lbl);
+
+            var objs = new object[values.Length];
+            var items = new List<UIComboboxItem>();
+            for (int i = 0; i < values.Length; i++)
+            {
+                objs[i] = values[i]; // box once so selection can match by reference
+                items.Add(new UIComboboxItem() { Name = names[i], Value = objs[i] });
+            }
+            valueObjs = objs;
+
+            var combo = new UICombobox() { Width = 230, Position = new Vector2(175, y) };
+            combo.Items = items;
+            combo.OnSelect += (o) => { if (!InternalChange && o != null) onPick((int)o); };
+            DynamicOverlay.Add(combo);
+            return combo;
+        }
+
+        private void SelectValue(UICombobox combo, object[] objs, int value)
+        {
+            for (int i = 0; i < objs.Length; i++)
+            {
+                if ((int)objs[i] == value) { combo.SelectedItem = objs[i]; return; }
+            }
+            if (objs.Length > 0) combo.SelectedItem = objs[0];
+        }
+
+        private void OnPreset(int preset)
+        {
+            if (preset == PRESET_CUSTOM) return;
+            var s = GlobalSettings.Default;
+            var p = Presets[preset];
+            s.MSAALevel = p[0]; s.SuperSampling = p[1]; s.PostAA = p[2]; s.Sharpen = p[3];
+            ApplyAndRefresh();
+        }
+
+        private int MatchPreset(GlobalSettings s)
+        {
+            for (int i = 0; i < Presets.Length; i++)
+            {
+                var p = Presets[i];
+                if (s.MSAALevel == p[0] && s.SuperSampling == p[1] && s.PostAA == p[2] && s.Sharpen == p[3])
+                    return i;
+            }
+            return PRESET_CUSTOM;
+        }
+
+        private void ApplyAndRefresh()
+        {
+            var s = GlobalSettings.Default;
+            if (!FSOEnvironment.MSAASupport) s.MSAALevel = 0;
+            // keep the legacy AntiAlias summary in sync for UI/icon render targets that still read it
+            s.AntiAlias = (s.SuperSampling > 1) ? 2 : ((s.MSAALevel > 0 || s.PostAA > 0) ? 1 : 0);
+            s.Save();
+
+            LotView.WorldConfig.Current = new LotView.WorldConfig()
+            {
+                LightingMode = s.LightingMode,
+                SmoothZoom = s.SmoothZoom,
+                SurroundingLots = s.SurroundingLotMode,
+                AA = s.AntiAlias,
+                MSAA = s.MSAALevel,
+                SuperSampling = s.SuperSampling,
+                PostAA = s.PostAA,
+                Sharpen = s.Sharpen,
+                SharpenAmount = s.SharpenAmount,
+                Weather = s.Weather,
+                Directional = s.DirectionalLight3D,
+                Complex = s.ComplexShaders,
+                EnableTransitions = s.EnableTransitions
+            };
+
+            var vm = (GameFacade.Screens.CurrentUIScreen as IGameScreen)?.vm;
+            if (vm != null) vm.Context.World.ChangedWorldConfig(GameFacade.GraphicsDevice);
+
+            RefreshSelections();
+        }
+
+        private void RefreshSelections()
+        {
+            var s = GlobalSettings.Default;
+            InternalChange = true;
+            SelectValue(MSAACombo, _msaaObjs, s.MSAALevel);
+            SelectValue(SSCombo, _ssObjs, s.SuperSampling);
+            SelectValue(PostAACombo, _postObjs, s.PostAA);
+            SelectValue(SharpenCombo, _sharpenObjs, s.Sharpen);
+            SelectValue(PresetCombo, _presetObjs, MatchPreset(s));
+            InternalChange = false;
         }
     }
 }

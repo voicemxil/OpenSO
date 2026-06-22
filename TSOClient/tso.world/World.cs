@@ -1023,28 +1023,37 @@ namespace FSO.LotView
         {
             var lastm = PPXDepthEngine.MSAA;
             var lasts = PPXDepthEngine.SSAA;
-            PPXDepthEngine.SSAAFunc = SSAADownsample.Draw;
-            switch (WorldConfig.Current.AA)
+            var cfg = WorldConfig.Current;
+
+            // Decoupled: hardware MSAA and supersampling are now independent and can combine.
+            var msaa = cfg.MSAA;                                         //0/2/4/8
+            var ssaa = (cfg.SuperSampling > 1) ? cfg.SuperSampling : 1;
+
+            // Back-compat: an older/stale options UI only sets the legacy WorldConfig.AA preset (0/1/2). If the
+            // decoupled fields were left at defaults but AA is set, derive MSAA/supersampling from it so AA
+            // still works regardless of which UI build is running.
+            if (msaa == 0 && ssaa == 1 && cfg.AA > 0)
             {
-                case 0:
-                    PPXDepthEngine.MSAA = 0;
-                    PPXDepthEngine.SSAA = 1;
-                    break;
-                case 1:
-                    PPXDepthEngine.MSAA = 4;
-                    PPXDepthEngine.SSAA = 1;
-                    break;
-                case 2:
-                    PPXDepthEngine.MSAA = 0;
-                    PPXDepthEngine.SSAA = 2;
-                    break;
+                if (cfg.AA == 1) msaa = 4;
+                else ssaa = 2;
             }
 
+            PPXDepthEngine.MSAA = msaa;
+            PPXDepthEngine.SSAA = ssaa;
+
+            // The 2D path can't blit a multisampled supersample target the way the 3D path does, so when
+            // supersampling in 2D we fold it into hardware MSAA (matches the original behaviour).
             if (PPXDepthEngine.SSAA > 1 && State.CameraMode < CameraRenderMode._3D)
             {
-                PPXDepthEngine.MSAA = 8;
+                PPXDepthEngine.MSAA = System.Math.Max(PPXDepthEngine.MSAA, 8);
                 PPXDepthEngine.SSAA = 1;
             }
+
+            // Resolve pass. The plain box-downsample is the default; FXAA/SMAA/FSR are post-process passes
+            // applied here once their effects are built (Windows shader build) — see PostProcessAA. Until
+            // those .xnb exist the chooser falls back to the box-downsample, so this is safe to ship now.
+            PPXDepthEngine.SSAAFunc = SSAADownsample.Draw;
+
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
         }
 

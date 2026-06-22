@@ -153,7 +153,10 @@ namespace FSO.Client
 
             FeatureLevelTest.UpdateFeatureLevel(GraphicsDevice);
             if (!FSOEnvironment.MSAASupport)
+            {
                 settings.AntiAlias = 0;
+                settings.MSAALevel = 0; //supersampling and post-process AA don't require MSAA support
+            }
 
             LotView.WorldConfig.Current = new LotView.WorldConfig()
             {
@@ -161,6 +164,11 @@ namespace FSO.Client
                 SmoothZoom = settings.SmoothZoom,
                 SurroundingLots = settings.SurroundingLotMode,
                 AA = settings.AntiAlias,
+                MSAA = settings.MSAALevel,
+                SuperSampling = settings.SuperSampling,
+                PostAA = settings.PostAA,
+                Sharpen = settings.Sharpen,
+                SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,
                 Directional = settings.DirectionalLight3D,
                 Complex = settings.ComplexShaders,
@@ -248,7 +256,7 @@ namespace FSO.Client
             var ds = kernel.Get<DataService>();
             ds.AddProvider(new ClientAvatarProvider());
 
-            this.Window.Title = "FreeSO";
+            this.Window.Title = "OpenSO";
             DiscordRpcEngine.Init();
 
             if (!GlobalSettings.Default.Windowed && !GameFacade.GraphicsDeviceManager.IsFullScreen)

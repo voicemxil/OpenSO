@@ -31,6 +31,19 @@ namespace FSO.Client
                     {
                         defaultInstance.ArchiveClientGUID = GenerateGUID();
                     }
+
+                    // Migrate the legacy mutually-exclusive AntiAlias preset (0/1/2) into the decoupled
+                    // MSAA + supersampling fields the first time we see a config without them.
+                    if (defaultInstance.MSAALevel < 0)
+                    {
+                        switch (defaultInstance.AntiAlias)
+                        {
+                            case 1: defaultInstance.MSAALevel = 4; defaultInstance.SuperSampling = 1; break; //was MSAA4x
+                            case 2: defaultInstance.MSAALevel = 0; defaultInstance.SuperSampling = 2; break; //was SSAA2x
+                            default: defaultInstance.MSAALevel = 0; defaultInstance.SuperSampling = 1; break; //off
+                        }
+                        defaultInstance.Save();
+                    }
                 }
                 return defaultInstance;
             }
@@ -54,7 +67,13 @@ namespace FSO.Client
             { "CityShadows", "false"},
             { "ShadowQuality", "2048"},
             { "SmoothZoom", "true"},
-            { "AntiAlias", "0"},
+            { "AntiAlias", "0"}, //legacy AA preset (0/1/2). Kept in sync as a summary for UI/icon render targets.
+            // Decoupled AA pipeline. MSAALevel (-1 = "unset", migrated from AntiAlias on first load).
+            { "MSAALevel", "-1"},        //hardware MSAA samples: 0/2/4/8
+            { "SuperSampling", "1"},     //supersample factor: 1 (off) or 2
+            { "PostAA", "0"},            //post-process AA: 0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High (shader pass; built on Windows)
+            { "Sharpen", "0"},           //resolve sharpening: 0=Bilinear, 1=FSR (EASU+RCAS) (shader pass; built on Windows)
+            { "SharpenAmount", "0.25"},  //RCAS sharpening strength, 0..1
             { "EdgeScroll", "true"},
             { "Lighting", "true"},
             { "FXVolume", "10"},
@@ -76,6 +95,7 @@ namespace FSO.Client
             { "SurroundingLotMode", "2" },
 
             { "UseCustomServer", "true" },
+            { "ModernCAS", "false" },
             { "GameEntryUrl", "http://api.freeso.org" },
             { "CitySelectorUrl", "http://api.freeso.org" },
 
@@ -128,7 +148,12 @@ namespace FSO.Client
         public bool CityShadows { get; set; }
         public int ShadowQuality { get; set; }
         public bool SmoothZoom { get; set; }
-        public int AntiAlias { get; set; }
+        public int AntiAlias { get; set; } //legacy AA preset summary (0/1/2), kept in sync for UI/icon render targets
+        public int MSAALevel { get; set; } //hardware MSAA samples: 0/2/4/8
+        public int SuperSampling { get; set; } //supersample factor: 1 (off) or 2
+        public int PostAA { get; set; } //0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High
+        public int Sharpen { get; set; } //0=Bilinear, 1=FSR (EASU+RCAS)
+        public float SharpenAmount { get; set; } //RCAS strength 0..1
         public bool EdgeScroll { get; set; }
         public bool Lighting { get; set; }
         public byte FXVolume { get; set; }
@@ -149,6 +174,7 @@ namespace FSO.Client
         public byte LanguageCode { get; set; }
 
         public bool UseCustomServer { get; set; }
+        public bool ModernCAS { get; set; }
         public string GameEntryUrl { get; set; }
         public string CitySelectorUrl { get; set; }
 

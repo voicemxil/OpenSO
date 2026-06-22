@@ -136,6 +136,10 @@ namespace FSO.Client.UI.Screens
                     settings.SurroundingLotMode = 0;
                     settings.CityShadows = false;
                     settings.AntiAlias = 0;
+                    settings.MSAALevel = 0;
+                    settings.SuperSampling = 1;
+                    settings.PostAA = 0;
+                    settings.Sharpen = 0;
                     settings.Save();
 
                     LotView.WorldConfig.Current = new LotView.WorldConfig()
@@ -144,6 +148,11 @@ namespace FSO.Client.UI.Screens
                         SmoothZoom = settings.SmoothZoom,
                         SurroundingLots = settings.SurroundingLotMode,
                         AA = settings.AntiAlias,
+                        MSAA = settings.MSAALevel,
+                        SuperSampling = settings.SuperSampling,
+                        PostAA = settings.PostAA,
+                        Sharpen = settings.Sharpen,
+                        SharpenAmount = settings.SharpenAmount,
                         Weather = settings.Weather,
                         Directional = settings.DirectionalLight3D,
                         Complex = settings.ComplexShaders,

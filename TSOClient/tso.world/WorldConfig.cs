@@ -44,7 +44,15 @@ namespace FSO.LotView
 
             }
         }
-        public int AA = 0;
+        public int AA = 0; //legacy AA preset (unused by ChangeAAMode now; kept for compatibility)
+
+        // Decoupled anti-aliasing pipeline (see World.ChangeAAMode).
+        public int MSAA = 0;            //hardware MSAA samples: 0/2/4/8
+        public int SuperSampling = 1;   //supersample factor: 1 (off) or 2
+        public int PostAA = 0;          //0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High (post-process shader pass)
+        public int Sharpen = 0;         //0=Bilinear, 1=FSR (EASU+RCAS) resolve
+        public float SharpenAmount = 0.25f;
+
         public bool Directional = true;
         public bool Complex = false;
 

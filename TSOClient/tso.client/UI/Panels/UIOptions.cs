@@ -511,7 +511,13 @@ namespace FSO.Client.UI.Panels
         private void FlipSetting(UIElement button)
         {
             var settings = GlobalSettings.Default;
-            if (button == AntiAliasCheckButton) settings.AntiAlias = settings.AntiAlias ^ 1;
+            if (button == AntiAliasCheckButton)
+            {
+                // Simple in-game AA on/off, mapped onto the decoupled pipeline (on = MSAA 4x).
+                settings.AntiAlias = settings.AntiAlias ^ 1;
+                if (settings.AntiAlias > 0) settings.MSAALevel = 4;
+                else { settings.MSAALevel = 0; settings.SuperSampling = 1; settings.PostAA = 0; settings.Sharpen = 0; }
+            }
             else if (button == ShadowsCheckButton) settings.SmoothZoom = !(settings.SmoothZoom);
             else if (button == LightingCheckButton) settings.Lighting = !(settings.Lighting);
             else if (button == UIEffectsCheckButton) settings.CityShadows = !(settings.CityShadows);
@@ -576,6 +582,11 @@ namespace FSO.Client.UI.Panels
                 SmoothZoom = settings.SmoothZoom,
                 SurroundingLots = settings.SurroundingLotMode,
                 AA = settings.AntiAlias,
+                MSAA = settings.MSAALevel,
+                SuperSampling = settings.SuperSampling,
+                PostAA = settings.PostAA,
+                Sharpen = settings.Sharpen,
+                SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,
                 Directional = settings.DirectionalLight3D,
                 Complex = settings.ComplexShaders,
