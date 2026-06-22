@@ -106,6 +106,21 @@ namespace FSO.Client.UI.Controls
             PositionPagination();
         }
 
+        /// <summary>
+        /// Rebuild the grid + pagination with new dimensions AFTER construction. The .uis sizes the browser for the
+        /// legacy 800x600 screen; the modern CAS uses a much larger grid, so it re-sets size/thumb props then re-inits.
+        /// Safe to call post-Init: tears down the old pagination + cells first so they aren't duplicated.
+        /// </summary>
+        public void Relayout()
+        {
+            if (m_PaginationBar != null) { Remove(m_PaginationBar); m_PaginationBar = null; }
+            if (LeftArrow != null) { Remove(LeftArrow); LeftArrow = null; }
+            if (RightArrow != null) { Remove(RightArrow); RightArrow = null; }
+            Init();
+            UpdatePaginationState();
+            if (DataProvider != null) Render();
+        }
+
         private void PositionPagination()
         {
             if (m_PaginationStyle == UIPaginationStyle.PAGINATION_BAR)

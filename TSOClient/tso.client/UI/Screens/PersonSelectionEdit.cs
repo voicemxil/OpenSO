@@ -50,8 +50,8 @@ namespace FSO.Client.UI.Screens
         public UISlider DescriptionSlider { get; set; }
         private UIButton m_ExitButton;
 
-        private UICollectionViewer m_HeadSkinBrowser;
-        private UICollectionViewer m_BodySkinBrowser;
+        protected UICollectionViewer m_HeadSkinBrowser;
+        protected UICollectionViewer m_BodySkinBrowser;
         
         /** Data **/
         private Collection MaleHeads;
@@ -142,11 +142,12 @@ namespace FSO.Client.UI.Screens
             {
                 offset = new Vector2(112, 84);
 
-                this.AddAt(1, new UIImage(BackgroundImageDialog)
+                DialogBackground = new UIImage(BackgroundImageDialog)
                 {
                     X = 112,
                     Y = 84
-                });
+                };
+                this.AddAt(1, DialogBackground);
             }
 
             /**
@@ -158,6 +159,7 @@ namespace FSO.Client.UI.Screens
             SimBox.Position = new Vector2(offset.X + 70, offset.Y + 88);
             SimBox.Size = new Vector2(140,200);
             SimBox.AutoRotate = true;
+            SimBox.Interactive = true; // drag to rotate, scroll to zoom
             this.Add(SimBox);
 
             /**
@@ -205,7 +207,8 @@ namespace FSO.Client.UI.Screens
             });
         }
 
-        private UIImage Background;
+        protected UIImage Background;
+        protected UIImage DialogBackground;
         public override void GameResized()
         {
             base.GameResized();

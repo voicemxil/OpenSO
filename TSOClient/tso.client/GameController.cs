@@ -121,7 +121,7 @@ namespace FSO.Client
 
         public void ShowPersonCreation(ShardStatusItem selectedCity)
         {
-            var screen = Kernel.Get<PersonSelectionEdit>();
+            PersonSelectionEdit screen = GlobalSettings.Default.ModernCAS ? Kernel.Get<CASScreenV2>() : Kernel.Get<PersonSelectionEdit>();
             //screen.SelectedCity = selectedCity;
             GameFacade.Screens.RemoveCurrent();
             GameFacade.Screens.AddScreen(screen);
@@ -138,6 +138,7 @@ namespace FSO.Client
 
             
             var screen = new PersonSelectionEdit();
+            var casv2 = new CASScreenV2();
             var t = new TerrainController(null, null, null, null, null);
             var n = new Network.Network(null, null, null, null);
             var v = new Credits();
@@ -311,9 +312,14 @@ namespace FSO.Client
         }
 
         public void GotoCAS(bool archive = false){
-            ChangeState<PersonSelectionEdit, PersonSelectionEditController>((view, controller) => {
-                controller.Archive = archive;
-            });
+            if (GlobalSettings.Default.ModernCAS)
+                ChangeState<CASScreenV2, PersonSelectionEditController>((view, controller) => {
+                    controller.Archive = archive;
+                });
+            else
+                ChangeState<PersonSelectionEdit, PersonSelectionEditController>((view, controller) => {
+                    controller.Archive = archive;
+                });
         }
 
         public void GotoCity(LoadAvatarByIDResponse dbAvatar, uint? lotId)

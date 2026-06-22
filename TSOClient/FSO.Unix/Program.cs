@@ -23,7 +23,7 @@ namespace FSO.Unix
             var mgAssembly = typeof(Microsoft.Xna.Framework.Game).Assembly;
             var platform = mgAssembly.GetType("MonoGame.Framework.Utilities.PlatformInfo");
             var backend = platform?.GetProperty("GraphicsBackend")?.GetValue(null);
-            Console.WriteLine($"[FreeSO] MonoGame: {mgAssembly.GetName().Version} | Backend: {backend ?? "Unknown"}");
+            Console.WriteLine($"[OpenSO] MonoGame: {mgAssembly.GetName().Version} | Backend: {backend ?? "Unknown"}");
 
             FSOEnvironment.Enable3D = true;
 
@@ -46,7 +46,7 @@ namespace FSO.Unix
 
         public static void ShowDialog(string text)
         {
-            ShowDialog(text, "FreeSO Message");
+            ShowDialog(text, "OpenSO Message");
         }
 
         private static string Escape(string s) => s.Replace("\"", "\\\"");
@@ -87,7 +87,7 @@ namespace FSO.Unix
         private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
             string title = e.ExceptionObject is OutOfMemoryException
-                ? "Out of Memory! FreeSO needs to close."
+                ? "Out of Memory! OpenSO needs to close."
                 : "A fatal error occured! Screenshot this dialog and post it on Discord.";
 
             ShowDialog(e.ExceptionObject.ToString(), title);

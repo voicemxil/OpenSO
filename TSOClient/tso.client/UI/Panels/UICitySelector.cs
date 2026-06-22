@@ -181,10 +181,20 @@ namespace FSO.Client.UI.Panels
             Path.Combine(FSOEnvironment.ContentDir, "Cities/city_" + city.Map + "/thumbnail.png")
             : GameFacade.GameFilePath("cities/city_" + city.Map + "/thumbnail.bmp");
 
-            //Take a copy so we dont change the original when we alpha mask it
-            Texture2D cityThumbTex = TextureUtils.Copy(GameFacade.GraphicsDevice, TextureUtils.TextureFromFile(
-               GameFacade.GraphicsDevice, cityThumb));
-            TextureUtils.CopyAlpha(ref cityThumbTex, thumbnailAlphaImage);
+            //Take a copy so we dont change the original when we alpha mask it.
+            //Guard against a custom / in-progress city whose thumbnail isn't bundled on the client yet,
+            //so a missing thumbnail can't fatally crash the city selector.
+            Texture2D cityThumbTex;
+            if (System.IO.File.Exists(cityThumb))
+            {
+                cityThumbTex = TextureUtils.Copy(GameFacade.GraphicsDevice, TextureUtils.TextureFromFile(
+                   GameFacade.GraphicsDevice, cityThumb));
+                TextureUtils.CopyAlpha(ref cityThumbTex, thumbnailAlphaImage);
+            }
+            else
+            {
+                cityThumbTex = thumbnailAlphaImage;
+            }
 
             CityThumb.Texture = cityThumbTex;
             DescriptionText.CurrentText = GameFacade.Strings.GetString(fsoMap?"f104":"238", int.Parse(city.Map).ToString());

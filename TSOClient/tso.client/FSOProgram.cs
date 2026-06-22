@@ -135,7 +135,7 @@ namespace FSO.Client
             }
             else
             {
-                ShowDialog("The Sims Online was not found on your system. FreeSO will not be able to run without access to the original game files.");
+                ShowDialog("The Sims Online was not found on your system. OpenSO will not be able to run without access to the original game files.");
                 return false;
             }
         }

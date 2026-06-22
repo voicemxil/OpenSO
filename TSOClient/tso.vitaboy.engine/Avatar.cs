@@ -263,6 +263,10 @@ namespace FSO.Vitaboy
         }
 
         public static int DefaultTechnique = 0;
+        // When set, the head-accessory (e.g. glasses) toon-specular is suppressed. The studio CAS lighting binds a
+        // single camera-relative direction map; the head-object spec ramp samples it too and blows the lenses to a
+        // solid white blob, so callers using that lighting raise this flag (scoped per-draw) to flatten the spec.
+        public static bool SuppressHeadObjectSpec = false;
         public Vector4 AmbientLight = Vector4.One;
 
         /// <summary>
@@ -418,7 +422,7 @@ namespace FSO.Vitaboy
                 {
                     effect.Parameters["MeshTex"].SetValue(item.Key);
                     effect.Parameters["HOToonSpecThresh"].SetValue(0.5f);
-                    effect.Parameters["HOToonSpecColor"].SetValue(new Vector3(multi * ((headObj.Geoms.Count-1) - i)));
+                    effect.Parameters["HOToonSpecColor"].SetValue(SuppressHeadObjectSpec ? Vector3.Zero : new Vector3(multi * ((headObj.Geoms.Count-1) - i)));
 
                     effect.CurrentTechnique.Passes[0].Apply();
                     //if (i != 1) device.RasterizerState = RasterizerState.CullClockwise;

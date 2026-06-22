@@ -1055,7 +1055,7 @@ namespace FSO.Client.UI.Screens
         {
             UIAlert.Alert("Lot Load Error", $"An error occurred loading lot state. It is not recommended that you continue, as you will desync from the server repeatedly. \n\n" +
                 $"Errors: \n{String.Join("\n", vm.LoadErrors.Select(x => x.ToString()))}\n\n" +
-                $"Your best bet is reinstalling FreeSO or The Sims Online. If this appears repeatedly, you definitely have an issue. You should also post this message on discord.",
+                $"Your best bet is reinstalling OpenSO or The Sims Online. If this appears repeatedly, you definitely have an issue. You should also post this message on discord.",
                 true);
             vm.LoadErrors.Clear();
         }
