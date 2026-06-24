@@ -40,6 +40,9 @@ namespace FSO.LotView.Utils
         //3d cache
         private DGRP3DMesh Mesh;
         public Matrix World;
+        // Previous-frame world matrix, pushed by ObjectComponent.Draw. Read by velocity-aware techniques in
+        // RCObject.fx to emit per-pixel screen-space motion. When unset (e.g. first draw) it equals World.
+        public Matrix PreviousWorld;
         
         public DGRPRenderer(DGRP group, OBJD source)
         {
@@ -282,8 +285,16 @@ namespace FSO.LotView.Utils
             var effect = WorldContent.RCObject;
 
             effect.World = World;
+            effect.PreviousWorld = PreviousWorld;
             effect.Level = (float)(Level - 0.999f);
             var advDir = WorldConfig.Current.Directional && WorldConfig.Current.AdvancedLighting;
+            // Pick the velocity-writing draw technique when MRT1 is bound (the caller in WorldEntities.Draw
+            // sets this up around the object loop). DGRPRenderer flips between several techniques mid-draw
+            // (DepthClear, Disabled, Draw) so this needs to be the value used wherever the *visible* color
+            // pass goes — DepthClear / Disabled stays on their dedicated techniques (no velocity for those).
+            var drawTech = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null
+                ? RCObjectTechniques.DrawWithVelocity
+                : RCObjectTechniques.Draw;
 
             if (Mesh.DepthMask != null)
             {
@@ -307,7 +318,7 @@ namespace FSO.LotView.Utils
 
                     device.DepthStencilState = DepthStencilState.Default;
                     device.BlendState = BlendState.NonPremultiplied;
-                    effect.SetTechnique(RCObjectTechniques.Draw);
+                    effect.SetTechnique(drawTech);
                 }
             }
 
@@ -361,9 +372,9 @@ namespace FSO.LotView.Utils
                     device.BlendState = BlendState.NonPremultiplied;
                 }
                 device.DepthStencilState = DepthStencilState.Default;
-                effect.SetTechnique(RCObjectTechniques.Draw);
+                effect.SetTechnique(drawTech);
             }
-            if (Room == 65533) effect.SetTechnique(RCObjectTechniques.Draw);
+            if (Room == 65533) effect.SetTechnique(drawTech);
         }
 
         public void DrawLMap(GraphicsDevice device, sbyte level, float yOff)

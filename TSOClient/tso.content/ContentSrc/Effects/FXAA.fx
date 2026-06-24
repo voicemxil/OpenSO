@@ -1,11 +1,9 @@
 // FXAA.fx — compact post-process anti-aliasing for the OpenSO decoupled AA pipeline.
 //
-// STAGED for the Windows shader build. This file is NOT yet wired into the runtime — to enable it:
-//   1. Add it to the content pipeline (TSOClientContent*.mgcb) so it compiles to Content/Effects/FXAA.xnb.
-//   2. Load it in WorldContent (FXAA = ContentManager.Load<Effect>("Effects/FXAA");) inside a try/catch.
-//   3. Apply it from a PostProcessAA resolve helper (model it on SSAADownsample) hooked into
-//      PPXDepthEngine.DrawBackbuffer, driven by WorldConfig.Current.PostAA.
-// See GRAPHICS-AA-PLAN.md "Phase 2 / shader layer" for the full wiring spec.
+// WIRED (Windows shader build). Built to Content/{DX,OGL}/Effects/FXAA.xnb via the entries in
+// TSOClientContent*.mgcb, loaded in WorldContent.FXAA (try/catch -> null if missing), and applied by
+// FSO.LotView.Utils.PostProcessAA, which PPXDepthEngine.DrawBackbuffer runs when WorldConfig.PostAA > 0
+// (see World.ChangeAAMode). SMAA (PostAA 2/3) currently shares this FXAA pass until its shaders land.
 //
 // Algorithm: the classic compact luma-based FXAA (Timothy Lottes). Detects high-contrast edges from a
 // 3x3 luma neighbourhood and blurs along the edge direction. Single pass; fits ps_3_0 and 9_1 profiles.

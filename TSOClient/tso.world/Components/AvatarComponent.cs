@@ -190,6 +190,10 @@ namespace FSO.LotView.Components
             return vec;
         }
 
+        // Previous-frame world for body-translation motion-vector output (Vitaboy DrawWithVelocity).
+        private Matrix _PreviousWorld;
+        private bool _PrevWorldValid;
+
         public void DrawAvatarMesh(GraphicsDevice device, WorldState state, Matrix world, Color baseCol)
         {
             var effect = WorldContent.AvatarEffect;
@@ -206,10 +210,15 @@ namespace FSO.LotView.Components
                     effect.Parameters["AmbientLight"].SetValue(col);
                 }
                 effect.Parameters["World"].SetValue(world);
+                // Null-safe: older Vitaboy.xnb may not have the velocity-related uniforms. First-frame
+                // mirrors current so velocity = 0 (no motion).
+                effect.Parameters["PreviousWorld"]?.SetValue(_PrevWorldValid ? _PreviousWorld : world);
                 pass.Apply();
 
                 Avatar.DrawGeometry(device, effect);
             }
+            _PreviousWorld = world;
+            _PrevWorldValid = true;
         }
 
         public override void Draw(GraphicsDevice device, WorldState world)

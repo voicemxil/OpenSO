@@ -13,6 +13,10 @@ namespace FSO.LotView.Effects
 
         private EffectParameter pWorld;
         private EffectParameter pViewProjection;
+        // Velocity (motion vectors) params. Null until the shader is rebuilt with these uniforms — kept
+        // null-safe so the existing RCObject.xnb still loads while the shader extension is staged.
+        private EffectParameter pPreviousWorld;
+        private EffectParameter pPreviousViewProjection;
 
         private EffectParameter pObjectID;
         private EffectParameter pUVScale;
@@ -36,6 +40,15 @@ namespace FSO.LotView.Effects
             {
                 pViewProjection.SetValue(value);
             }
+        }
+
+        public Matrix PreviousWorld
+        {
+            set { if (pPreviousWorld != null) pPreviousWorld.SetValue(value); }
+        }
+        public Matrix PreviousViewProjection
+        {
+            set { if (pPreviousViewProjection != null) pPreviousViewProjection.SetValue(value); }
         }
 
         public float ObjectID
@@ -114,6 +127,8 @@ namespace FSO.LotView.Effects
             base.PrepareParams();
             pWorld = Parameters["World"];
             pViewProjection = Parameters["ViewProjection"];
+            pPreviousWorld = Parameters["PreviousWorld"];                     //null if shader not yet extended
+            pPreviousViewProjection = Parameters["PreviousViewProjection"];  //null if shader not yet extended
 
             pObjectID = Parameters["ObjectID"];
             pUVScale = Parameters["UVScale"];
@@ -139,5 +154,7 @@ namespace FSO.LotView.Effects
         WallDraw,
         WallLMap,
         LMapDraw,
+        DrawWithVelocity, //writes color to MRT0 + screen-space velocity to MRT1 (motion blur / TAA)
+        WallDrawWithVelocity, //walls with velocity output for motion blur / TAA
     }
 }

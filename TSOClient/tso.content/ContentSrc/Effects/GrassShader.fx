@@ -4,6 +4,13 @@ float4x4 Projection;
 float4x4 View;
 float4x4 World;
 
+// Velocity-output uniforms for the DrawWithVelocity techniques. ViewProjection is pre-combined on the
+// CPU side so the velocity VS can use a single mat-mul and fit the level_9_1 temp register budget.
+// PreviousWorld covers the (rare) case of moving terrain pieces; for typical static grass it equals World.
+float4x4 ViewProjection;
+float4x4 PreviousViewProjection;
+float4x4 PreviousWorld;
+
 float2 ScreenSize;
 float4 LightGreen;
 float4 DarkGreen;
@@ -771,6 +778,122 @@ void BasePSLMap(GrassPSVTX input, out float4 color:COLOR0)
 	color = DiffuseColor;
 }
 
+// ---------------------------------------------------------------------------- DrawWithVelocity (terrain)
+// Velocity-aware variant of GrassVS+BasePS3D that emits the same color AND screen-space velocity to MRT1
+// so TAA can reproject history correctly on grass/terrain pixels during camera moves. Static-geometry
+// velocity is purely camera-induced (PreviousWorld == World for non-moving terrain pieces); the math
+// mirrors RCObject's DrawWithVelocity.
+struct GrassPSVTXv {
+    float4 Position : SV_Position0;
+    float4 Color : COLOR0;
+    float4 GrassInfo : TEXCOORD0;
+    float3 ScreenPos : TEXCOORD1;
+    float4 ModelPos : TEXCOORD2;
+    float3 Normal : TEXCOORD3;
+    float4 currClip : TEXCOORD4;
+    float4 prevClip : TEXCOORD5;
+};
+struct GrassPSOutputV { float4 color : COLOR0; float4 velocity : COLOR1; };
+
+GrassPSVTXv GrassVSv(GrassVTX input)
+{
+    GrassPSVTXv output = (GrassPSVTXv)0;
+    float4x4 Temp4x4 = mul(World, ViewProjection);
+    float4 position = mul(input.Position, Temp4x4);
+    output.Position = position;
+    output.ModelPos = mul(input.Position, World);
+    output.Color = input.Color;
+    output.GrassInfo = input.GrassInfo;
+    output.GrassInfo.yz = output.GrassInfo.yz*TexMatrix.xw + output.GrassInfo.zy*TexMatrix.zy + TexOffset;
+    output.GrassInfo.w = position.z / position.w;
+    output.Normal = input.Normal;
+
+    float4 position2 = mul(float4(input.Position.x, 0, input.Position.z, input.Position.w), Temp4x4);
+    output.ScreenPos.xy = ((position2.xy*float2(0.5, -0.5)) + float2(0.5, 0.5)) * ScreenSize;
+    output.ScreenPos.z = position.z;
+
+    if (ScreenAlignUV == true) {
+        output.GrassInfo.yz = round((output.GrassInfo.yz * TexSize) + output.ScreenPos.xy);
+        output.GrassInfo.yz = (output.GrassInfo.yz - output.ScreenPos.xy) / TexSize;
+    }
+
+    output.ScreenPos.xy -= ScreenRotCenter;
+    output.ScreenPos.xy = output.ScreenPos.xy*ScreenMatrix.xw + output.ScreenPos.yx*ScreenMatrix.zy;
+    output.ScreenPos.xy += ScreenRotCenter;
+
+    // Velocity outputs. For terrain we deliberately use `World` (NOT `PreviousWorld`) on both sides —
+    // terrain is static in world space, so PreviousWorld == World by definition. `FloorGeom.DrawFloor`
+    // overwrites `e.World` per floor inside its loop, but never touches PreviousWorld; pulling them apart
+    // with a separately-set uniform produces large spurious velocity from the per-floor translation delta.
+    // Velocity is then purely camera-induced (ViewProjection vs PreviousViewProjection), which is correct.
+    output.currClip = position;
+    float4 prevWPos = mul(input.Position, World);
+    output.prevClip = mul(prevWPos, PreviousViewProjection);
+
+    return output;
+}
+
+float2 ComputeGrassVelocity(float4 curr, float4 prev)
+{
+    float currW = max(curr.w, 1e-4);
+    float prevW = max(prev.w, 1e-4);
+    float2 currNDC = curr.xy / currW;
+    float2 prevNDC = prev.xy / prevW;
+    float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
+    return clamp(v, -0.05, 0.05);
+}
+
+// Same color logic as BasePS3D — duplicated rather than refactored to avoid touching the existing PS.
+GrassPSOutputV BasePS3DV(GrassPSVTXv input)
+{
+    GrassPSOutputV o;
+    float d = input.GrassInfo.w;
+    float4 color = float4(1,1,1,1);
+    if (IgnoreColor == false) color *= input.Color;
+    if (UseTexture == true) {
+        if (Ceiling == false) {
+#if SIMPLE
+            color *= tex2D(TexSampler, LoopUV(input.GrassInfo.yz));
+#else
+#if SM4
+            color *= tex2Dgrad(AnisoTexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz), ddy(input.GrassInfo.yz));
+#else
+            color *= tex2Dgrad(TexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz), ddy(input.GrassInfo.yz));
+#endif
+#endif
+            if (color.a == 0) discard;
+            color = gammaMad(color, lightProcessRoof(input.ModelPos) * LightDot(input.Normal), LightSpecular(input.Normal, input.ModelPos));
+            color.a *= (1 - RectangleFade(input.ModelPos.xz, FadeWidth / 2));
+        } else {
+            color = float4(0.76, 0.78, 0.80, 1.00);
+            color = gammaMad(color, lightProcessRoofCeiling(input.ModelPos) * LightDot(input.Normal), LightSpecular(input.Normal, input.ModelPos));
+            color.a *= (1 - RectangleFade(input.ModelPos.xz, FadeWidth / 2));
+        }
+    } else {
+        color = gammaMad(color, lightProcessRoof(input.ModelPos) * LightDot(input.Normal), LightSpecular(input.Normal, input.ModelPos));
+        float a = 1 - (2 - sqrt(input.ScreenPos.z / (25 * GrassFadeMul)));
+        if (a > 0) {
+            a = min(1, a);
+            float2 rand = tex2D(TerrainNoiseMipSampler, input.GrassInfo.yz * 100 / 1024.0).xy;
+            float multex = rand.x;
+            multex *= ((2.0 - input.GrassInfo.x) / 2);
+            multex = (multex - 0.5) * 2.5 + 0.5;
+            multex *= a;
+            float bladeCol = rand.y*0.6;
+            float4 green = lerp(LightGreen, DarkGreen, bladeCol);
+            float4 brown = lerp(LightBrown, DarkBrown, bladeCol);
+            float4 bladecolor = gammaMul(lerp(green, brown, input.GrassInfo.x), lightProcessFloor(input.ModelPos) * LightDot(input.Normal));
+            color = lerp(color, bladecolor, multex);
+        }
+        color.a *= (1 - RectangleFade(input.ModelPos.xz, 0.0));
+        color.a *= Alpha;
+    }
+    o.color = color;
+    // velocity.b = linear depth (ortho clip.z/clip.w) for the motion-blur reconstruction depth test.
+    o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), input.currClip.z / max(input.currClip.w, 1e-4), 1);
+    return o;
+}
+
 technique DrawBase
 {
     pass MainPassSimple
@@ -961,4 +1084,114 @@ technique DrawMask
 #endif;
 
 	}
+}
+
+// Velocity-aware grass-blade PS (3D shells). Same as BladesPS3D plus velocity output to COLOR1. Uses
+// GrassVSv (provides currClip/prevClip). velocity.a=1 makes the NonPremultiplied blend overwrite MRT1
+// cleanly even though COLOR0 stays translucent for shell layering.
+GrassPSOutputV BladesPS3DV(GrassPSVTXv input)
+{
+    GrassPSOutputV o;
+    float a = 2 - sqrt(input.ScreenPos.z / (25 * GrassFadeMul));
+    if (a <= 0) discard;
+    float2 rand = iterhash22(input.GrassInfo.yz*100);
+    if (rand.y > GrassProb*((2.0 - input.GrassInfo.x) / 2)) discard;
+    float bladeCol = rand.x*0.6;
+    float4 green = lerp(LightGreen, DarkGreen, bladeCol);
+    float4 brown = lerp(LightBrown, DarkBrown, bladeCol);
+    float4 color = gammaMad(lerp(green, brown, input.GrassInfo.x), lightProcessFloor(input.ModelPos) * LightDot(input.Normal), LightSpecular(input.Normal, input.ModelPos));
+    color.a = a;
+    float fade = (1 - RectangleFade(input.ModelPos.xz, 0.0));
+    color.a *= fade * fade;
+    color.a *= Alpha;
+    o.color = color;
+    o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), input.currClip.z / max(input.currClip.w, 1e-4), 1);
+    return o;
+}
+
+// DrawBaseWithVelocity mirrors DrawBase's pass layout (TerrainComponent picks Passes[2] for 3D mode).
+// Only MainPass3D is velocity-aware for now; the other passes reuse the original PSes. Added at the end
+// of the file so the existing GrassTechniques enum (DrawBase=0..DrawMask=4) stays valid; this new
+// technique is index 5.
+technique DrawBaseWithVelocity
+{
+    pass MainPassSimple
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_1 GrassVS();
+        PixelShader = compile ps_4_0_level_9_3 BasePSSimple();
+#else
+        VertexShader = compile vs_3_0 GrassVS();
+        PixelShader = compile ps_3_0 BasePSSimple();
+#endif;
+    }
+    pass MainPass
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_1 GrassVS();
+        PixelShader = compile ps_4_0_level_9_3 BasePS();
+#else
+        VertexShader = compile vs_3_0 GrassVS();
+        PixelShader = compile ps_3_0 BasePS();
+#endif;
+    }
+    pass MainPass3D
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_1 GrassVSv();
+        PixelShader = compile ps_4_0_level_9_3 BasePS3DV();
+#else
+        VertexShader = compile vs_3_0 GrassVSv();
+        PixelShader = compile ps_3_0 BasePS3DV();
+#endif;
+    }
+}
+
+// DrawBladesWithVelocity mirrors DrawBlades' pass layout (TerrainComponent picks Passes[2]=MainBlades3D
+// in 3D non-parallax). Only MainBlades3D is velocity-aware; the other passes reuse the originals (they
+// aren't hit in 3D since parallax is hardcoded off in TerrainComponent's blade loop). Index 6.
+technique DrawBladesWithVelocity
+{
+    pass MainBladesSimple
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_1 GrassVS();
+        PixelShader = compile ps_4_0_level_9_3 BladesPSSimple();
+#else
+        VertexShader = compile vs_3_0 GrassVS();
+        PixelShader = compile ps_3_0 BladesPSSimple();
+#endif;
+    }
+    pass MainBlades
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_3 GrassVS();
+        PixelShader = compile ps_4_0_level_9_3 BladesPS();
+#else
+        VertexShader = compile vs_3_0 GrassVS();
+        PixelShader = compile ps_3_0 BladesPS();
+#endif;
+    }
+    pass MainBlades3D
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_3 GrassVSv();
+        PixelShader = compile ps_4_0_level_9_3 BladesPS3DV();
+#else
+        VertexShader = compile vs_3_0 GrassVSv();
+        PixelShader = compile ps_3_0 BladesPS3DV();
+#endif;
+    }
+#if !SIMPLE
+    pass MainBladesParallax3D
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_3 GrassParallaxVS();
+        PixelShader = compile ps_4_0_level_9_3 BladesParallaxPS3D();
+#else
+        VertexShader = compile vs_3_0 GrassParallaxVS();
+        PixelShader = compile ps_3_0 BladesParallaxPS3D();
+#endif;
+    }
+#endif
 }

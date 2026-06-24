@@ -116,6 +116,23 @@ namespace FSO.LotView
         
         // used for culling - updated just before draw.
         public Matrix ViewProjection;
+        // Previous-frame view*projection, captured once per frame on the first PrepareCulling call.
+        // Consumed by motion-vector / TAA paths for per-pixel screen-space velocity computation.
+        public Matrix PreviousViewProjection;
+        private bool _PrevVPValid;
+        // TAA sub-pixel jitter (NDC units). Set by World.PreDraw from a Halton(2,3) sequence; applied to
+        // Projection.M31/M32 so the rendered frame is shifted by a fraction of a pixel each frame. TAA's
+        // history blend then accumulates ~16 jittered samples per pixel → smooth temporal anti-aliasing.
+        public Vector2 TAAJitter;
+        // Frame counter for the Halton sample index (modulo 16 for a 16-tap pattern).
+        public int TAAFrameIndex;
+        // Reset to false in BeginFrameForVelocity (called once per frame from World.PreDraw). The first
+        // PrepareCulling call this frame sets it true and captures the previous-frame VP; subsequent
+        // PrepareCulling calls leave PreviousViewProjection alone. Without this, the 5+ PrepareCulling
+        // calls per frame (architecture, entities, static, ...) overwrite PreviousViewProjection with
+        // this frame's VP -> velocity = 0 -> no motion blur even during camera motion.
+        private bool _PrevVPCapturedThisFrame;
+        public void BeginFrameForVelocity() { _PrevVPCapturedThisFrame = false; }
         public BoundingFrustum Frustum;
         public Rectangle WorldRectangle;
 
@@ -142,7 +159,19 @@ namespace FSO.LotView
             }
 
             var view = View;
-            ViewProjection = view * Projection;
+            // Projection getter already applies TAA jitter when active — newVP inherits it via the multiply.
+            var newVP = view * Projection;
+            // Only capture the prior VP on the FIRST PrepareCulling call each frame (gated by
+            // _PrevVPCapturedThisFrame, which World.PreDraw resets). Otherwise the multiple PrepareCulling
+            // calls per frame snap PreviousViewProjection to this frame's VP and motion-vector velocity
+            // collapses to zero.
+            if (!_PrevVPCapturedThisFrame)
+            {
+                PreviousViewProjection = _PrevVPValid ? ViewProjection : newVP;
+                _PrevVPValid = true;
+                _PrevVPCapturedThisFrame = true;
+            }
+            ViewProjection = newVP;
             Frustum = new BoundingFrustum(ViewProjection);
         }
 
@@ -167,7 +196,24 @@ namespace FSO.LotView
         // new camera stuff
         public CameraControllers Cameras;
         public Matrix View => Cameras.View;
-        public Matrix Projection => Cameras.Projection;
+        public Matrix Projection
+        {
+            get
+            {
+                var p = Cameras.Projection;
+                // Apply TAA sub-pixel jitter at the projection-getter level so EVERY consumer that reads
+                // state.Projection (terrain, grass, walls, particles, etc.) sees the jittered projection.
+                // Reading state.ViewProjection alone wasn't enough — many renderers compute view*Projection
+                // themselves and would render with an unjittered projection, leaving terrain/grass without
+                // anti-aliasing while objects/sims got it.
+                if (TAAJitter.X != 0 || TAAJitter.Y != 0)
+                {
+                    p.M31 -= TAAJitter.X;
+                    p.M32 -= TAAJitter.Y;
+                }
+                return p;
+            }
+        }
 
         public bool ObjectIDMode;
         public WorldSpace WorldSpace;

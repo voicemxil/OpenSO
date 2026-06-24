@@ -133,15 +133,23 @@ namespace FSO.Client.Rendering.City
             VertexShader.Parameters["DepthBias"].SetValue(-0.12f * terrain.Camera.DepthBiasScale);
             VertexShader.Parameters["HeightVScale"].SetValue(1f);// 1f / terrain.Camera.LotSquish);
 
+            // Velocity output: when a velocity target is bound (TAA / motion blur active in 3D), use the
+            // velocity passes (RenderCityObj VS pass 6 = TreeVSVelocity, PS pass 5 = FinalFogVelocity).
+            // The velocity MRT is bound ONCE by Terrain.DrawSurrounding around the whole surroundings
+            // sequence (so the shared depth buffer stays continuous — switching render targets per-draw
+            // discards depth and makes trees/terrain depth-fight). Trees are static -> camera-induced
+            // velocity from PrevBaseMatrix. velocity.a=1 makes NonPremultiplied overwrite MRT1.
+            bool useVel = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null;
+
             PixelShader.CurrentTechnique = PixelShader.Techniques[1];
             PixelShader.Parameters["ObjTex"].SetValue(content.TreeTex);
-            PixelShader.CurrentTechnique.Passes[passIndex].Apply();
+            PixelShader.CurrentTechnique.Passes[useVel ? 5 : passIndex].Apply();
 
             gd.SamplerStates[1] = SamplerState.AnisotropicClamp;
             gd.BlendState = BlendState.NonPremultiplied;
 
             VertexShader.CurrentTechnique = VertexShader.Techniques[1];
-            VertexShader.CurrentTechnique.Passes[5].Apply();
+            VertexShader.CurrentTechnique.Passes[useVel ? 6 : 5].Apply();
 
             var copy = terrain.OccupiedTiles;
 

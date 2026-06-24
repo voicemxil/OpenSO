@@ -353,7 +353,19 @@ namespace FSO.LotView.Components
 
             effect.CurrentTechnique = effect.Techniques[(int)Mode * 2 + (useDepth?0:1)];
 
-            device.BlendState = Mode == ParticleType.RAIN ? BlendState.Additive : BlendState.AlphaBlend;
+            // Bind MRT1 around the particle draw so the particle PS's (0,0,0,0) COLOR1 output reaches
+            // the velocity buffer. Custom BlendState restricts MRT1 to its alpha channel so MRT1.rg
+            // (the actual velocity values written by objects beneath) is preserved while the alpha-mask
+            // (which motion blur uses to gate the blur) gets reduced where particles cover.
+            var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            bool useVelocity = velocityRT != null;
+            if (useVelocity)
+            {
+                device.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+            }
+            device.BlendState = (Mode == ParticleType.RAIN)
+                ? (useVelocity ? AdditiveVelClear() : BlendState.Additive)
+                : (useVelocity ? AlphaBlendVelClear() : BlendState.AlphaBlend);
             device.DepthStencilState = useDepth?DepthStencilState.DepthRead:DepthStencilState.None;
 
             device.SetVertexBuffer(Vertices);
@@ -368,6 +380,54 @@ namespace FSO.LotView.Components
 
             device.BlendState = BlendState.NonPremultiplied;
             device.DepthStencilState = DepthStencilState.Default;
+            if (useVelocity)
+            {
+                device.SetRenderTarget(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer());
+            }
+        }
+
+        // Cached per-RT blend states. ColorWriteChannels1=Alpha means COLOR1 only writes the alpha
+        // channel — particle PS outputs (0,0,0,0) → MRT1.a is multiplied down by (1-particleAlpha) under
+        // the regular blend, invalidating the motion-blur alpha mask without corrupting MRT1.rg/.b.
+        private static BlendState _alphaBlendVelClear, _additiveVelClear;
+        private static BlendState AlphaBlendVelClear()
+        {
+            if (_alphaBlendVelClear == null)
+            {
+                _alphaBlendVelClear = new BlendState
+                {
+                    ColorBlendFunction = BlendFunction.Add,
+                    ColorSourceBlend = Blend.SourceAlpha,
+                    ColorDestinationBlend = Blend.InverseSourceAlpha,
+                    AlphaBlendFunction = BlendFunction.Add,
+                    AlphaSourceBlend = Blend.One,
+                    AlphaDestinationBlend = Blend.InverseSourceAlpha,
+                    ColorWriteChannels = ColorWriteChannels.All,
+                    ColorWriteChannels1 = ColorWriteChannels.Alpha
+                };
+            }
+            return _alphaBlendVelClear;
+        }
+        private static BlendState AdditiveVelClear()
+        {
+            // Additive (rain): MRT1 alpha gets InverseSourceAlpha attenuation so heavier rain hits clear
+            // velocity more aggressively. Not perfect — additive sums prev unchanged — but better than
+            // leaving rain velocity smearing entirely.
+            if (_additiveVelClear == null)
+            {
+                _additiveVelClear = new BlendState
+                {
+                    ColorBlendFunction = BlendFunction.Add,
+                    ColorSourceBlend = Blend.SourceAlpha,
+                    ColorDestinationBlend = Blend.One,
+                    AlphaBlendFunction = BlendFunction.Add,
+                    AlphaSourceBlend = Blend.One,
+                    AlphaDestinationBlend = Blend.InverseSourceAlpha,
+                    ColorWriteChannels = ColorWriteChannels.All,
+                    ColorWriteChannels1 = ColorWriteChannels.Alpha
+                };
+            }
+            return _additiveVelClear;
         }
 
         public void Dispose()

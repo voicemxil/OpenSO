@@ -316,7 +316,34 @@ namespace FSO.LotView.RC
         {
             var effect = WorldContent.RCObject;
 
-            effect.SetTechnique(RCObjectTechniques.WallDraw);
+            // Velocity output: bind MRT1 (VelocityTarget) and select WallDrawWithVelocity so wall pixels
+            // get camera-induced screen-space velocity for TAA reprojection and per-pixel motion blur.
+            // Walls already use BlendState.Opaque so COLOR1 (velocity) overwrites cleanly with no blend
+            // issue — same pattern as objects/avatars.
+            var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            bool useVelocity = velocityRT != null;
+            Microsoft.Xna.Framework.Graphics.RenderTargetBinding[] savedRTs = null;
+            if (useVelocity)
+            {
+                savedRTs = gd.GetRenderTargets();
+                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                effect.ViewProjection = state.ViewProjection;
+                // For subworld neighbour-lot rendering, Cameras.ModelTranslation offsets the camera;
+                // state.ViewProjection already includes it but state.PreviousViewProjection doesn't.
+                // Apply the same translation so velocity for static subworld walls is ~zero rather than
+                // uniform-large garbage. (Mirrors the fix in TerrainComponent.Draw.)
+                var prevVP = state.PreviousViewProjection;
+                if (state.Cameras.ModelTranslation.HasValue)
+                {
+                    prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
+                }
+                effect.PreviousViewProjection = prevVP;
+                effect.SetTechnique(RCObjectTechniques.WallDrawWithVelocity);
+            }
+            else
+            {
+                effect.SetTechnique(RCObjectTechniques.WallDraw);
+            }
 
             var lastSideMask = false;
 
@@ -360,6 +387,11 @@ namespace FSO.LotView.RC
                         gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, g.PrimCount);
                     }
                 }
+            }
+            if (useVelocity)
+            {
+                if (savedRTs != null && savedRTs.Length > 0) gd.SetRenderTargets(savedRTs);
+                else gd.SetRenderTarget(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer());
             }
             if (!gd.RasterizerState.ScissorTestEnable) gd.RasterizerState = RasterizerState.CullNone;
         }

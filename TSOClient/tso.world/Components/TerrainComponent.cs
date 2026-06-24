@@ -500,7 +500,42 @@ namespace FSO.LotView.Components
 
             Effect.UseTexture = true;
             Effect.IgnoreColor = true;
-            Effect.SetTechnique(GrassTechniques.DrawBase);
+
+            // Velocity output for terrain base — bind MRT1 (VelocityTarget) and select
+            // DrawBaseWithVelocity. Opaque blend forces COLOR1 to overwrite cleanly (NonPremultiplied
+            // scales it by COLOR0 alpha, which would corrupt fade-edge pixels). Note: the velocity here
+            // is currently SUSPECTED-BROKEN — diagnose by enabling "Velocity debug" in graphics options
+            // and seeing whether terrain pixels show mid-gray stationary / uniform hue on pan.
+            var terrainVelocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            bool terrainUseVelocity = terrainVelocityRT != null && _3d;
+            RenderTargetBinding[] savedRTs = null;
+            BlendState savedBlend = null;
+            if (terrainUseVelocity)
+            {
+                savedRTs = device.GetRenderTargets();
+                savedBlend = device.BlendState;
+                device.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), terrainVelocityRT);
+                device.BlendState = BlendState.Opaque;
+                Effect.ViewProjection = view * world.Projection;
+                // Subworld neighbour-lot rendering sets Cameras.ModelTranslation to offset the camera
+                // by the subworld's lot position. state.View (used above) already includes that. But
+                // state.PreviousViewProjection was captured at frame start without it, so the delta of
+                // matrices includes the full ModelTranslation -> uniform giant velocity for every
+                // subworld pixel (visible as bright magenta/blue across all surrounding lots in the
+                // velocity debug visualizer). Apply the same translation to PreviousViewProjection so
+                // both sides match and velocity for static subworld geometry collapses to ~zero.
+                var prevVP = world.PreviousViewProjection;
+                if (world.Cameras.ModelTranslation.HasValue)
+                {
+                    prevVP = Matrix.CreateTranslation(-world.Cameras.ModelTranslation.Value) * prevVP;
+                }
+                Effect.PreviousViewProjection = prevVP;
+                // PreviousWorld intentionally NOT pushed — GrassVSv uses World on both sides since
+                // DrawFloor mutates e.World per floor (using a separate PreviousWorld would create
+                // spurious per-floor velocity).
+            }
+
+            Effect.SetTechnique(terrainUseVelocity ? GrassTechniques.DrawBaseWithVelocity : GrassTechniques.DrawBase);
 
             var floors = new HashSet<sbyte>();
             for (sbyte f = 0; f < world.Level; f++) floors.Add(f);
@@ -509,6 +544,13 @@ namespace FSO.LotView.Components
             Effect.GrassShininess = 0.02f;// (float)0.25);
 
             pass.Apply();
+
+            if (terrainUseVelocity)
+            {
+                if (savedRTs != null && savedRTs.Length > 0) device.SetRenderTargets(savedRTs);
+                else device.SetRenderTarget(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer());
+                if (savedBlend != null) device.BlendState = savedBlend;
+            }
 
             float grassScale;
             float grassDensity;
@@ -541,14 +583,24 @@ namespace FSO.LotView.Components
                 Effect.Alpha = (Alpha-0.75f) * 4;
                 Effect.Level = (float)0.0001f;
                 Effect.RoomMap = world.Rooms.RoomMaps[0];
-                Effect.SetTechnique(GrassTechniques.DrawBlades);
+                // Velocity for grass shells: same condition as the terrain base. ViewProjection /
+                // PreviousViewProjection are still set on Effect from the base block above; GrassVSv uses
+                // World on both sides so per-shell World offsets don't create spurious velocity.
+                bool bladesUseVelocity = terrainUseVelocity;
+                Effect.SetTechnique(bladesUseVelocity ? GrassTechniques.DrawBladesWithVelocity : GrassTechniques.DrawBlades);
                 int grassNum = (int)Math.Ceiling(GrassHeight / (float)grassScale);
-                
+
                 RenderTargetBinding[] rts = null;
                 if (FSOEnvironment.UseMRT)
                 {
                     rts = device.GetRenderTargets();
-                    if (rts.Length > 1)
+                    if (bladesUseVelocity)
+                    {
+                        // Bind velocity MRT for shell velocity output. NonPremultiplied blend still
+                        // overwrites MRT1 cleanly because velocity.a=1 (the RT uses its own src alpha).
+                        device.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), terrainVelocityRT);
+                    }
+                    else if (rts.Length > 1)
                     {
                         device.SetRenderTarget((RenderTarget2D)rts[0].RenderTarget);
                     }

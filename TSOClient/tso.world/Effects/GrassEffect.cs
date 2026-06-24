@@ -14,6 +14,9 @@ namespace FSO.LotView.Effects
         private EffectParameter pProjection;
         private EffectParameter pView;
         private EffectParameter pWorld;
+        private EffectParameter pViewProjection;
+        private EffectParameter pPreviousViewProjection;
+        private EffectParameter pPreviousWorld;
 
         private EffectParameter pScreenSize;
         private EffectParameter pLightGreen;
@@ -84,6 +87,27 @@ namespace FSO.LotView.Effects
             set
             {
                 pWorld.SetValue(value);
+            }
+        }
+        public Matrix ViewProjection
+        {
+            set
+            {
+                pViewProjection?.SetValue(value);
+            }
+        }
+        public Matrix PreviousViewProjection
+        {
+            set
+            {
+                pPreviousViewProjection?.SetValue(value);
+            }
+        }
+        public Matrix PreviousWorld
+        {
+            set
+            {
+                pPreviousWorld?.SetValue(value);
             }
         }
 
@@ -411,6 +435,9 @@ namespace FSO.LotView.Effects
             pProjection = Parameters["Projection"];
             pView = Parameters["View"];
             pWorld = Parameters["World"];
+            pViewProjection = Parameters["ViewProjection"];
+            pPreviousViewProjection = Parameters["PreviousViewProjection"];
+            pPreviousWorld = Parameters["PreviousWorld"];
 
             pScreenSize = Parameters["ScreenSize"];
             pLightGreen = Parameters["LightGreen"];
@@ -475,6 +502,8 @@ namespace FSO.LotView.Effects
         DrawGrid,
         DrawBlades,
         DrawLMap,
-        DrawMask
+        DrawMask,
+        DrawBaseWithVelocity,
+        DrawBladesWithVelocity
     }
 }

@@ -36,6 +36,9 @@ struct VertexToShad
 float4x4 BaseMatrix;
 float4x4 MV;
 float4x4 LightMatrix;
+// Previous-frame BaseMatrix (mvp) for city-backdrop velocity output. Set by Terrain.DrawSurrounding;
+// the backdrop is static in world so velocity is purely camera-induced (BaseMatrix vs PrevBaseMatrix).
+float4x4 PrevBaseMatrix;
 
 float4 GetPositionFromLight(float4 position)
 {
@@ -239,6 +242,60 @@ ObjVertexOut TreeVS(ObjVertexIn Input)
 	return CityObjFogVS(Input);
 }
 
+// Velocity-aware variant of the city object/tree path. ObjVertexOutV adds clip-space positions for the
+// current and previous frame so the PS can emit screen-space velocity to MRT1.
+struct ObjVertexOutV
+{
+	float4 position : SV_Position0;
+	float2 texCoord : TEXCOORD0;
+	float3 vPos : TEXCOORD1;
+	float3 normal : TEXCOORD2;
+	float3 shadPos : TEXCOORD3;
+	float4 currClip : TEXCOORD4;
+	float4 prevClip : TEXCOORD5;
+};
+
+ObjVertexOutV TreeVSv(ObjVertexIn Input)
+{
+	float3 relOffset = Input.normal;
+	relOffset.y *= HeightVScale;
+	float4 opos = mul(Input.position, ObjModel) + float4(relOffset, 0);
+	ObjVertexOutV Output = (ObjVertexOutV)0;
+	float4 cclip = mul(opos, BaseMatrix);
+	Output.position = cclip;
+	Output.position.z += (DepthBias / Output.position.z);
+	Output.texCoord = Input.texCoord;
+	Output.normal = float3(0, 1, 0);
+	Input.position = opos;
+	Output.shadPos = ShadPosObj(Input);
+	float4 pos = mul(opos, MV);
+	pos.z += pos.w / 100000000;
+	Output.vPos = pos.xyz;
+	Output.currClip = cclip;                          // pre-depthbias clip (clean for velocity)
+	Output.prevClip = mul(opos, PrevBaseMatrix);      // trees static -> same opos, previous camera
+	return Output;
+}
+
+// Velocity variant of CityObjFogVS — facade (surrounding-lot) art: houses + their trees. Facades are
+// static, so velocity is camera-induced (BaseMatrix vs PrevBaseMatrix, same ObjModel both frames).
+ObjVertexOutV CityObjFogVSv(ObjVertexIn Input)
+{
+	ObjVertexOutV Output = (ObjVertexOutV)0;
+	float4 wpos = mul(Input.position, ObjModel);
+	float4 cclip = mul(wpos, BaseMatrix);
+	Output.position = cclip;
+	Output.position.z += (DepthBias / Output.position.z);
+	Output.texCoord = Input.texCoord;
+	Output.normal = Input.normal;
+	Output.shadPos = ShadPosObj(Input);
+	float4 pos = mul(wpos, MV);
+	pos.z += pos.w / 100000000;
+	Output.vPos = pos.xyz;
+	Output.currClip = cclip;
+	Output.prevClip = mul(wpos, PrevBaseMatrix);
+	return Output;
+}
+
 technique RenderCityObj
 {
 	pass Final
@@ -292,6 +349,24 @@ technique RenderCityObj
 		VertexShader = compile vs_4_0_level_9_1 TreeVS();
 #else
 		VertexShader = compile vs_3_0 TreeVS();
+#endif;
+	}
+
+	pass TreeVSVelocity
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_1 TreeVSv();
+#else
+		VertexShader = compile vs_3_0 TreeVSv();
+#endif;
+	}
+
+	pass FinalFogVelocity
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_1 CityObjFogVSv();
+#else
+		VertexShader = compile vs_3_0 CityObjFogVSv();
 #endif;
 	}
 }
@@ -369,6 +444,43 @@ VertexToShad NShadVS(CityVertex Input)
 	return Output;
 }
 
+// Velocity-aware new-city (distant terrain + water) VS. CityVertexOutV adds clip positions for velocity.
+struct CityVertexOutV
+{
+	float4 VertexPosition : SV_Position0;
+	float4 TextureCoords : TEXCOORD0;
+	float4 NormalTrans : TEXCOORD1;
+	float2 VertexCoord : TEXCOORD2;
+	float3 shadPos : TEXCOORD3;
+	float3 vPos : TEXCOORD4;
+	float4 currClip : TEXCOORD5;
+	float4 prevClip : TEXCOORD6;
+};
+
+CityVertexOutV NCityFogVSv(CityVertex Input)
+{
+	CityVertexOutV Output = (CityVertexOutV)0;
+	float4 cclip = mul(Input.VertexPosition, BaseMatrix);
+	Output.VertexPosition = cclip;
+	Output.VertexPosition.z += DepthBias * Output.VertexPosition.w;
+	Output.TextureCoords = Input.TextureCoords;
+	Output.NormalTrans = Input.NormalTrans;
+	Output.VertexCoord = Input.VertexPosition.xz / 512.0;
+
+	float4 LightPos = GetPositionFromLight(Input.VertexPosition);
+	Output.shadPos.xy = 0.5*(LightPos.xy / LightPos.w) + float2(0.5, 0.5);
+	Output.shadPos.y = (1.0f - Output.shadPos.y);
+	Output.shadPos.z = 1 - (LightPos.z / LightPos.w);
+
+	float4 pos = mul(Input.VertexPosition, MV);
+	pos.z += pos.w / 100000000;
+	Output.vPos = pos.xyz;
+
+	Output.currClip = cclip;
+	Output.prevClip = mul(Input.VertexPosition, PrevBaseMatrix);
+	return Output;
+}
+
 technique RenderNCity
 {
 	pass Final
@@ -413,6 +525,15 @@ technique RenderNCity
 		VertexShader = compile vs_4_0_level_9_1 NCityFogVS();
 #else
 		VertexShader = compile vs_3_0 NCityFogVS();
+#endif;
+	}
+
+	pass FinalFogVelocity
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_1 NCityFogVSv();
+#else
+		VertexShader = compile vs_3_0 NCityFogVSv();
 #endif;
 	}
 }

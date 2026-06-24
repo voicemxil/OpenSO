@@ -53,10 +53,40 @@ namespace FSO.LotView
             var effect = WorldContent.RCObject;
             gd.BlendState = BlendState.NonPremultiplied;
             effect.ViewProjection = state.ViewProjection;
+            // Subworld ModelTranslation fix: in 3D, SubDraw sets Cameras.ModelTranslation so state.View
+            // (and the ViewProjection re-derived by the PrepareCulling above) include the subworld offset,
+            // but PreviousViewProjection was captured at frame start without it. Apply the same translation
+            // so static subworld geometry's velocity collapses to pure camera motion.
+            var prevVP = state.PreviousViewProjection;
+            if (state.Cameras.ModelTranslation.HasValue)
+                prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
+            effect.PreviousViewProjection = prevVP;
 
-            effect.SetTechnique(RCObjectTechniques.Draw);
+            // In 2D mode StaticDraw renders into a cached sprite buffer (no velocity). But in 3D it renders
+            // LIVE to the backbuffer — and this is the path that draws SUBWORLD (surrounding-lot) 3D objects
+            // like trees (WorldArchitecture.DrawSub -> SubDraw -> Entities.StaticDraw). So bind the velocity
+            // MRT here too; DGRPRenderer auto-selects DrawWithVelocity when a velocity target is present.
+            var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            bool useVelocity = velocityRT != null && state.CameraMode == CameraRenderMode._3D;
+            RenderTargetBinding[] savedRTs = null;
+            if (useVelocity)
+            {
+                savedRTs = gd.GetRenderTargets();
+                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                effect.SetTechnique(RCObjectTechniques.DrawWithVelocity);
+            }
+            else
+            {
+                effect.SetTechnique(RCObjectTechniques.Draw);
+            }
 
             DrawObjBuf(gd, state, pxOffset);
+
+            if (useVelocity)
+            {
+                if (savedRTs != null && savedRTs.Length > 0) gd.SetRenderTargets(savedRTs);
+                else gd.SetRenderTarget(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer());
+            }
             //if (false)
             //{
                 //foreach (var sub in Blueprint.SubWorlds) sub.SubDraw(gd, state, (pxOffsetSub) => sub.Entities.StaticDraw(gd, state, pxOffsetSub));
@@ -73,7 +103,29 @@ namespace FSO.LotView
             var pass = advDir ? 5 : WorldConfig.Current.PassOffset * 2;
 
             var effect = WorldContent.AvatarEffect;
-            effect.CurrentTechnique = WorldContent.AvatarEffect.Techniques[pass];
+
+            // Velocity output: scope MRT1 binding around the avatar loop. Vitaboy's DrawWithVelocity is
+            // built at the same level_9_1 profile as the rest of Vitaboy.fx using a pre-combined
+            // ViewProjection (single mat-mul) — keeps state caching consistent so the in-DrawGeometry
+            // shadow-pass technique switch correctly rebinds vsShadow.
+            var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            bool useVelocity = velocityRT != null;
+            if (useVelocity)
+            {
+                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                effect.CurrentTechnique = effect.Techniques[7]; //DrawWithVelocity, last technique in Vitaboy.fx
+                effect.Parameters["ViewProjection"]?.SetValue(state.View * state.Projection);
+                // Subworld ModelTranslation fix: state.View already has the translation, but
+                // PreviousViewProjection was captured pre-translation -> apply same translation here.
+                var prevVP = state.PreviousViewProjection;
+                if (state.Cameras.ModelTranslation.HasValue)
+                    prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
+                effect.Parameters["PreviousViewProjection"]?.SetValue(prevVP);
+            }
+            else
+            {
+                effect.CurrentTechnique = WorldContent.AvatarEffect.Techniques[pass];
+            }
 
             effect.Parameters["View"].SetValue(state.View);
             effect.Parameters["Projection"].SetValue(state.Projection);
@@ -90,6 +142,11 @@ namespace FSO.LotView
             foreach (var avatar in Blueprint.Avatars)
             {
                 if (avatar.Level <= state.Level) avatar.Draw(gd, state);
+            }
+
+            if (useVelocity)
+            {
+                gd.SetRenderTarget(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer());
             }
 
             gd.RasterizerState = RasterizerState.CullNone;
@@ -114,9 +171,27 @@ namespace FSO.LotView
             var effect = WorldContent.RCObject;
             gd.BlendState = BlendState.NonPremultiplied;
             effect.ViewProjection = state.ViewProjection;
+            // Subworld ModelTranslation fix — see TerrainComponent.Draw / WallComponentRC.Draw.
+            var prevVP = state.PreviousViewProjection;
+            if (state.Cameras.ModelTranslation.HasValue)
+                prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
+            effect.PreviousViewProjection = prevVP;
             gd.RasterizerState = RasterizerState.CullNone;
 
-            effect.SetTechnique(RCObjectTechniques.Draw);
+            // Per-pixel motion blur / TAA: bind VelocityTarget as MRT1 *only* around the object loop below
+            // so non-velocity-aware shaders (terrain, sky, walls, avatars) can't write garbage to MRT1.
+            // (Earlier global MRT bind in SetPPXTarget caused alpha=1 + garbage velocity on every pixel.)
+            var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            bool useVelocity = velocityRT != null;
+            if (useVelocity)
+            {
+                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                effect.SetTechnique(RCObjectTechniques.DrawWithVelocity);
+            }
+            else
+            {
+                effect.SetTechnique(RCObjectTechniques.Draw);
+            }
 
             //Draw dynamic objects.
             
@@ -142,6 +217,12 @@ namespace FSO.LotView
             foreach (var obj in dyn)
             {
                 obj.Draw(gd, state);
+            }
+
+            if (useVelocity)
+            {
+                // Restore single-RT so the subsequent particle/debug/etc. draws don't write MRT1.
+                gd.SetRenderTarget(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer());
             }
 
             _2d.EndImmediate();

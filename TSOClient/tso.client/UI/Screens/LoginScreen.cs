@@ -120,7 +120,19 @@ namespace FSO.Client.UI.Screens
             };
             this.Add(gameplayButton);
             gameplayButton.OnButtonClick += new ButtonClickDelegate(gameplayButton_OnButtonClick);
-            
+
+            // Self-hosting a private server stays reachable (it uses the same embedded-server machinery as
+            // archive mode, just framed as a private server) now that archive mode isn't the default boot.
+            var hostButton = new UIButton()
+            {
+                Caption = "Host Private Server",
+                Y = 10,
+                Width = 190,
+                X = 145
+            };
+            this.Add(hostButton);
+            hostButton.OnButtonClick += (btn) => FSOFacade.Controller.InitializeArchive();
+
             Regulator.OnError += AuthRegulator_OnError;
             Regulator.OnTransition += AuthRegulator_OnTransition;
 
@@ -138,6 +150,7 @@ namespace FSO.Client.UI.Screens
                     settings.AntiAlias = 0;
                     settings.MSAALevel = 0;
                     settings.SuperSampling = 1;
+                    settings.RenderScale = 1f;
                     settings.PostAA = 0;
                     settings.Sharpen = 0;
                     settings.Save();
@@ -150,7 +163,12 @@ namespace FSO.Client.UI.Screens
                         AA = settings.AntiAlias,
                         MSAA = settings.MSAALevel,
                         SuperSampling = settings.SuperSampling,
+                        RenderScale = settings.RenderScale,
                         PostAA = settings.PostAA,
+                        TAA = settings.TAA,
+                        MotionBlur = settings.MotionBlur,
+                        MotionBlurAmount = settings.MotionBlurAmount,
+                        VelocityDebug = settings.VelocityDebug,
                         Sharpen = settings.Sharpen,
                         SharpenAmount = settings.SharpenAmount,
                         Weather = settings.Weather,
