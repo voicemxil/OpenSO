@@ -626,7 +626,7 @@ namespace FSO.LotView
             State.Cameras.Update(state, this);
             if (SmoothZoomTimer > -1)
             {
-                SmoothZoomTimer += 60f / FSOEnvironment.RefreshRate;
+                SmoothZoomTimer += 60f * FSOEnvironment.DeltaTime;
                 if (SmoothZoomTimer >= 15)
                 {
                     State.PreciseZoom = 1f;
@@ -1120,12 +1120,16 @@ namespace FSO.LotView
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
 
-            // The 2D path can't blit a multisampled supersample target the way the 3D path does, so when
-            // supersampling (scale > 1) in 2D we fold it into hardware MSAA (matches the original behaviour).
-            // Upscaling (scale < 1) is left as an actual reduced-resolution render resolved back up.
-            if (PPXDepthEngine.SSAA > 1f && State.CameraMode < CameraRenderMode._3D)
+            // Render scale is a 3D-only feature. It sizes the shared backbuffer, but the 2D sprite scene is
+            // pixel-exact to the viewport (ortho camera), so a non-native backbuffer crops it. Neutralize
+            // render scale entirely in 2D modes: supersampling (>1) folds into hardware MSAA (free quality,
+            // no resize), and upscaling (<1) is simply disabled so the 2D scene always renders at native
+            // resolution (no crop). Separating geometry-buffer resolution from the 2D sprites would be the
+            // "true" fix but is a much larger renderer change; 3D-only is the agreed scope for now.
+            if (State.CameraMode < CameraRenderMode._3D && PPXDepthEngine.SSAA != 1f)
             {
-                PPXDepthEngine.MSAA = System.Math.Max(PPXDepthEngine.MSAA, 8);
+                if (PPXDepthEngine.SSAA > 1f)
+                    PPXDepthEngine.MSAA = System.Math.Max(PPXDepthEngine.MSAA, 8);
                 PPXDepthEngine.SSAA = 1f;
             }
 
@@ -1140,19 +1144,21 @@ namespace FSO.LotView
             // including the SMAA presets) routes through it until SMAA's own shaders land. Sharpen (FSR) is
             // a separate pass and stays off here until its shader exists. null => DrawBackbuffer keeps the
             // plain blit (no behaviour change). DrawBackbuffer only invokes this when SSAA == 1.
-            // Post-process AA mode selector. Priority: TAA > SMAA > FXAA > off. TAA replaces FXAA/SMAA's
-            // slot because it's itself an anti-aliasing pass (temporal + sub-pixel jitter); running FXAA on
-            // top would soften the already-temporally-blended frame for no benefit.
+            // Spatial post-AA selector (SMAA > FXAA > off). Independent of TAA: the spatial pass runs first,
+            // then TAA gets its own stage AFTER it (see DrawBackbuffer / PPXDepthEngine.TAAFunc).
             System.Action<GraphicsDevice, RenderTarget2D> postFn = null;
-            bool taaReady = cfg.TAA && State.CameraMode == CameraRenderMode._3D
-                            && WorldContent.TAA != null && WorldContent.MotionBlur != null; //TAA needs velocity buffer
-            if (taaReady)
-                postFn = TAAResolve.Draw;
-            else if (cfg.PostAA >= 2 && WorldContent.SMAA != null && WorldContent.SMAAAreaTex != null && WorldContent.SMAASearchTex != null)
+            if (cfg.PostAA >= 2 && WorldContent.SMAA != null && WorldContent.SMAAAreaTex != null && WorldContent.SMAASearchTex != null)
                 postFn = SMAAResolve.Draw;
             else if (cfg.PostAA >= 1 && WorldContent.FXAA != null)
                 postFn = PostProcessAA.Draw;
             PPXDepthEngine.PostProcessFunc = postFn;
+
+            // Temporal AA: separate resolve-chain stage applied AFTER the spatial AA above, so FXAA/SMAA and
+            // TAA compose (spatial edge smoothing + temporal stabilization) instead of being mutually
+            // exclusive. Needs the velocity buffer, so 3D mode + TAA/MotionBlur content present.
+            bool taaReady = cfg.TAA && State.CameraMode == CameraRenderMode._3D
+                            && WorldContent.TAA != null && WorldContent.MotionBlur != null;
+            PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
 
             // FSR RCAS sharpening: a final pass over the resolved frame, enabled when a sharpen mode is
             // selected with non-zero strength and the shader is present. null => no extra pass (no change).

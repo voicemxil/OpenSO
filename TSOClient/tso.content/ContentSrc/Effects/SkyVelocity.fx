@@ -47,12 +47,30 @@ float2 ComputeVelocity(float4 curr, float4 prev)
     return clamp((c - p) * float2(0.5, -0.5), -0.05, 0.05);
 }
 
+// Cheap per-pixel hash (Dave Hoskins) -> [0,1), used for dither noise.
+float DitherHash(float2 p)
+{
+    float3 p3 = frac(float3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return frac((p3.x + p3.y) * p3.z);
+}
+
+#if SM4
 PSOut SkyPS(VSOut input)
 {
+    float2 ditherPx = input.position.xy; // SV_Position in the PS holds pixel coords
+#else
+PSOut SkyPS(VSOut input, float2 ditherPx : VPOS)
+{
+#endif
     PSOut o;
     float4 c = tex2D(SkyTexSampler, input.texCoord);
     c.rgb *= Exposure;       // tame the sunrise/sunset bright band (LDR; eyes burn at 1.0)
     c.a *= Alpha;
+    // Kill 8-bit gradient banding: add triangular-PDF dither (~±1 LSB) before the framebuffer quantises the
+    // smooth sky gradient. Two hashes -> triangular distribution (the distortion-free ideal for 1-LSB dither).
+    float dth = (DitherHash(ditherPx) + DitherHash(ditherPx + 41.13) - 1.0) / 255.0;
+    c.rgb = saturate(c.rgb + dth);
     o.color = c;
     // depth = 1 (FAR): the sky is at infinity / background. velocity.a = 1 marks it valid.
     o.velocity = float4(ComputeVelocity(input.currClip, input.prevClip), 1.0, 1.0);

@@ -186,6 +186,10 @@ namespace FSO.Client.UI.Controls
 
         #region Scrollbar
 
+        // When true (default), hovering the listbox grabs keyboard focus. The UICombobox sets this false on
+        // its embedded list: the combobox manages focus itself, and the focus-steal-on-hover made the combobox
+        // see a FocusOut and snap its dropdown shut the moment the mouse touched a row.
+        public bool GrabFocusOnHover = true;
         private bool m_MouseOver = false;
 
         private int m_SelectedRow = -1;
@@ -325,7 +329,7 @@ namespace FSO.Client.UI.Controls
             {
                 case UIMouseEventType.MouseOver:
                     m_MouseOver = true;
-                    update.InputManager.SetFocus(this);
+                    if (GrabFocusOnHover) update.InputManager.SetFocus(this);
                     break;
 
                 case UIMouseEventType.MouseOut:

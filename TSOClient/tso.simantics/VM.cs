@@ -250,6 +250,8 @@ namespace FSO.SimAntics
 
         private int GameTickRate = 60;
         private int GameTickNum = 0;
+        private System.Diagnostics.Stopwatch _SimClock; // real-time clock for wall-clock sim pacing (see Update)
+        private double _SimFrameAccum;                   // accumulated 30Hz sim-frames pending a Tick
         public int SpeedMultiplier = 1;
         public int LastSpeedMultiplier;
         private int LastFrameSpeed = 1;
@@ -302,18 +304,27 @@ namespace FSO.SimAntics
                 LastFrameSpeed = SpeedMultiplier;
             }
 
+            // Wall-clock sim pacing: advance the sim at a fixed 30 sim-frames/sec (× speed) in REAL time,
+            // independent of the render frame rate AND of frame-to-frame jitter. The old approach counted
+            // render frames (GameTickNum/GameTickRate), which only stays smooth when frames are evenly spaced —
+            // true at 60Hz, but at high refresh the GPU can't always deliver the rate evenly, so the
+            // every-Nth-frame tick landed at uneven real-time intervals and the sim visibly stuttered. Fraction
+            // is the 0..1 progress toward the next sim frame, consumed by the render interpolation.
+            if (_SimClock == null) _SimClock = System.Diagnostics.Stopwatch.StartNew();
+            double dt = _SimClock.Elapsed.TotalSeconds;
+            _SimClock.Restart();
+            if (dt > 0.25) dt = 0.25; // clamp big hitches (load / alt-tab) so we don't tick a flood
+
             var mul = Math.Max(SpeedMultiplier, 1);
-            var oldFrame = (GameTickNum * 30 * mul) / GameTickRate;
-            GameTickNum++;
-            var newFrame = (GameTickNum * 30 * mul) / GameTickRate;
-            for (int i = 0; i < newFrame - oldFrame; i++)
+            _SimFrameAccum += dt * 30.0 * mul;
+            int ticks = (int)_SimFrameAccum;
+            for (int i = 0; i < ticks; i++)
             {
                 Tick();
                 if (SpeedMultiplier <= 0) break;
             }
-
-            Fraction = ((GameTickNum * 30 * SpeedMultiplier) - (newFrame * GameTickRate)) / (float)GameTickRate;
-            if (GameTickNum >= GameTickRate) GameTickNum = 0;
+            _SimFrameAccum -= ticks;
+            Fraction = (float)_SimFrameAccum;
         }
 
         public void PreDraw()

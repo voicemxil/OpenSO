@@ -328,6 +328,10 @@ namespace FSO.Common.Utils
         // Optional post-process resolve (FXAA/SMAA/FSR). Runs even when SSAA==1. null = disabled, in which
         // case DrawBackbuffer keeps the plain blit below, so there's zero behaviour change when AA is off.
         public static Action<GraphicsDevice, RenderTarget2D> PostProcessFunc;
+        // Optional temporal AA (TAA). Its OWN chain stage, applied AFTER the spatial post-AA (FXAA/SMAA)
+        // rather than in place of it — TAA temporally stabilizes the already edge-smoothed frame. Screen-res
+        // in/out (same slot timing as PostProcessFunc). null = off.
+        public static Action<GraphicsDevice, RenderTarget2D> TAAFunc;
         // Optional ambient-occlusion pass (GTAO). Sits BEFORE bloom in the chain so AO darkens crevices
         // before bloom adds highlights — the standard order. Reads the velocity buffer for depth + scene
         // color for the composite, writes scene*AO to the bound target. null = off.
@@ -355,18 +359,20 @@ namespace FSO.Common.Utils
             bool postOk = scale == 1f && (!WithOpacity || opacity >= 1f);
             bool doMotionBlur = MotionBlurFunc != null && postOk;
             bool doPost = PostProcessFunc != null && postOk;
+            bool doTAA = TAAFunc != null && postOk;
             bool doAO = AOFunc != null && AOTarget != null && AOTarget2 != null && AOHistoryA != null && AOHistoryB != null && VelocityTarget != null && postOk;
             bool doBloom = BloomFunc != null && ResolveTarget != null && ResolveTarget2 != null && postOk;
             bool doSharpen = SharpenFunc != null && ResolveTarget != null && ResolveTarget2 != null && postOk;
 
-            if (nonNative || doMotionBlur || doPost || doAO || doBloom || doSharpen)
+            if (nonNative || doMotionBlur || doPost || doTAA || doAO || doBloom || doSharpen)
             {
                 // Ordered resolve chain: scale-resolve (box/EASU) -> motion blur -> post-AA (FXAA/SMAA) ->
-                // sharpen (RCAS). Each stage samples the previous stage's result and draws full-screen;
-                // intermediates ping-pong between the two screen-res ResolveTargets, and the last active
-                // stage targets the screen.
+                // TAA -> AO -> bloom -> sharpen (RCAS). Each stage samples the previous stage's result and
+                // draws full-screen; intermediates ping-pong between the two screen-res ResolveTargets, and
+                // the last active stage targets the screen. TAA runs AFTER FXAA/SMAA (temporal pass over the
+                // spatially-AA'd frame), not in their place.
                 RenderTarget2D src = Backbuffer;
-                int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
+                int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + (doTAA ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
                 int pong = 0;
 
                 if (nonNative)
@@ -391,6 +397,14 @@ namespace FSO.Common.Utils
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
                     GD.SetRenderTarget(dst);
                     PostProcessFunc(GD, src);
+                    src = dst;
+                }
+                if (doTAA)
+                {
+                    remaining--;
+                    var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
+                    GD.SetRenderTarget(dst);
+                    TAAFunc(GD, src);
                     src = dst;
                 }
                 if (doAO)

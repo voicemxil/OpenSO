@@ -128,6 +128,11 @@ namespace FSO.Client.UI.Controls
             DropDownButton.Tooltip = null;
             MenuTextEdit.Mode = UITextEditMode.ReadOnly;
 
+            // The combobox owns focus while open (it drives keyboard nav + closes on focus-out). Stop the
+            // embedded list from grabbing focus on hover, which otherwise fired the combobox's FocusOut and
+            // closed the dropdown the instant the mouse moved over a row.
+            MenuListBox.GrabFocusOnHover = false;
+
             MenuListBox.AttachSlider(MenuSlider);
             MenuSlider.AttachButtons(MenuScrollUpButton, MenuScrollDownButton, 1f);
 

@@ -284,7 +284,9 @@ namespace FSO.Client.UI.Screens
 
         public override void Update(FSO.Common.Rendering.Framework.Model.UpdateState state)
         {
-            GameFacade.Game.IsFixedTimeStep = (vm == null || vm.Ready);
+            // Leave IsFixedTimeStep alone (false, set in TSOGame): render runs at the display refresh and the
+            // sim stays 30Hz via VM.GameTickRate. Forcing fixed-step here re-capped the sandbox to 60.
+            //GameFacade.Game.IsFixedTimeStep = (vm == null || vm.Ready);
 
             Visible = World?.Visible == true && World?.State.Cameras.HideUI == false;
             bool directControl = (World?.State.Cameras.ActiveCamera as CameraControllerFP)?.CaptureMouse == true;

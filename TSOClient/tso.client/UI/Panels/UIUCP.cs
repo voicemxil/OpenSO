@@ -464,8 +464,8 @@ namespace FSO.Client.UI.Panels
                     {
                         //if the zoom or rotation buttons are down, gradually change their values.
                         var cam = Game.vm.Context.World.State.Cameras.Camera3D;
-                        if (RotateClockwiseButton.IsDown || state.KeyboardState.IsKeyDown(Keys.OemPeriod)) cam.RotationX += 2f / FSOEnvironment.RefreshRate;
-                        if (RotateCounterClockwiseButton.IsDown || state.KeyboardState.IsKeyDown(Keys.OemComma)) cam.RotationX -= 2f / FSOEnvironment.RefreshRate;
+                        if (RotateClockwiseButton.IsDown || state.KeyboardState.IsKeyDown(Keys.OemPeriod)) cam.RotationX += 2f * FSOEnvironment.DeltaTime;
+                        if (RotateCounterClockwiseButton.IsDown || state.KeyboardState.IsKeyDown(Keys.OemComma)) cam.RotationX -= 2f * FSOEnvironment.DeltaTime;
                     }
                     else
                     {
@@ -474,8 +474,8 @@ namespace FSO.Client.UI.Panels
                     }
                     if (activeCamera.UseZoomHold)
                     {
-                        if (ZoomInButton.IsDown || (state.KeyboardState.IsKeyDown(Keys.OemPlus) && !state.CtrlDown)) Game.LotControl.TargetZoom = Math.Max(0.25f, Math.Min(Game.LotControl.TargetZoom + 1f / FSOEnvironment.RefreshRate, 2));
-                        if (ZoomOutButton.IsDown || (state.KeyboardState.IsKeyDown(Keys.OemMinus) && !state.CtrlDown)) Game.LotControl.TargetZoom = Math.Max(0.25f, Math.Min(Game.LotControl.TargetZoom - 1f / FSOEnvironment.RefreshRate, 2));
+                        if (ZoomInButton.IsDown || (state.KeyboardState.IsKeyDown(Keys.OemPlus) && !state.CtrlDown)) Game.LotControl.TargetZoom = Math.Max(0.25f, Math.Min(Game.LotControl.TargetZoom + FSOEnvironment.DeltaTime, 2));
+                        if (ZoomOutButton.IsDown || (state.KeyboardState.IsKeyDown(Keys.OemMinus) && !state.CtrlDown)) Game.LotControl.TargetZoom = Math.Max(0.25f, Math.Min(Game.LotControl.TargetZoom - FSOEnvironment.DeltaTime, 2));
                     }
                     else
                     {

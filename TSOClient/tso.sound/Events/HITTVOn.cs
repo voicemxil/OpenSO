@@ -235,7 +235,10 @@ namespace FSO.HIT.Events
     {
         public SoundEffectInstance Inst;
 
-        public float Volume { get => Inst.Volume; set => Inst.Volume = value; }
+        // Clamp 0..1: fade volumes are computed from RefreshRate (now the live, fluctuating display rate),
+        // so a frame-time transient can briefly push the value out of range — SoundEffectInstance.Volume
+        // throws on that. Clamping here keeps a transient from crashing the game.
+        public float Volume { get => Inst.Volume; set => Inst.Volume = (value < 0f) ? 0f : (value > 1f ? 1f : value); }
         public float Pan { get => Inst.Pan; set => Inst.Pan = value; }
 
         public SoundState State => Inst.State;

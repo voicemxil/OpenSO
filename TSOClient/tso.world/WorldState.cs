@@ -39,6 +39,7 @@ namespace FSO.LotView
         public ProjectDelegate ProjectTilePos;
         public float FramePerDraw;
         public int FramesSinceLastDraw;
+        private System.Diagnostics.Stopwatch _InterpClock; // real-time clock for wall-clock render interpolation
 
         private bool _DisableSmoothRotation;
         public bool DisableSmoothRotation
@@ -103,7 +104,15 @@ namespace FSO.LotView
 
         public void UpdateInterpolation()
         {
-            FramePerDraw = (30f * FramesSinceLastDraw * SimSpeed) / FSOEnvironment.RefreshRate;
+            // Time-based render interpolation: advance by REAL elapsed time, not a fixed amount per draw.
+            // Frame-counting (FramesSinceLastDraw / RefreshRate) stayed smooth only with evenly-spaced frames
+            // (true at 60Hz); at high refresh the GPU can't deliver the rate evenly, so each draw advanced the
+            // same sim-amount but was shown at an uneven real-time offset -> residual object/avatar stutter.
+            if (_InterpClock == null) _InterpClock = System.Diagnostics.Stopwatch.StartNew();
+            double dt = _InterpClock.Elapsed.TotalSeconds;
+            _InterpClock.Restart();
+            if (dt > 0.25) dt = 0.25; // clamp big hitches (load / alt-tab)
+            FramePerDraw = (float)(30.0 * dt * SimSpeed);
             FramesSinceLastDraw = 0;
         }
 

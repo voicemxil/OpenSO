@@ -22,6 +22,10 @@ namespace FSO.Common
         public static bool SoftwareKeyboard = false;
         public static bool NoSound = false;
         public static int RefreshRate = 60;
+        /// <summary>Real wall-clock seconds elapsed since the previous frame (set each frame in TSOGame.Update).
+        /// Use for framerate-independent animation: "X per second" = "X * DeltaTime per frame". Prefer this over
+        /// dividing by RefreshRate, which only holds when RefreshRate exactly equals the real, even frame rate.</summary>
+        public static float DeltaTime = 1f / 60f;
 
         /// <summary>
         /// True if 3D features are enabled (like smooth rotation + zoom). Loads some content with mipmaps and other things.

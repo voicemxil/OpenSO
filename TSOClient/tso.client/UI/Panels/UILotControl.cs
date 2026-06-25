@@ -992,9 +992,12 @@ namespace FSO.Client.UI.Panels
                 }
                 else if (TargetZoom < -0.25f)
                 {
-                    TargetZoom -= (TargetZoom - 0.25f) * (1f - (float)Math.Pow(0.975f, 60f / FSOEnvironment.RefreshRate));
+                    TargetZoom -= (TargetZoom - 0.25f) * (1f - (float)Math.Pow(0.975f, 60f * FSOEnvironment.DeltaTime));
                 }
-                s3d.Zoom3D += ((9.75f - (TargetZoom - 0.25f) * 5.7f) - s3d.Zoom3D) / 10;
+                // Framerate-independent zoom approach: was a fixed /10 (10% per frame), which converged faster
+                // at higher fps -> zoom speed scaled with the refresh rate. Drive it by real elapsed time so the
+                // zoom takes the same wall-clock time at 60 or 360 fps. 0.9 = the old per-frame retention (1-0.1).
+                s3d.Zoom3D += ((9.75f - (TargetZoom - 0.25f) * 5.7f) - s3d.Zoom3D) * (1f - (float)Math.Pow(0.9f, 60f * FSOEnvironment.DeltaTime));
 
             }
             else if (World.State.Cameras.ActiveType == LotView.Utils.Camera.CameraControllerType._2D)

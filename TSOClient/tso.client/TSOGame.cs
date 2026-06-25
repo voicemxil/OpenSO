@@ -249,7 +249,11 @@ namespace FSO.Client
             }
 
             this.IsMouseVisible = true;
-            this.IsFixedTimeStep = true;
+            // Decoupled render timing: false + VSync (set above) lets Draw run at the display's true refresh
+            // rate instead of a fixed 60. The SimAntics sim stays at 30Hz because VM.GameTickRate tracks the
+            // measured fps published as FSOEnvironment.RefreshRate (see the Draw override below). So the
+            // interpolated frame rate follows the monitor while game-logic speed is unchanged.
+            this.IsFixedTimeStep = false;
 
             WorldContent.Init(this.Services, Content.RootDirectory);
             DGRP3DMesh.InitRCWorkers();
@@ -384,6 +388,9 @@ namespace FSO.Client
         /// <param name="gameTime">Provides a snapshot of timing values.</param>
         protected override void Update(GameTime gameTime)
         {
+            // Real frame delta for framerate-independent animation. IsFixedTimeStep=false -> ElapsedGameTime is
+            // wall-clock; clamp so a hitch/alt-tab can't produce a huge step.
+            FSOEnvironment.DeltaTime = System.Math.Min(0.25f, System.Math.Max(1e-5f, (float)gameTime.ElapsedGameTime.TotalSeconds));
             GameThread.UpdateExecuting = true;
             DiscordRpcEngine.Update();
 
@@ -391,6 +398,36 @@ namespace FSO.Client
 
             base.Update(gameTime);
             GameThread.UpdateExecuting = false;
+        }
+
+        // --- Decoupled render-rate measurement ---------------------------------------------------------
+        // With IsFixedTimeStep=false + VSync, Draw is paced by the display's true refresh rate. Measure the
+        // achieved frame period and publish it as FSOEnvironment.RefreshRate; the SimAntics VM reads that each
+        // tick (GameTickRate) to hold the sim at 30Hz, so a faster render rate never speeds the game up. This
+        // is display-agnostic (works regardless of which monitor / virtual display the game ends up on).
+        private System.Diagnostics.Stopwatch _frameTimer;
+        private double _smoothedFrameMs = 1000.0 / 60.0;
+
+        protected override void Draw(GameTime gameTime)
+        {
+            base.Draw(gameTime);
+
+            if (_frameTimer == null) { _frameTimer = System.Diagnostics.Stopwatch.StartNew(); return; }
+            double ms = _frameTimer.Elapsed.TotalMilliseconds;
+            _frameTimer.Restart();
+            if (ms > 0.1 && ms < 1000.0) // ignore pauses/hitches; 0.1ms..1s is a sane per-frame range
+            {
+                _smoothedFrameMs = _smoothedFrameMs * 0.9 + ms * 0.1; // EMA, ~10-frame settle
+                int fps = System.Math.Max(10, System.Math.Min(360, (int)System.Math.Round(1000.0 / _smoothedFrameMs)));
+                // Publish RefreshRate only on a meaningful, sustained change. The VM derives BOTH its fixed
+                // 30Hz tick cadence and the interpolation Fraction from RefreshRate; rewriting it every frame
+                // makes GameTickRate wobble, so the networked sim ticks + interpolates irregularly -> visible
+                // stutter as the client reconciles with the server. A hysteresis band keeps it pinned while
+                // fps is steady (VSync at the display rate), and still tracks a real sustained change.
+                int cur = FSOEnvironment.RefreshRate;
+                if (System.Math.Abs(fps - cur) > System.Math.Max(3, cur / 12)) // ~8% band, min 3 Hz
+                    FSOEnvironment.RefreshRate = fps;
+            }
         }
     }
 }
