@@ -30,6 +30,10 @@ namespace FSO.Server.Api.Core
         public int SmtpPort { get; set; }
         public string SmtpPassword { get; set; }
         public string SmtpUser { get; set; }
+        // The "From" address on outgoing mail. Separate from SmtpUser because providers like Brevo use an
+        // account login for SMTP auth that is NOT the sender address (which must be a verified domain sender,
+        // e.g. noreply@openso.org). Falls back to SmtpUser when not configured.
+        public string SmtpFrom { get; set; }
 
         public bool SmtpEnabled { get; set;  }
         public bool UseProxy { get; set; }

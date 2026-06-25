@@ -49,14 +49,16 @@ namespace FSO.Server.Api.Core.Utils
                 try
                 {
                     MailMessage message = new MailMessage();
-                    message.From = new MailAddress(api.Config.SmtpUser, "FreeSO Staff");
+                    message.From = new MailAddress(api.Config.SmtpFrom ?? api.Config.SmtpUser, "OpenSO Staff");
                     message.To.Add(to);
                     message.Subject = subject;
                     message.IsBodyHtml = true;
                     message.Body = ComposeBody(strings);
 
                     SmtpClient client = new SmtpClient();
-                    client.UseDefaultCredentials = true;
+                    // MUST be false: when true, SmtpClient ignores the NetworkCredential set below and tries
+                    // the machine's default creds -> no SMTP auth, which providers like Brevo reject.
+                    client.UseDefaultCredentials = false;
 
                     client.Host = api.Config.SmtpHost;
                     client.Port = api.Config.SmtpPort;

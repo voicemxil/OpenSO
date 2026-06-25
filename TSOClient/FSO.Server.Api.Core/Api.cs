@@ -57,6 +57,8 @@ namespace FSO.Server.Api.Core
                 Config.SmtpUser = appSettings["smtpUser"];
                 Config.SmtpPassword = appSettings["smtpPassword"];
                 Config.SmtpPort = int.Parse(appSettings["smtpPort"]);
+                // Optional explicit sender address (e.g. noreply@openso.org); defaults to the auth login.
+                Config.SmtpFrom = appSettings["smtpFrom"] ?? appSettings["smtpUser"];
             }
 
             JWT = new JWTFactory(new JWTConfiguration()
