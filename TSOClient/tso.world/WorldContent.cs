@@ -57,6 +57,12 @@ namespace FSO.LotView
             // Sky dome shader with velocity output (replaces BasicEffect when velocity is active).
             try { SkyVelocity = ContentManager.Load<Effect>("Effects/SkyVelocity"); }
             catch { SkyVelocity = null; }
+            // Bloom (threshold + Kawase dual-filter + composite).
+            try { Bloom = ContentManager.Load<Effect>("Effects/Bloom"); }
+            catch { Bloom = null; }
+            // GTAO (slice-based ambient occlusion).
+            try { GTAO = ContentManager.Load<Effect>("Effects/GTAO"); }
+            catch { GTAO = null; }
             SpriteEffect = new Effects.SpriteEffect(ContentManager.Load<Effect>("Effects/SpriteEffects" + EffectSuffix));
             ParticleEffect = new LightMappedEffect(ContentManager.Load<Effect>("Effects/ParticleShader"));
             AvatarEffect = new LightMappedEffect(ContentManager.Load<Effect>("Effects/Vitaboy" + EffectSuffix));
@@ -104,6 +110,8 @@ namespace FSO.LotView
         public static Effect TAA;
         public static Effect VelocityViz;
         public static Effect SkyVelocity;
+        public static Effect Bloom;
+        public static Effect GTAO;
 
         // Load a PNG from ContentDir as a Texture2D. Returns null if missing/unreadable so the caller can
         // disable the dependent feature (matches the ParticleComponent/AbstractSkyDome pattern).

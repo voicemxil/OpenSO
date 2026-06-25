@@ -65,10 +65,10 @@ namespace FSO.Client.UI.Panels
         private bool InternalChange;
 
         // --- Anti-aliasing / resolution controls (merged in from the former separate dialog) ---
-        private UICombobox PresetCombo, MSAACombo, PostAACombo, TAACombo, VelocityDebugCombo, MotionBlurCombo;
-        private object[] _presetObjs, _msaaObjs, _postObjs, _taaObjs, _velDebugObjs, _mblurObjs;
-        private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider;
-        private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel;
+        private UICombobox PresetCombo, MSAACombo, PostAACombo, TAACombo, VelocityDebugCombo, MotionBlurCombo, BloomCombo, AOCombo;
+        private object[] _presetObjs, _msaaObjs, _postObjs, _taaObjs, _velDebugObjs, _mblurObjs, _bloomObjs, _aoObjs;
+        private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
+        private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
         private const float RENDER_SCALE_MIN = 0.5f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
         private const int PRESET_CUSTOM = 99;
@@ -85,7 +85,7 @@ namespace FSO.Client.UI.Panels
 
         public UIGraphicsOptionsDialog() : base(UIDialogStyle.OK, true)
         {
-            SetSize(920, 444); // widened + taller to host the anti-aliasing / resolution column on the right
+            SetSize(920, 672); // widened + taller to host the anti-aliasing / resolution column on the right
             var script = this.RenderScript("graphicspanel.uis");
 
             UIEffectsLabel.Caption = GameFacade.Strings.GetString("f103", "2");
@@ -451,6 +451,12 @@ namespace FSO.Client.UI.Panels
                 TAA = settings.TAA,
                 MotionBlur = settings.MotionBlur,
                 MotionBlurAmount = settings.MotionBlurAmount,
+                Bloom = settings.Bloom,
+                BloomThreshold = settings.BloomThreshold,
+                BloomIntensity = settings.BloomIntensity,
+                AO = settings.AO,
+                AORadius = settings.AORadius,
+                AOIntensity = settings.AOIntensity,
                 VelocityDebug = settings.VelocityDebug,
                 Sharpen = settings.Sharpen,
                 SharpenAmount = settings.SharpenAmount,
@@ -488,6 +494,15 @@ namespace FSO.Client.UI.Panels
             Add(header);
 
             // Added bottom-to-top so each combo's drop-down renders over the rows beneath it.
+            // Ambient occlusion (combo + AO radius/intensity rows) is HIDDEN for now — the AO path is
+            // disabled in World.cs (AOEnabled=false). Restore these three rows when re-enabling.
+
+            AddBloomIntensityRow("Bloom intensity", 468);
+            AddBloomThresholdRow("Bloom threshold", 430);
+            BloomCombo = AddRow("Bloom", 392,
+                new[] { "Off", "On" }, new[] { 0, 1 }, out _bloomObjs,
+                v => { GlobalSettings.Default.Bloom = v == 1; ApplyAndRefresh(true); });
+
             AddMotionBlurRow("Motion blur strength", 354);
 
             MotionBlurCombo = AddRow("Motion blur (3D)", 316,
@@ -665,6 +680,110 @@ namespace FSO.Client.UI.Panels
             if (MotionBlurLabel != null) MotionBlurLabel.Caption = amt.ToString("0.0#");
         }
 
+        // Bloom luminance threshold (0..1, LDR). Below this stays out of the bright-pass.
+        private void AddBloomThresholdRow(string label, int y)
+        {
+            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
+            DynamicOverlay.Add(lbl);
+            BloomThresholdSlider = new UISlider()
+            {
+                Orientation = 0, Texture = GetTexture(0x42500000001),
+                MinValue = 0f, MaxValue = 2f, AllowDecimals = true,
+                Position = new Vector2(AAX + 175, y + 8)
+            };
+            BloomThresholdSlider.SetSize(150f, 0f);
+            DynamicOverlay.Add(BloomThresholdSlider);
+            BloomThresholdLabel = new UILabel() { Caption = "0.8", Position = new Vector2(AAX + 335, y + 2) };
+            DynamicOverlay.Add(BloomThresholdLabel);
+            BloomThresholdSlider.OnChange += (elem) =>
+            {
+                if (InternalChange) return;
+                GlobalSettings.Default.BloomThreshold = (float)(System.Math.Round(BloomThresholdSlider.Value * 20.0) / 20.0);
+                ApplyAndRefresh(true);
+            };
+        }
+
+        // Bloom composite strength (0..2).
+        private void AddBloomIntensityRow(string label, int y)
+        {
+            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
+            DynamicOverlay.Add(lbl);
+            BloomIntensitySlider = new UISlider()
+            {
+                Orientation = 0, Texture = GetTexture(0x42500000001),
+                MinValue = 0f, MaxValue = 1f, AllowDecimals = true,
+                Position = new Vector2(AAX + 175, y + 8)
+            };
+            BloomIntensitySlider.SetSize(150f, 0f);
+            DynamicOverlay.Add(BloomIntensitySlider);
+            BloomIntensityLabel = new UILabel() { Caption = "0.6", Position = new Vector2(AAX + 335, y + 2) };
+            DynamicOverlay.Add(BloomIntensityLabel);
+            BloomIntensitySlider.OnChange += (elem) =>
+            {
+                if (InternalChange) return;
+                GlobalSettings.Default.BloomIntensity = (float)(System.Math.Round(BloomIntensitySlider.Value * 20.0) / 20.0);
+                ApplyAndRefresh(true);
+            };
+        }
+
+        private void SetBloomSliders(float threshold, float intensity)
+        {
+            if (BloomThresholdSlider != null) { BloomThresholdSlider.Value = threshold; if (BloomThresholdLabel != null) BloomThresholdLabel.Caption = threshold.ToString("0.0#"); }
+            if (BloomIntensitySlider != null) { BloomIntensitySlider.Value = intensity; if (BloomIntensityLabel != null) BloomIntensityLabel.Caption = intensity.ToString("0.0#"); }
+        }
+
+        // AO sample radius (0..2 world units).
+        private void AddAORadiusRow(string label, int y)
+        {
+            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
+            DynamicOverlay.Add(lbl);
+            AORadiusSlider = new UISlider()
+            {
+                Orientation = 0, Texture = GetTexture(0x42500000001),
+                MinValue = 0.05f, MaxValue = 2f, AllowDecimals = true,
+                Position = new Vector2(AAX + 175, y + 8)
+            };
+            AORadiusSlider.SetSize(150f, 0f);
+            DynamicOverlay.Add(AORadiusSlider);
+            AORadiusLabel = new UILabel() { Caption = "0.5", Position = new Vector2(AAX + 335, y + 2) };
+            DynamicOverlay.Add(AORadiusLabel);
+            AORadiusSlider.OnChange += (elem) =>
+            {
+                if (InternalChange) return;
+                GlobalSettings.Default.AORadius = (float)(System.Math.Round(AORadiusSlider.Value * 20.0) / 20.0);
+                ApplyAndRefresh(true);
+            };
+        }
+
+        // AO composite intensity (0..2).
+        private void AddAOIntensityRow(string label, int y)
+        {
+            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
+            DynamicOverlay.Add(lbl);
+            AOIntensitySlider = new UISlider()
+            {
+                Orientation = 0, Texture = GetTexture(0x42500000001),
+                MinValue = 0f, MaxValue = 2f, AllowDecimals = true,
+                Position = new Vector2(AAX + 175, y + 8)
+            };
+            AOIntensitySlider.SetSize(150f, 0f);
+            DynamicOverlay.Add(AOIntensitySlider);
+            AOIntensityLabel = new UILabel() { Caption = "1.0", Position = new Vector2(AAX + 335, y + 2) };
+            DynamicOverlay.Add(AOIntensityLabel);
+            AOIntensitySlider.OnChange += (elem) =>
+            {
+                if (InternalChange) return;
+                GlobalSettings.Default.AOIntensity = (float)(System.Math.Round(AOIntensitySlider.Value * 20.0) / 20.0);
+                ApplyAndRefresh(true);
+            };
+        }
+
+        private void SetAOSliders(float radius, float intensity)
+        {
+            if (AORadiusSlider != null) { AORadiusSlider.Value = radius; if (AORadiusLabel != null) AORadiusLabel.Caption = radius.ToString("0.0#"); }
+            if (AOIntensitySlider != null) { AOIntensitySlider.Value = intensity; if (AOIntensityLabel != null) AOIntensityLabel.Caption = intensity.ToString("0.0#"); }
+        }
+
         private void SelectValue(UICombobox combo, object[] objs, int value)
         {
             if (combo == null || objs == null) return;
@@ -714,6 +833,12 @@ namespace FSO.Client.UI.Panels
                 TAA = s.TAA,
                 MotionBlur = s.MotionBlur,
                 MotionBlurAmount = s.MotionBlurAmount,
+                Bloom = s.Bloom,
+                BloomThreshold = s.BloomThreshold,
+                BloomIntensity = s.BloomIntensity,
+                AO = s.AO,
+                AORadius = s.AORadius,
+                AOIntensity = s.AOIntensity,
                 VelocityDebug = s.VelocityDebug,
                 Sharpen = s.Sharpen,
                 SharpenAmount = s.SharpenAmount,
@@ -744,6 +869,9 @@ namespace FSO.Client.UI.Panels
             SelectValue(VelocityDebugCombo, _velDebugObjs, s.VelocityDebug ? 1 : 0);
             SelectValue(MotionBlurCombo, _mblurObjs, (s.MotionBlur == 2) ? 2 : 0);
             SetMotionBlurSlider(s.MotionBlurAmount);
+            SelectValue(BloomCombo, _bloomObjs, s.Bloom ? 1 : 0);
+            SetBloomSliders(s.BloomThreshold, s.BloomIntensity);
+            // AO combo + sliders hidden (AO path disabled); nothing to refresh.
             SetSharpenSlider(s.SharpenAmount);
             SelectValue(PresetCombo, _presetObjs, MatchPreset(s));
             InternalChange = false;

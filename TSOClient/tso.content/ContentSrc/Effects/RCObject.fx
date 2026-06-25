@@ -267,6 +267,7 @@ struct PSOutputV
 {
 	float4 color    : COLOR0;
 	float4 velocity : COLOR1;
+	float4 normal   : COLOR2;
 };
 
 VertexOutV vsRCV(VertexIn v)
@@ -299,10 +300,15 @@ float2 ComputeVelocity(float4 curr, float4 prev)
 	return clamp(v, -0.05, 0.05);
 }
 
-// Linear depth packed into velocity.b for the motion-blur reconstruction filter's depth-aware weighting.
-// 3D mode uses an orthographic projection, so clip.z/clip.w is LINEAR in view space — ideal for the
-// soft depth comparison. velocity.a stays the valid-velocity mask.
-float PackDepth(float4 clip) { return clip.z / max(clip.w, 1e-4); }
+// velocity.b = normalized LINEAR view distance (clip.w / farPlane), clamped to [0,1] (0=near .. 1=far).
+// The lot camera is perspective, so clip.w is the positive view-space distance and dividing by the
+// fixed far plane (BasicCamera.FarPlane = 800) makes this linear in world space. We deliberately do NOT
+// store clip.z/clip.w (NDC depth): NDC depth is non-linear/front-loaded, and a half-float only has
+// ~2^-10 relative precision, so mid-range NDC depth quantizes to ~0.3 world-units — which read as
+// horizontal depth banding in SSAO. Linear distance keeps precision ~ distance*2^-10 (~0.02u nearby).
+// Consumers (TAA velocity dilation, motion-blur soft-depth, AO) all assume .b is [0,1] near..far, which
+// this preserves. velocity.a stays the valid-velocity mask.
+float PackDepth(float4 clip) { return saturate(clip.w / 800.0); }
 
 PSOutputV psRCV(VertexOutV v)
 {
@@ -311,16 +317,20 @@ PSOutputV psRCV(VertexOutV v)
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
+	// World-space surface normal for screen-space AO. v.normal already includes the World transform.
+	o.normal = float4(normalize(v.normal), 1);
 	return o;
 }
 
 PSOutputV psDirRCV(VertexOutV v)
 {
 	PSOutputV o;
-	float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirection(v.modelPos, normalize(v.normal)));
+	float3 n = normalize(v.normal);
+	float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirection(v.modelPos, n));
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
+	o.normal = float4(n, 1);
 	return o;
 }
 
@@ -467,6 +477,9 @@ PSOutputV psWallRCV(WallVertexOutV v)
     if (color.a < 0.1) discard;
     o.color = color;
     o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
+    // Wall normal: walls are planar so reconstructing from world-pos derivatives is reliable here
+    // (no interior depth discontinuities). cross(dy, dx) gives the outward face normal.
+    o.normal = float4(normalize(cross(ddy(v.modelPos.xyz), ddx(v.modelPos.xyz))), 1);
     return o;
 }
 

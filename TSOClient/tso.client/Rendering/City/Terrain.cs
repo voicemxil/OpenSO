@@ -1846,7 +1846,7 @@ namespace FSO.Client.Rendering.City
                 var colorRT = (savedSurrRTs != null && savedSurrRTs.Length > 0)
                     ? (RenderTarget2D)savedSurrRTs[0].RenderTarget
                     : FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
-                gfx.SetRenderTargets(colorRT, velRT);
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gfx, colorRT, velRT);
             }
 
             if (SubdivGeometry.Ready != -1) SubdivGeometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, cityPass, cityPass);

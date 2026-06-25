@@ -793,7 +793,7 @@ struct GrassPSVTXv {
     float4 currClip : TEXCOORD4;
     float4 prevClip : TEXCOORD5;
 };
-struct GrassPSOutputV { float4 color : COLOR0; float4 velocity : COLOR1; };
+struct GrassPSOutputV { float4 color : COLOR0; float4 velocity : COLOR1; float4 normal : COLOR2; };
 
 GrassPSVTXv GrassVSv(GrassVTX input)
 {
@@ -889,8 +889,11 @@ GrassPSOutputV BasePS3DV(GrassPSVTXv input)
         color.a *= Alpha;
     }
     o.color = color;
-    // velocity.b = linear depth (ortho clip.z/clip.w) for the motion-blur reconstruction depth test.
-    o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), input.currClip.z / max(input.currClip.w, 1e-4), 1);
+    // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. Linear (not NDC clip.z/clip.w)
+    // so half-float depth precision stays ~distance*2^-10 — NDC banding broke SSAO. See RCObject.PackDepth.
+    o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), saturate(input.currClip.w / 800.0), 1);
+    // World-space normal for screen-space AO.
+    o.normal = float4(normalize(input.Normal), 1);
     return o;
 }
 
@@ -1105,7 +1108,9 @@ GrassPSOutputV BladesPS3DV(GrassPSVTXv input)
     color.a *= fade * fade;
     color.a *= Alpha;
     o.color = color;
-    o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), input.currClip.z / max(input.currClip.w, 1e-4), 1);
+    // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. See RCObject.PackDepth.
+    o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), saturate(input.currClip.w / 800.0), 1);
+    o.normal = float4(normalize(input.Normal), 1);
     return o;
 }
 

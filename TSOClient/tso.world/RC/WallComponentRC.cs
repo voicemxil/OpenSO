@@ -326,7 +326,7 @@ namespace FSO.LotView.RC
             if (useVelocity)
             {
                 savedRTs = gd.GetRenderTargets();
-                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velocityRT);
                 effect.ViewProjection = state.ViewProjection;
                 // For subworld neighbour-lot rendering, Cameras.ModelTranslation offsets the camera;
                 // state.ViewProjection already includes it but state.PreviousViewProjection doesn't.

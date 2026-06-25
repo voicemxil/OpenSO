@@ -9,6 +9,7 @@
 float4x4 MVP;        // current World * View * Projection (dome uses translation-zeroed view)
 float4x4 PrevMVP;    // previous frame's MVP — velocity comes from the delta (camera rotation)
 float    Alpha;      // dome alpha (weather fade), matches BasicEffect.Alpha
+float    Exposure;   // sky brightness scale (< 1 tames the eye-burning white sun-glow band at sunrise/set)
 
 texture SkyTex;
 sampler SkyTexSampler = sampler_state {
@@ -24,7 +25,7 @@ struct VSOut {
     float4 currClip : TEXCOORD1;
     float4 prevClip : TEXCOORD2;
 };
-struct PSOut { float4 color : COLOR0; float4 velocity : COLOR1; };
+struct PSOut { float4 color : COLOR0; float4 velocity : COLOR1; float4 normal : COLOR2; };
 
 VSOut SkyVS(VSIn input)
 {
@@ -50,10 +51,13 @@ PSOut SkyPS(VSOut input)
 {
     PSOut o;
     float4 c = tex2D(SkyTexSampler, input.texCoord);
+    c.rgb *= Exposure;       // tame the sunrise/sunset bright band (LDR; eyes burn at 1.0)
     c.a *= Alpha;
     o.color = c;
     // depth = 1 (FAR): the sky is at infinity / background. velocity.a = 1 marks it valid.
     o.velocity = float4(ComputeVelocity(input.currClip, input.prevClip), 1.0, 1.0);
+    // Sky has no meaningful normal; mark invalid (.a=0) so GTAO skips it (treats as no-geometry).
+    o.normal = float4(0, 1, 0, 0);
     return o;
 }
 

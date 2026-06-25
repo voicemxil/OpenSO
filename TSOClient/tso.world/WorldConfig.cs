@@ -59,6 +59,12 @@ namespace FSO.LotView
         public bool TAA = false;
         public int MotionBlur = 0;          //0=Off, 1=Camera (2D), 2=PerPixel (3D)
         public float MotionBlurAmount = 0.5f;
+        public bool Bloom = false;          //threshold bright-pass bloom (post-process)
+        public float BloomThreshold = 1.0f; //luminance bright-pass threshold (0..2, LDR so >1 means only specular/sky highlights bloom)
+        public float BloomIntensity = 0.5f; //composite strength (0..1, shader scales internally)
+        public bool AO = false;             //GTAO ambient occlusion (3D only)
+        public float AORadius = 0.5f;       //world-space sample radius
+        public float AOIntensity = 1.0f;    //AO multiplier in the composite (0..2)
         public bool VelocityDebug = false;  //diagnostic: visualize MRT1 velocity buffer to screen (3D only)
 
         public bool Directional = true;

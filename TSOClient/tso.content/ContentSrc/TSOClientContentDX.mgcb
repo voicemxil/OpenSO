@@ -122,6 +122,18 @@
 /processorParam:DebugMode=Auto
 /build:Effects/SkyVelocity.fx
 
+#begin Effects/Bloom.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/Bloom.fx
+
+#begin Effects/GTAO.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/GTAO.fx
+
 #begin Effects/ParticleShader.fx
 /importer:EffectImporter
 /processor:EffectProcessor

@@ -724,6 +724,14 @@ namespace FSO.LotView
                 _PrevTAAJitterNDC = Vector2.Zero;
             }
             State.Cameras.PreDraw(this);
+            // Snapshot the active 3D camera's projection params for GTAO's depth linearization.
+            // Falls through when no 3D camera (2D modes don't write velocity, so AO is gated off anyway).
+            var active3D = (State.Cameras.ActiveCamera as FSO.LotView.Utils.Camera.CameraController3D)?.Camera;
+            if (active3D != null && device != null)
+            {
+                float aspect = (device.Viewport.Height > 0) ? ((float)device.Viewport.Width / device.Viewport.Height) : 1f;
+                FSO.LotView.Utils.AOPass.SetCamera(active3D, aspect);
+            }
             BoundView();
             State._2D.PreciseZoom = State.PreciseZoom;
             State.OutsideColor = Blueprint.OutsideColor;
@@ -1165,6 +1173,25 @@ namespace FSO.LotView
             // Per-pixel motion blur consumer: reads color + velocity, samples N taps along velocity.
             bool motionBlur3D = wantVelocity && cfg.MotionBlur == 2 && WorldContent.MotionBlur != null && cfg.MotionBlurAmount > 0f;
             PPXDepthEngine.MotionBlurFunc = motionBlur3D ? PerPixelMotionBlur.Draw : null;
+
+            // Bloom: post-process, independent of velocity/3D. Enabled when on with a non-zero intensity
+            // and the shader is present.
+            bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
+            PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
+
+            // GTAO/SSAO: functional but DISABLED for now — the path and its UI are hidden until the grass
+            // (and other content) is ready for it. Flip AOEnabled to re-enable; the menu controls in
+            // UIGraphicsOptionsDialog must be restored alongside. Kept wired (not deleted) so it's a one-line
+            // re-enable.
+            const bool AOEnabled = false;
+            bool ao = AOEnabled && wantVelocity && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null;
+            PPXDepthEngine.AOFunc = ao ? Utils.AOPass.Draw : null;
+            // AO needs the velocity buffer too — force-enable it even when TAA/motion blur are off.
+            if (AOEnabled && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null && State.CameraMode == CameraRenderMode._3D)
+            {
+                PPXDepthEngine.EnableVelocityTarget(true);
+                PPXDepthEngine.AOFunc = Utils.AOPass.Draw;
+            }
 
             // Velocity diagnostic visualizer: when on, overrides the entire post chain in DrawBackbuffer
             // so the user sees the raw MRT1 buffer instead of the scene. Surfacing this lets us debug

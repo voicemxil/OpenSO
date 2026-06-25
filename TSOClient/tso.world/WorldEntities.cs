@@ -72,7 +72,7 @@ namespace FSO.LotView
             if (useVelocity)
             {
                 savedRTs = gd.GetRenderTargets();
-                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velocityRT);
                 effect.SetTechnique(RCObjectTechniques.DrawWithVelocity);
             }
             else
@@ -112,7 +112,7 @@ namespace FSO.LotView
             bool useVelocity = velocityRT != null;
             if (useVelocity)
             {
-                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velocityRT);
                 effect.CurrentTechnique = effect.Techniques[7]; //DrawWithVelocity, last technique in Vitaboy.fx
                 effect.Parameters["ViewProjection"]?.SetValue(state.View * state.Projection);
                 // Subworld ModelTranslation fix: state.View already has the translation, but
@@ -185,7 +185,7 @@ namespace FSO.LotView
             bool useVelocity = velocityRT != null;
             if (useVelocity)
             {
-                gd.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), velocityRT);
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velocityRT);
                 effect.SetTechnique(RCObjectTechniques.DrawWithVelocity);
             }
             else

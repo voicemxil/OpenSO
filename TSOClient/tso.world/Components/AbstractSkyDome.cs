@@ -222,7 +222,11 @@ namespace FSO.LotView.Components
             effect.LightingEnabled = false;
             effect.Texture = GradTex;
             effect.Alpha = (1 - (float)Math.Sqrt(wint) * 0.75f);
-            effect.DiffuseColor = Vector3.One;
+            // Sky exposure < 1 tames the eye-burning white band at sunrise/sunset (gradient texture is pre-
+            // baked with a 1.0 sun-glow band; in LDR that reads as solid white). Same value pushed to both
+            // the BasicEffect fallback and SkyVelocity for visual parity.
+            const float SkyExposure = 0.85f;
+            effect.DiffuseColor = new Vector3(SkyExposure);
             effect.AmbientLightColor = Vector3.One;
             //effect.DiffuseColor = new Vector3(Math.Min(1, color.X), Math.Min(1, color.Y), Math.Min(1, color.Z));
             //effect.AmbientLightColor = new Vector3(color.X, color.Y, color.Z);
@@ -250,10 +254,11 @@ namespace FSO.LotView.Components
             {
                 var domeMVP = Matrix.CreateScale(5f * scale) * view * projection;
                 var savedRTs = gd.GetRenderTargets();
-                gd.SetRenderTargets(PPXDepthEngine.GetBackbuffer(), velRT);
+                PPXDepthEngine.BindVelocityMRT(gd, velRT);
                 skyVel.Parameters["MVP"]?.SetValue(domeMVP);
                 skyVel.Parameters["PrevMVP"]?.SetValue(_prevSkyMVPValid ? _prevSkyMVP : domeMVP);
                 skyVel.Parameters["Alpha"]?.SetValue(1 - (float)Math.Sqrt(wint) * 0.75f);
+                skyVel.Parameters["Exposure"]?.SetValue(SkyExposure);
                 skyVel.Parameters["SkyTex"]?.SetValue(GradTex);
                 skyVel.CurrentTechnique = skyVel.Techniques["DrawSky"];
                 foreach (var pass in skyVel.CurrentTechnique.Passes)

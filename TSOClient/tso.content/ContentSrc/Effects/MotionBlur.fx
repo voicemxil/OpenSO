@@ -14,12 +14,12 @@
 //                      in front (depth test), so there's no symmetric double-streak and no ghost halo.
 //
 // Velocity buffer layout (HalfVector4, MRT1):  .rg = per-frame screen-space velocity (UV units),
-//   .b = linear depth (ortho clip.z/clip.w, 0 near .. 1 far), .a = valid-velocity mask (1 written).
+//   .b = NORMALIZED LINEAR view distance (clip.w / far=800), 0 near .. 1 far. .a = valid-velocity mask.
 // Unwritten pixels are cleared to (0,0,1,0): zero velocity, FAR depth, mask 0 — i.e. static far bg.
 
 #define TILEK 20          // tile size in velocity-buffer texels
 #define SAMPLES 15        // reconstruction taps along the dominant velocity
-#define SOFT_Z 0.05       // depth-compare softness in linear-NDC units (ortho)
+#define SOFT_Z 0.0125     // depth-compare softness in normalized-linear-depth units (~10 world units / far 800)
 #define HALF_PI 1.5707963
 
 float2 SourceTexel;       // 1 / velocity-buffer resolution      (TileMax)

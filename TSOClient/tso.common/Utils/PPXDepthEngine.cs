@@ -11,6 +11,9 @@ namespace FSO.Common.Utils
         private static RenderTarget2D ResolveTarget;  //screen-res intermediate for multi-pass resolves
         private static RenderTarget2D ResolveTarget2; //2nd ping-pong target (scale -> FXAA -> sharpen needs two)
         private static RenderTarget2D VelocityTarget; //3D-mode per-pixel screen-space velocity (HalfVector4), MRT1 for TAA / motion blur
+        // World-space normal (HalfVector4: .xyz normal, .a validity). MRT2, written by the same velocity-
+        // aware shaders. Required for GTAO — derived ddx/ddy normals from NDC depth were noisy garbage.
+        private static RenderTarget2D NormalTarget;
         // Motion-blur reconstruction-filter intermediates (McGuire 2012). Allocated alongside the velocity
         // target. TileMax reduces velocity to KxK tiles; NeighborMax dilates it 3x3 so fast streaks reach
         // neighbouring tiles. Both at velocity-res / MB_TILE_SIZE.
@@ -21,6 +24,24 @@ namespace FSO.Common.Utils
         private static SpriteBatch SB;
         public static float SSAA = 1f; //render scale: >1 supersample (downsample resolve), <1 upscale, 1 native
         public static int MSAA = 0;
+
+        // Bloom mip chain (half, quarter, ... of viewport res). HalfVector4 so blurred highlights don't
+        // clip while accumulating. Allocated in InitScreenTargets, used by BloomPass.
+        public const int BLOOM_MIPS = 5;
+        private static RenderTarget2D[] BloomMip;
+        public static RenderTarget2D GetBloomMip(int i) => (BloomMip != null && i < BloomMip.Length) ? BloomMip[i] : null;
+        public static int BloomMipCount => (BloomMip != null) ? BloomMip.Length : 0;
+
+        // GTAO: noisy single-frame AO buffer + a filter pong (cross-bilateral blur destination) + a
+        // temporal history ping-pong. SurfaceFormat.Color (R8 isn't universal).
+        private static RenderTarget2D AOTarget, AOTarget2;
+        private static RenderTarget2D AOHistoryA, AOHistoryB;
+        private static bool _AOHistoryAIsPrev;
+        public static RenderTarget2D GetAOTarget() => AOTarget;
+        public static RenderTarget2D GetAOTarget2() => AOTarget2;
+        public static RenderTarget2D GetAOHistoryPrev() => _AOHistoryAIsPrev ? AOHistoryA : AOHistoryB;
+        public static RenderTarget2D GetAOHistoryCurr() => _AOHistoryAIsPrev ? AOHistoryB : AOHistoryA;
+        public static void SwapAOHistory() { _AOHistoryAIsPrev = !_AOHistoryAIsPrev; }
 
         public static void InitGD(GraphicsDevice gd)
         {
@@ -48,6 +69,29 @@ namespace FSO.Common.Utils
             if (ResolveTarget2 != null) ResolveTarget2.Dispose();
             ResolveTarget2 = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
 
+            // Bloom mip chain: half, quarter, ... of viewport res. HalfVector4 keeps highlights from clipping.
+            if (BloomMip != null) foreach (var m in BloomMip) m?.Dispose();
+            BloomMip = new RenderTarget2D[BLOOM_MIPS];
+            for (int i = 0; i < BLOOM_MIPS; i++)
+            {
+                int mw = System.Math.Max(1, rw >> (i + 1));
+                int mh = System.Math.Max(1, rh >> (i + 1));
+                BloomMip[i] = new RenderTarget2D(GD, mw, mh, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            }
+
+            // GTAO targets: SurfaceFormat.Color (R8 isn't universal). Four screen-res targets — noisy AO,
+            // depth-aware spatial blur, and a temporal history ping-pong (absorbs the per-frame variation
+            // from TAA-jittered depth/normals so AO doesn't flicker).
+            AOTarget?.Dispose();
+            AOTarget2?.Dispose();
+            AOHistoryA?.Dispose();
+            AOHistoryB?.Dispose();
+            AOTarget = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            AOTarget2 = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            AOHistoryA = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            AOHistoryB = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            _AOHistoryAIsPrev = true;
+
             // Per-pixel screen-space velocity for TAA / motion blur. Only meaningful in 3D mode (the 2D path
             // is cached sprites with no per-object motion). HalfVector4: 2 channels for velocity is enough,
             // but the format gives float precision needed for reprojection accuracy. Allocated lazily by
@@ -65,6 +109,7 @@ namespace FSO.Common.Utils
             if (!enable)
             {
                 if (VelocityTarget != null) { VelocityTarget.Dispose(); VelocityTarget = null; }
+                if (NormalTarget != null) { NormalTarget.Dispose(); NormalTarget = null; }
                 if (MBTileMax != null) { MBTileMax.Dispose(); MBTileMax = null; }
                 if (MBNeighborMax != null) { MBNeighborMax.Dispose(); MBNeighborMax = null; }
                 return null;
@@ -73,7 +118,14 @@ namespace FSO.Common.Utils
             if (VelocityTarget == null || VelocityTarget.Width != Backbuffer.Width || VelocityTarget.Height != Backbuffer.Height)
             {
                 VelocityTarget?.Dispose();
-                VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
+                // Vector4 (full 32-bit float per channel), NOT HalfVector4: the .b channel stores linear view
+                // depth for the SSAO, and 16-bit half only has ~10 mantissa bits -> the depth quantizes to
+                // visible steps that the AO depth-compare turns into banding/false occlusion. 32-bit float is
+                // the proper deferred-depth precision (MonoGame can't bind the hardware depth buffer as a
+                // texture, so linear depth lives in a colour target). .rg velocity also benefits.
+                VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.Vector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
+                NormalTarget?.Dispose();
+                NormalTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 // Tile targets: ceil(res / K). Reallocated here whenever the velocity target is (re)sized.
                 int tw = System.Math.Max(1, (Backbuffer.Width + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
                 int th = System.Math.Max(1, (Backbuffer.Height + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
@@ -86,7 +138,23 @@ namespace FSO.Common.Utils
         }
 
         public static RenderTarget2D GetVelocityTarget() => VelocityTarget;
+        public static RenderTarget2D GetNormalTarget() => NormalTarget;
         public static RenderTarget2D GetMBTileMax() => MBTileMax;
+
+        /// <summary>
+        /// Bind the backbuffer + velocity MRT (+ normal MRT if allocated) as MRTs for velocity-aware
+        /// draws. All velocity-aware shaders write COLOR2 normal, so when the normal target exists it
+        /// must be bound or the GPU writes garbage to MRT2.
+        /// </summary>
+        public static void BindVelocityMRT(GraphicsDevice gd, RenderTarget2D velocityRT)
+        {
+            BindVelocityMRT(gd, Backbuffer, velocityRT);
+        }
+        public static void BindVelocityMRT(GraphicsDevice gd, RenderTarget2D colorRT, RenderTarget2D velocityRT)
+        {
+            if (NormalTarget != null) gd.SetRenderTargets(colorRT, velocityRT, NormalTarget);
+            else gd.SetRenderTargets(colorRT, velocityRT);
+        }
         public static RenderTarget2D GetMBNeighborMax() => MBNeighborMax;
 
         // TAA history ping-pong. Each frame TAA reads from "prev" and writes to "curr", then SwapHistory
@@ -161,6 +229,12 @@ namespace FSO.Common.Utils
                     // 0 — a 0 (near) clear would make the motion-blur depth test treat the empty background
                     // as foreground in front of moving objects and break the silhouette weighting.
                     gd.Clear(new Color(0f, 0f, 1f, 0f));
+                    if (NormalTarget != null)
+                    {
+                        gd.SetRenderTarget(NormalTarget);
+                        // Up-vector default + invalid mask. GTAO treats alpha<0.5 as no-geometry.
+                        gd.Clear(new Color(0.5f, 1f, 0.5f, 0f));
+                    }
                     gd.SetRenderTarget(color);
                 }
             }
@@ -254,6 +328,13 @@ namespace FSO.Common.Utils
         // Optional post-process resolve (FXAA/SMAA/FSR). Runs even when SSAA==1. null = disabled, in which
         // case DrawBackbuffer keeps the plain blit below, so there's zero behaviour change when AA is off.
         public static Action<GraphicsDevice, RenderTarget2D> PostProcessFunc;
+        // Optional ambient-occlusion pass (GTAO). Sits BEFORE bloom in the chain so AO darkens crevices
+        // before bloom adds highlights — the standard order. Reads the velocity buffer for depth + scene
+        // color for the composite, writes scene*AO to the bound target. null = off.
+        public static Action<GraphicsDevice, RenderTarget2D> AOFunc;
+        // Optional bloom pass. Reads the current chain color, blooms it into its own mip chain, composites
+        // scene+bloom to the bound target. Sits after post-AA (blooms the AA'd image), before sharpen. null = off.
+        public static Action<GraphicsDevice, RenderTarget2D> BloomFunc;
         // Optional final sharpening pass (FSR RCAS). Reads the resolved frame and writes the screen. null = off.
         public static Action<GraphicsDevice, Texture2D> SharpenFunc;
         public static bool WithOpacity = true;
@@ -274,16 +355,18 @@ namespace FSO.Common.Utils
             bool postOk = scale == 1f && (!WithOpacity || opacity >= 1f);
             bool doMotionBlur = MotionBlurFunc != null && postOk;
             bool doPost = PostProcessFunc != null && postOk;
+            bool doAO = AOFunc != null && AOTarget != null && AOTarget2 != null && AOHistoryA != null && AOHistoryB != null && VelocityTarget != null && postOk;
+            bool doBloom = BloomFunc != null && ResolveTarget != null && ResolveTarget2 != null && postOk;
             bool doSharpen = SharpenFunc != null && ResolveTarget != null && ResolveTarget2 != null && postOk;
 
-            if (nonNative || doMotionBlur || doPost || doSharpen)
+            if (nonNative || doMotionBlur || doPost || doAO || doBloom || doSharpen)
             {
                 // Ordered resolve chain: scale-resolve (box/EASU) -> motion blur -> post-AA (FXAA/SMAA) ->
                 // sharpen (RCAS). Each stage samples the previous stage's result and draws full-screen;
                 // intermediates ping-pong between the two screen-res ResolveTargets, and the last active
                 // stage targets the screen.
                 RenderTarget2D src = Backbuffer;
-                int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + (doSharpen ? 1 : 0);
+                int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
                 int pong = 0;
 
                 if (nonNative)
@@ -308,6 +391,22 @@ namespace FSO.Common.Utils
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
                     GD.SetRenderTarget(dst);
                     PostProcessFunc(GD, src);
+                    src = dst;
+                }
+                if (doAO)
+                {
+                    remaining--;
+                    var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
+                    GD.SetRenderTarget(dst);
+                    AOFunc(GD, src); // GTAO -> blur -> composite scene*ao to dst
+                    src = dst;
+                }
+                if (doBloom)
+                {
+                    remaining--;
+                    var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
+                    GD.SetRenderTarget(dst);
+                    BloomFunc(GD, src); // blooms into its own mips, then composites scene+bloom to dst
                     src = dst;
                 }
                 if (doSharpen)

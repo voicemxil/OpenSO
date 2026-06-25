@@ -458,6 +458,7 @@ struct PSOutputV
 {
     float4 color    : COLOR0;
     float4 velocity : COLOR1;
+    float4 normal   : COLOR2;
 };
 VitaVertexOutV vsVitaboyV(VitaVertexIn v)
 {
@@ -499,8 +500,11 @@ PSOutputV psVitaboyV(VitaVertexOutV v)
     float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcess(v.modelPos) * AmbientLight);
     color.rgb *= pow((dot(normalize(v.normal), float3(0, 1, 0)) + 1) / 2, 0.5)*0.5 + 0.5f;
     o.color = color;
-    // velocity.b = linear depth (ortho clip.z/clip.w) for the motion-blur reconstruction depth test.
-    o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), v.currClip.z / max(v.currClip.w, 1e-4), 1);
+    // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. Linear (not NDC clip.z/clip.w)
+    // so half-float depth precision stays ~distance*2^-10 — NDC banding broke SSAO. See RCObject.PackDepth.
+    o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
+    // World-space normal for screen-space AO. v.normal already transformed by World in the VS.
+    o.normal = float4(normalize(v.normal), 1);
     return o;
 }
 technique DrawWithVelocity

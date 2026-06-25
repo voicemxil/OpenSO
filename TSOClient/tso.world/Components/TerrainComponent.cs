@@ -447,7 +447,11 @@ namespace FSO.LotView.Components
             Effect.ScreenSize = new Vector2(device.Viewport.Width, device.Viewport.Height) / world.PreciseZoom;
             Effect.TerrainNoise = TextureGenerator.GetTerrainNoise(device);
             Effect.TerrainNoiseMip = TextureGenerator.GetTerrainNoise(device);
-            Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width/1920f);
+            // GrassFadeMul scales the blade LOD fade distance (blades gone at ~100*GrassFadeMul). The 2.5x
+            // pushes the 3D blades much further out so they stay in the velocity/normal/depth buffer (and
+            // thus get AO + TAA) at mid distance instead of LOD-ing out to flat blade-coloured ground. Costs
+            // fill rate (~distance^2 more blade pixels) — accepted for quality.
+            Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width/1920f) * 2.5f;
 
             Effect.FadeRectangle = new Vector4(FadeDistance / 2f + SubworldOff.X, FadeDistance / 2f + SubworldOff.Y, FadeDistance, FadeDistance);
             Effect.FadeWidth = 35f*3;
@@ -514,7 +518,7 @@ namespace FSO.LotView.Components
             {
                 savedRTs = device.GetRenderTargets();
                 savedBlend = device.BlendState;
-                device.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), terrainVelocityRT);
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(device, terrainVelocityRT);
                 device.BlendState = BlendState.Opaque;
                 Effect.ViewProjection = view * world.Projection;
                 // Subworld neighbour-lot rendering sets Cameras.ModelTranslation to offset the camera
@@ -598,7 +602,7 @@ namespace FSO.LotView.Components
                     {
                         // Bind velocity MRT for shell velocity output. NonPremultiplied blend still
                         // overwrites MRT1 cleanly because velocity.a=1 (the RT uses its own src alpha).
-                        device.SetRenderTargets(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer(), terrainVelocityRT);
+                        FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(device, terrainVelocityRT);
                     }
                     else if (rts.Length > 1)
                     {
@@ -829,7 +833,7 @@ namespace FSO.LotView.Components
             Effect.ScreenSize = new Vector2(device.Viewport.Width, device.Viewport.Height) / world.PreciseZoom;
             Effect.TerrainNoise = TextureGenerator.GetTerrainNoise(device);
             Effect.TerrainNoiseMip = TextureGenerator.GetTerrainNoise(device);
-            Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width / 1920f);
+            Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width / 1920f) * 2.5f; // 2.5x blade LOD distance (see other GrassFadeMul site)
 
             Effect.FadeRectangle = new Vector4(FadeDistance / 2f + SubworldOff.X, FadeDistance / 2f + SubworldOff.Y, FadeDistance, FadeDistance);
             Effect.FadeWidth = 35f * 3;

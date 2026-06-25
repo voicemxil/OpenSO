@@ -323,7 +323,7 @@ struct ObjVertexOutV
 	float4 currClip : TEXCOORD4;
 	float4 prevClip : TEXCOORD5;
 };
-struct CityPSOutV { float4 color : COLOR0; float4 velocity : COLOR1; };
+struct CityPSOutV { float4 color : COLOR0; float4 velocity : COLOR1; float4 normal : COLOR2; };
 
 float2 CityComputeVel(float4 curr, float4 prev)
 {
@@ -344,7 +344,10 @@ CityPSOutV CityObjPSFogV(ObjVertexOutV Input)
 	float4 c = float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz*lerp(ShadowMult, 1, diffuse), 1)).rgb, BCol.a);
 	c.xyz = lerp(c.xyz, FogColor.xyz, fogDistance);
 	o.color = c;
-	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), Input.currClip.z / max(Input.currClip.w, 1e-4), 1);
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	// World-space normal for screen-space AO. Trees use a hardcoded up-vector in the VS (TreeVSv) so this
+	// is the billboard normal; ordinary city objects use their geometric normal.
+	o.normal = float4(normalize(Input.normal), 1);
 	return o;
 }
 
@@ -490,7 +493,8 @@ CityPSOutV NCityPSFogV(CityVertexOutV Input)
 	float4 BCol = GetNCityColor(b);
 	BCol = float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz * lerp(ShadowMult, 1, Diffuse(b)), 1)).rgb, BCol.w);
 	o.color = Fog(BCol, b);
-	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), Input.currClip.z / max(Input.currClip.w, 1e-4), 1);
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	o.normal = float4(normalize(Input.NormalTrans.xyz), 1);
 	return o;
 }
 
@@ -696,7 +700,8 @@ CityPSOutV WCityPSFogV(CityVertexOutV Input)
 	float4 BCol = GetWCityColor(b);
 	BCol = float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz * lerp(ShadowMult, 1, Diffuse(b)), 1)).rgb, BCol.w);
 	o.color = Fog(BCol, b);
-	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), Input.currClip.z / max(Input.currClip.w, 1e-4), 1);
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	o.normal = float4(normalize(Input.NormalTrans.xyz), 1);
 	return o;
 }
 
