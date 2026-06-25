@@ -21,6 +21,32 @@ namespace FSO.Server.Api.Core.Controllers
     {
         private const int REGISTER_THROTTLE_SECS = 60;
         private const int EMAIL_CONFIRMATION_EXPIRE = 2 * 60 * 60; // 2 hrs
+        private const int RESEND_COOLDOWN_SECS = 60;            // min seconds between (re)sends of a code for one address
+        private const int CONFIRM_MAX_FAILS = 8;                // wrong-code tries per IP per window before lockout
+        private const int CONFIRM_FAIL_WINDOW = 10 * 60;        // 10 minutes
+
+        // Per-IP wrong-code attempt tracker (in memory; lost on restart, which is fine — codes expire anyway).
+        // Throttles brute-forcing the small 6-digit code space.
+        private static readonly object ConfirmLock = new object();
+        private static readonly System.Collections.Generic.Dictionary<string, (int count, uint window)> ConfirmFails
+            = new System.Collections.Generic.Dictionary<string, (int, uint)>();
+
+        private static bool IsConfirmLocked(string ip)
+        {
+            lock (ConfirmLock)
+                return ConfirmFails.TryGetValue(ip, out var e) && Epoch.Now - e.window <= CONFIRM_FAIL_WINDOW && e.count >= CONFIRM_MAX_FAILS;
+        }
+        private static void RecordConfirmFail(string ip)
+        {
+            lock (ConfirmLock)
+            {
+                var now = Epoch.Now;
+                if (ConfirmFails.TryGetValue(ip, out var e) && now - e.window <= CONFIRM_FAIL_WINDOW)
+                    ConfirmFails[ip] = (e.count + 1, e.window);
+                else
+                    ConfirmFails[ip] = (1, now);
+            }
+        }
 
         /// <summary>
         /// Alphanumeric (lowercase), no whitespace or special chars, cannot start with an underscore.
@@ -183,14 +209,21 @@ namespace FSO.Server.Api.Core.Controllers
 
                 EmailConfirmation confirm = da.EmailConfirmations.GetByEmail(model.email, ConfirmationType.email);
 
-                // already waiting for confirmation
-                if(confirm!=null)
+                // Already a pending confirmation for this email: resend (gated by a cooldown) rather than
+                // refusing, so the in-client "resend code" and website retry buttons work. Past the cooldown
+                // we invalidate the old code and issue a fresh one below.
+                if (confirm != null)
                 {
-                    return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
+                    var created = confirm.expires - (uint)EMAIL_CONFIRMATION_EXPIRE;
+                    if (Epoch.Now - created < RESEND_COOLDOWN_SECS)
                     {
-                        error = "registration_failed",
-                        error_description = "confirmation_pending"
-                    });
+                        return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
+                        {
+                            error = "registration_failed",
+                            error_description = "resend_cooldown"
+                        });
+                    }
+                    da.EmailConfirmations.Remove(confirm.token);
                 }
 
                 uint expires = Epoch.Now + EMAIL_CONFIRMATION_EXPIRE;
@@ -244,18 +277,29 @@ namespace FSO.Server.Api.Core.Controllers
 
             using (var da = api.DAFactory.Get())
             {
+                var ip = ApiUtils.GetIP(Request);
+
+                // Throttle brute-forcing the 6-digit code: reject once an IP racks up too many wrong codes.
+                if (IsConfirmLocked(ip))
+                {
+                    return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
+                    {
+                        error = "registration_failed",
+                        error_description = "too_many_attempts"
+                    });
+                }
+
                 EmailConfirmation confirmation = da.EmailConfirmations.GetByToken(user.token);
 
                 if(confirmation == null)
                 {
+                    RecordConfirmFail(ip);
                     return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
                     {
                         error = "registration_failed",
                         error_description = "invalid_token"
                     });
                 }
-
-                var ip = ApiUtils.GetIP(Request);
 
                 user.username = user.username ?? "";
                 user.username = user.username.ToLowerInvariant();

@@ -169,6 +169,7 @@ namespace FSO.Server.Api.Core
 
             confirmation_url = confirmation_url.Replace("%token%", token);
             confirmMail.AddString("token", token);
+            confirmMail.AddString("code", token); // the token IS the 6-digit code (shown for in-client registration)
             confirmMail.AddString("expires", Epoch.HMSRemaining(expires));
             confirmMail.AddString("confirmation_url", confirmation_url);
 
