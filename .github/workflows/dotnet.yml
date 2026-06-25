@@ -1,43 +1,58 @@
-name: Build FreeSO
+name: Build OpenSO
+
+# Per-push CI: verify the client and server compile + publish on EVERY supported platform — the same
+# matrix the release pipeline (release.yml) ships — so cross-platform breakage is caught on every push,
+# not just at release time. Uploads the builds as artifacts for manual testing; does NOT cut a release
+# (that's release.yml, triggered by a dev-N tag).
 
 on:
   push:
     branches: [ "**" ]
   pull_request:
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 jobs:
-
-  build:
-
+  # Client: Windows = FSO.IDE (its output contains the full FreeSO.exe client); the other platforms =
+  # FSO.Unix. All four are the supported client targets.
+  build-client:
     strategy:
+      fail-fast: false
       matrix:
-        configuration: [Release]
-
-    runs-on: windows-latest  # For a list of available runner types, refer to
-                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
-
+        include:
+          - { os: windows-latest, project: TSOClient/FSO.IDE,  rid: win-x64,   asset: OpenSO-client-win-x64 }
+          - { os: ubuntu-latest,  project: TSOClient/FSO.Unix, rid: linux-x64, asset: OpenSO-client-linux-x64 }
+          - { os: macos-latest,   project: TSOClient/FSO.Unix, rid: osx-x64,   asset: OpenSO-client-osx-x64 }
+          - { os: macos-latest,   project: TSOClient/FSO.Unix, rid: osx-arm64, asset: OpenSO-client-osx-arm64 }
+    runs-on: ${{ matrix.os }}
     steps:
-    - name: Checkout
-      uses: actions/checkout@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+      - name: Publish client
+        run: dotnet publish ${{ matrix.project }} -c Release -r ${{ matrix.rid }} --self-contained -o Artifacts/Client
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: Artifacts/Client
 
-    # Install the .NET Core workload
-    - name: Install .NET Core
-      uses: actions/setup-dotnet@v5
-      with:
-        dotnet-version: 9.0.x
-
-    - run: dotnet publish TSOClient/FSO.IDE -c Release -r win-x64 --self-contained -o Artifacts/Client
-    - run: dotnet publish TSOClient/FSO.Server.Core -c Release -r win-x64 --self-contained -o Artifacts/Server
-
-    - name: Upload client artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: FreeSOClient
-        path: Artifacts/Client
-
-    - name: Upload server artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: FreeSOServer
-        path: Artifacts/Server
+  # Server: FSO.Server.Core supports win-x64 + linux-x64 (linux-x64 is the docker/Hetzner deploy target).
+  build-server:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,  rid: linux-x64 }
+          - { os: windows-latest, rid: win-x64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+      - name: Publish server
+        run: dotnet publish TSOClient/FSO.Server.Core -c Release -r ${{ matrix.rid }} --self-contained -o Artifacts/Server
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSO-server-${{ matrix.rid }}
+          path: Artifacts/Server
