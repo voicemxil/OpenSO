@@ -91,7 +91,9 @@ namespace FSO.Client
         /// </summary>
         public void ShowLogin()
         {
-            InitializeArchive();
+            // OpenSO boots to the normal login screen. Archive mode (FreeSO's post-shutdown data-export
+            // tool) is no longer the default; self-hosting a private server stays available as an option.
+            ShowServerLogin();
         }
 
         public void ShowServerLogin()

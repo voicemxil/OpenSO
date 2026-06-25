@@ -162,7 +162,10 @@ namespace FSO.Common
             return new ArchiveConfiguration()
             {
                 Flags = (ArchiveConfigFlags)Flags,
-                ArchiveDataDirectory = "",
+                // Default the private-server data directory (NFS: lots/objects/sqlite db) to a valid path so
+                // the embedded server can't crash on Directory.CreateDirectory(""). The create-server UI may
+                // override this with a user-chosen folder.
+                ArchiveDataDirectory = Path.Combine(FSOEnvironment.UserDir, "PrivateServer"),
                 CityPort = CityPort,
                 LotPort = LotPort,
                 GameScale = GameScale,
