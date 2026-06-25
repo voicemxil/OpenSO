@@ -1,0 +1,140 @@
+name: Release OpenSO
+
+# Publishes a GitHub Release with downloadable client + server builds.
+# The OpenSO Launcher fetches the latest release and picks the asset whose name contains "client".
+#
+# Release naming: OpenSO versions are "dev-N" (branch "dev", incrementing integer). The git tag, the
+# GitHub Release name, and the version.txt baked INTO the build are all the same string — because at
+# login the client/server compare their version.txt against the server's advertised "<branch>-<version>"
+# to decide whether to auto-update. FreeSO's base build shipped as dev-0, so the first OpenSO release
+# is dev-1, then dev-2, ...
+#
+# Trigger by pushing a version tag, e.g.:
+#   git tag dev-1 && git push origin dev-1
+# or run it manually from the Actions tab (workflow_dispatch), supplying the version.
+
+on:
+  push:
+    tags: [ "dev-*" ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. dev-1). Used when run manually."
+        required: false
+        default: "dev-0"
+
+permissions:
+  contents: write   # required to create the GitHub Release
+
+jobs:
+  # ---- Client builds. The Windows client is FSO.IDE (net9.0-windows) — the same project the
+  #      original "Build FreeSO" CI published; it references FSO.Windows so its output folder
+  #      contains the full client (FreeSO.exe) plus the IDE/JIT tooling. The cross-platform client
+  #      is FSO.Unix (net9.0), which also produces FreeSO.exe. The launcher downloads the asset whose
+  #      name contains "client" and runs FreeSO.exe.
+  build-client:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            project: TSOClient/FSO.IDE
+            rid: win-x64
+            asset: OpenSO-client-win-x64
+          - os: ubuntu-latest
+            project: TSOClient/FSO.Unix
+            rid: linux-x64
+            asset: OpenSO-client-linux-x64
+          - os: macos-latest
+            project: TSOClient/FSO.Unix
+            rid: osx-x64
+            asset: OpenSO-client-osx-x64
+          - os: macos-latest
+            project: TSOClient/FSO.Unix
+            rid: osx-arm64
+            asset: OpenSO-client-osx-arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Publish client
+        run: dotnet publish ${{ matrix.project }} -c Release -r ${{ matrix.rid }} --self-contained -o publish
+
+      - name: Stamp version.txt
+        shell: bash
+        run: |
+          # The build copies tso.common/version.txt (dev-0 placeholder) into the output. Overwrite it with
+          # the release version so the client's GetClientVersion() reports the real version and the login
+          # update-check works. Also stamp the macOS .app bundle's copy if present.
+          if [ "${{ github.ref_type }}" = "tag" ]; then VERSION="${GITHUB_REF_NAME}"; else VERSION="${{ github.event.inputs.version }}"; fi
+          echo "Stamping version: $VERSION"
+          printf '%s\n' "$VERSION" > publish/version.txt
+          if [ -f "publish/FreeSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/FreeSO.app/Contents/MacOS/version.txt"; fi
+
+      - name: Package + checksum
+        shell: bash
+        run: |
+          mkdir -p dist
+          ( cd publish && zip -r "../dist/${{ matrix.asset }}.zip" . )
+          ( cd dist && shasum -a 256 "${{ matrix.asset }}.zip" > "${{ matrix.asset }}.zip.sha256" )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: dist/*
+
+  # ---- Build the server (Linux is what runs on the Hetzner box; matches the hosting plan).
+  build-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+      - name: Publish server (linux-x64)
+        run: dotnet publish TSOClient/FSO.Server.Core -c Release -r linux-x64 --self-contained -o publish
+      - name: Stamp version.txt
+        shell: bash
+        run: |
+          # ServerVersion reads version.txt; stamp it so the server reports the release version (the
+          # managed-update updateID.txt is separate and created at runtime by the update generator).
+          if [ "${{ github.ref_type }}" = "tag" ]; then VERSION="${GITHUB_REF_NAME}"; else VERSION="${{ github.event.inputs.version }}"; fi
+          echo "Stamping version: $VERSION"
+          printf '%s\n' "$VERSION" > publish/version.txt
+      - name: Package + checksum
+        shell: bash
+        run: |
+          mkdir -p dist
+          ( cd publish && zip -r "../dist/OpenSO-server-linux-x64.zip" . )
+          ( cd dist && shasum -a 256 "OpenSO-server-linux-x64.zip" > "OpenSO-server-linux-x64.zip.sha256" )
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSO-server-linux-x64
+          path: dist/*
+
+  # ---- Collect every platform's artifacts and publish one GitHub Release.
+  release:
+    needs: [ build-client, build-server ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          name: OpenSO ${{ steps.ver.outputs.version }}
+          generate_release_notes: true
+          files: artifacts/**/*
