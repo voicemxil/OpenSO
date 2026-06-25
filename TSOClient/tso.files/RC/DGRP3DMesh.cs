@@ -21,8 +21,23 @@ namespace FSO.Files.RC
         //1: initial 3d format
         //2: normals
         //3: depth mask (for sinks, fireplaces)
-        public static int CURRENT_VERSION = 3;
-        public static int CURRENT_RECONSTRUCT = 2;
+        //4: IsFused flag (double-sided rendering for watertight fused meshes)
+        public static int CURRENT_VERSION = 4;
+        //1: initial reconstruction
+        //2: (normals reconstruct)
+        //3: edge-aware depth conditioning (dequantize/denoise + speck/island removal)
+        //4: monotone bilateral conditioning + post-triangulation island cull (no mask pixel removal)
+        //5: volumetric multi-view fusion for static objects
+        //6: fusion out-of-bounds carving + higher resolution
+        //7: fusion per-rotation coverage (fixes multi-sprite over-carving)
+        //8: sync base geoms (bounds/cull fix) + iso dilation (close top holes)
+        //9: two-tier carving (strict silhouette + 2-view depth) to kill top pinholes
+        //10: double-sided fused meshes (fixes backface-cull pinholes on tops)
+        //11: inpaint isolated invalid z-buffer pixels (closes scattered top gaps)
+        //12: depth union instead of intersection (fixes inter-view-disagreement top gaps)
+        //13: fusion shelved (default off); back to per-view path
+        //14: gentler decimation + cross-relief normal welding (post detail, lid shading)
+        public static int CURRENT_RECONSTRUCT = 14;
 
         public static DGRPRCParams DefaultParams = new DGRPRCParams();
         public static Dictionary<string, DGRPRCParams> ParamsByIff = new Dictionary<string, DGRPRCParams>()
@@ -137,6 +152,7 @@ namespace FSO.Files.RC
         public DGRP3DMaskType MaskType = DGRP3DMaskType.None;
         public DGRP3DGeometry DepthMask;
         public BoundingBox? Bounds;
+        public bool IsFused; //watertight fusion mesh -> render double-sided (no backface cull)
 
 
         //for internal use
@@ -310,6 +326,8 @@ namespace FSO.Files.RC
                     var y2 = io.ReadFloat();
                     var z2 = io.ReadFloat();
                     Bounds = new BoundingBox(new Vector3(x, y, z), new Vector3(x2, y2, z2));
+
+                    if (Version > 3) IsFused = io.ReadByte() > 0;
                 }
             }
         }
@@ -351,6 +369,14 @@ namespace FSO.Files.RC
                 if (!ParamsByIff.TryGetValue(lower, out config)) config = DefaultParams;
             }
             if (!config.InRange(dgrp.ChunkID)) config = DefaultParams;
+
+            // Phase 2: fuse all rotations into one watertight mesh for static objects. Objects with
+            // dynamic (toggleable) sprites fall through to the per-view path, which preserves toggling.
+            if (config.Fusion && obj.NumDynamicSprites == 0)
+            {
+                BuildFused(dgrp, obj, gd, config);
+                return;
+            }
 
             int totalSpr = 0;
             for (uint rotation = 0; rotation < 4; rotation++)
@@ -410,39 +436,22 @@ namespace FSO.Files.RC
 
                     if (depthB == null) continue;
 
-                    var useDequantize = false;
-                    float[] depth = null;
                     int iterations = 125;
                     int triDivisor = 100;
-                    float aggressiveness = 3.5f;
-                    if (useDequantize)
-                    {
-                        var dtex = new Texture2D(gd, ((TextureInfo)tex.Tag).Size.X, ((TextureInfo)tex.Tag).Size.Y, false, SurfaceFormat.Color);
-                        dtex.SetData(depthB.Select(x => new Color(x, x, x, x)).ToArray());
-                        depth = DepthTreatment.DequantizeDepth(gd, dtex);
-                        dtex.Dispose();
-
-                        iterations = 500;
-                        aggressiveness = 2.5f;
-                        MaxAllowedSq = 0.05f * 0.05f;
-                    }
-                    else if (depthB != null)
-                    {
-                        iterations = 125;
-                        aggressiveness = 3.5f;
-                    }
+                    float aggressiveness = 2.5f; // gentler collapses preserve thin parts (e.g. mailbox post)
 
                     QueueWork(() =>
                     {
-                        if (depth == null && depthB != null)
-                        {
-                            depth = depthB.Select(x => x / 255f).ToArray();
-                        }
-
                         var boundPts = new List<Vector3>();
                         //begin async part
                         var w = ((TextureInfo)tex.Tag).Size.X;
                         var h = ((TextureInfo)tex.Tag).Size.Y;
+
+                        // Condition the raw 8-bit depth before meshing: dequantize/denoise and strip
+                        // isolated fringe specks/islands that would otherwise become pinned scatter.
+                        var conditioned = DepthConditioner.Process(depthB, w, h, config);
+                        var depth = conditioned.Depth;
+                        var valid = conditioned.Valid;
 
                         var pos = sprite.SpriteOffset + new Vector2(72, 348 - h);
                         var tl = Vector3.Transform(new Vector3(pos, 0), sprMat);
@@ -474,15 +483,16 @@ namespace FSO.Files.RC
                             var vpos = tl;
                             for (int x = 0; x < w; x++)
                             {
-                                var d = depth[i++];
-                                if (d < 0.999f)
+                                if (valid[i])
                                 {
+                                    var d = depth[i];
                                     lastPt = vpos + (1f - d) * dFactor;
                                     if (first) { boundPts.Add(lastPt); first = false; }
                                     var vert = new VertexPositionTexture(lastPt, new Vector2((float)x / w, (float)y / h));
                                     verts.Add(vert);
                                     dict.Add(y * w + x, verti++);
                                 }
+                                i++;
                                 vpos += xInc;
                             }
                             tl += yInc;
@@ -636,6 +646,11 @@ namespace FSO.Files.RC
                         }
 
 
+                        // Remove scattered triangle islands (e.g. anti-aliased fringe of foliage) that
+                        // are disconnected from the object body. Operating on triangle topology means a
+                        // solid surface is a single island and is never holed; only floating bits go.
+                        if (config.DepthConditioning) CullSmallComponents(verts, indices);
+
                         lock (BoundPts) BoundPts.AddRange(boundPts);
                         var useSimplification = config.Simplify;
 
@@ -654,7 +669,8 @@ namespace FSO.Files.RC
 
                             var simple = new Simplify(triangles, vertices);
 
-                            simple.simplify_mesh(triangles.Length / triDivisor, agressiveness: aggressiveness, iterations: iterations);
+                            var target = Math.Max(4, (int)(triangles.Length / (double)triDivisor * config.Quality));
+                            simple.simplify_mesh(target, agressiveness: aggressiveness, iterations: iterations);
 
                             verts = simple.vertices.Select(x =>
                             {
@@ -725,6 +741,70 @@ namespace FSO.Files.RC
         }
 
         /// <summary>
+        /// Builds a single watertight mesh by fusing all rotation depth maps (Phase 2). Populates the
+        /// base geometry group (dynid 0) and saves to cache. Runs on a reconstruction worker thread.
+        /// </summary>
+        private void BuildFused(DGRP dgrp, OBJD obj, GraphicsDevice gd, DGRPRCParams config)
+        {
+            var rotArr = new bool[4];
+            for (int rotation = 0; rotation < 4; rotation++)
+            {
+                if (config.DoorFix)
+                {
+                    if ((obj.SubIndex & 0xFF) == 1) rotArr[rotation] = ((rotation + 1) % 4) <= 1;
+                    else rotArr[rotation] = ((rotation + 1) % 4) >= 2;
+                }
+                else rotArr[rotation] = config.Rotations[rotation];
+            }
+
+            var zOff = config.BlenderTweak ? -57.5f : -55f;
+            var factor = config.BlenderTweak ? 0.40f : 0.39f;
+
+            // Create the base geometry group synchronously so CanHaveBounds is true immediately. Without
+            // this the world's bounds cache latches an empty box before fusion finishes and frustum-culls
+            // the object at most camera angles (the "disappears at certain zoom/rotation" bug).
+            if (Geoms.Count < 1) Geoms.Add(new Dictionary<Texture2D, DGRP3DGeometry>());
+
+            IsFused = true; // watertight mesh -> render double-sided to avoid backface-cull pinholes
+
+            QueueWork(() =>
+            {
+                List<DGRP3DGeometry> fused = null;
+                BoundingBox b = new BoundingBox();
+                bool ok = false;
+                try
+                {
+                    ok = DGRP3DFusion.TryBuild(dgrp, obj, gd, config, rotArr, zOff, factor, out fused, out b);
+                }
+                catch
+                {
+                    ok = false;
+                }
+
+                AssetStreaming.InStreamUpdate(() =>
+                {
+                    if (ok && fused != null)
+                    {
+                        while (Geoms.Count < 1) Geoms.Add(new Dictionary<Texture2D, DGRP3DGeometry>());
+                        foreach (var g in fused)
+                            if (g.Pixel != null) Geoms[0][g.Pixel] = g;
+                        Bounds = b;
+                    }
+                    else
+                    {
+                        Bounds = new BoundingBox();
+                    }
+
+                    BoundPts = null;
+                    SaveAsync(this);
+                    foreach (var grp in Geoms)
+                        foreach (var e in grp)
+                            e.Value.SComplete(gd);
+                });
+            });
+        }
+
+        /// <summary>
         /// Create a DGRPMesh from a .OBJ file.
         /// </summary>
         public DGRP3DMesh(DGRP dgrp, OBJ source, GraphicsDevice gd)
@@ -776,11 +856,77 @@ namespace FSO.Files.RC
         {
             Bounds = (BoundPts.Count == 0) ? new BoundingBox() : BoundingBox.CreateFromPoints(BoundPts);
             BoundPts = null;
+            SmoothNormalsAcrossGeoms();
             SaveAsync(this);
             foreach (var g in Geoms)
                 foreach (var e in g)
                 {
                     e.Value.SComplete(gd);
+                }
+        }
+
+        // Radius (world units, ~one source pixel) within which vertices from different rotation reliefs
+        // are treated as the same surface point and share an averaged normal.
+        private const float NormalWeldRadius = 0.02f;
+
+        /// <summary>
+        /// Averages normals of near-coincident vertices across all geometry groups. The per-view path
+        /// bakes one relief per rotation; on surfaces seen by several rotations (e.g. tops) those reliefs
+        /// overlap, and each pixel shows whichever is frontmost — a patchwork of mismatched normals that
+        /// reads as "differently shining" triangles. Welding their normals makes the shading consistent.
+        /// </summary>
+        private void SmoothNormalsAcrossGeoms()
+        {
+            float r2 = NormalWeldRadius * NormalWeldRadius;
+            float inv = 1f / NormalWeldRadius;
+
+            (int, int, int) CellOf(Vector3 p) =>
+                ((int)Math.Floor(p.X * inv), (int)Math.Floor(p.Y * inv), (int)Math.Floor(p.Z * inv));
+
+            var cells = new Dictionary<(int, int, int), List<(List<DGRP3DVert> verts, int idx)>>();
+            foreach (var g in Geoms)
+                foreach (var e in g)
+                {
+                    var sv = e.Value.SVerts;
+                    if (sv == null) continue;
+                    for (int i = 0; i < sv.Count; i++)
+                    {
+                        var key = CellOf(sv[i].Position);
+                        if (!cells.TryGetValue(key, out var list)) { list = new List<(List<DGRP3DVert>, int)>(); cells[key] = list; }
+                        list.Add((sv, i));
+                    }
+                }
+
+            foreach (var g in Geoms)
+                foreach (var e in g)
+                {
+                    var sv = e.Value.SVerts;
+                    if (sv == null) continue;
+                    var newN = new Vector3[sv.Count];
+                    for (int i = 0; i < sv.Count; i++)
+                    {
+                        var pos = sv[i].Position;
+                        var bc = CellOf(pos);
+                        Vector3 acc = Vector3.Zero;
+                        for (int dx = -1; dx <= 1; dx++)
+                            for (int dy = -1; dy <= 1; dy++)
+                                for (int dz = -1; dz <= 1; dz++)
+                                {
+                                    if (!cells.TryGetValue((bc.Item1 + dx, bc.Item2 + dy, bc.Item3 + dz), out var list)) continue;
+                                    foreach (var (verts, idx) in list)
+                                    {
+                                        var ov = verts[idx];
+                                        if (Vector3.DistanceSquared(ov.Position, pos) <= r2) acc += ov.Normal;
+                                    }
+                                }
+                        newN[i] = (acc.LengthSquared() > 1e-12f) ? Vector3.Normalize(acc) : sv[i].Normal;
+                    }
+                    for (int i = 0; i < sv.Count; i++)
+                    {
+                        var v = sv[i];
+                        v.Normal = newN[i];
+                        sv[i] = v;
+                    }
                 }
         }
 
@@ -834,6 +980,8 @@ namespace FSO.Files.RC
                 io.WriteFloat(b.Max.X);
                 io.WriteFloat(b.Max.Y);
                 io.WriteFloat(b.Max.Z);
+
+                io.WriteByte((byte)(IsFused ? 1 : 0));
             }
         }
 
@@ -916,6 +1064,88 @@ namespace FSO.Files.RC
             int result;
             if (dict.TryGetValue(pt, out result)) return result;
             return null;
+        }
+
+        // Island culling tuning.
+        private const int CullMinLargest = 12; // skip culling entirely if the biggest island is this small (tiny objects)
+        private const int CullMinAbsolute = 6; // never cull an island with at least this many triangles
+        private const float CullRelative = 0.04f; // ...or at least this fraction of the largest island
+
+        /// <summary>
+        /// Removes triangles belonging to small disconnected islands (scattered fringe geometry) while
+        /// leaving the connected object body intact. Compacts the vertex/index lists in place.
+        /// </summary>
+        private static void CullSmallComponents(List<VertexPositionTexture> verts, List<int> indices)
+        {
+            int vn = verts.Count;
+            int tn = indices.Count / 3;
+            if (tn == 0 || vn == 0) return;
+
+            var parent = new int[vn];
+            for (int i = 0; i < vn; i++) parent[i] = i;
+
+            int Find(int a)
+            {
+                while (parent[a] != a) { parent[a] = parent[parent[a]]; a = parent[a]; }
+                return a;
+            }
+            void Union(int a, int b)
+            {
+                a = Find(a); b = Find(b);
+                if (a != b) parent[a] = b;
+            }
+
+            for (int t = 0; t < indices.Count; t += 3)
+            {
+                Union(indices[t], indices[t + 1]);
+                Union(indices[t + 1], indices[t + 2]);
+            }
+
+            var triCount = new Dictionary<int, int>();
+            int largest = 0;
+            for (int t = 0; t < indices.Count; t += 3)
+            {
+                int root = Find(indices[t]);
+                int c = triCount.TryGetValue(root, out var cur) ? cur + 1 : 1;
+                triCount[root] = c;
+                if (c > largest) largest = c;
+            }
+
+            if (largest < CullMinLargest) return; // whole mesh is small; keep everything
+            int minTris = Math.Max(CullMinAbsolute, (int)(largest * CullRelative));
+
+            var newIndices = new List<int>(indices.Count);
+            for (int t = 0; t < indices.Count; t += 3)
+            {
+                if (triCount[Find(indices[t])] >= minTris)
+                {
+                    newIndices.Add(indices[t]);
+                    newIndices.Add(indices[t + 1]);
+                    newIndices.Add(indices[t + 2]);
+                }
+            }
+
+            if (newIndices.Count == indices.Count) return; // nothing culled
+
+            // Compact: keep only referenced vertices, remap indices.
+            var remap = new int[vn];
+            for (int i = 0; i < vn; i++) remap[i] = -1;
+            var newVerts = new List<VertexPositionTexture>();
+            for (int k = 0; k < newIndices.Count; k++)
+            {
+                int old = newIndices[k];
+                if (remap[old] == -1)
+                {
+                    remap[old] = newVerts.Count;
+                    newVerts.Add(verts[old]);
+                }
+                newIndices[k] = remap[old];
+            }
+
+            verts.Clear();
+            verts.AddRange(newVerts);
+            indices.Clear();
+            indices.AddRange(newIndices);
         }
     }
 

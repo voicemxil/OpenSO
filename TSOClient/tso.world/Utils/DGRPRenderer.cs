@@ -313,6 +313,15 @@ namespace FSO.LotView.Utils
 
             if (Room == 65533) effect.SetTechnique(RCObjectTechniques.DisabledDraw);
 
+            // Fused meshes are watertight solids; render them double-sided so any individual triangle
+            // whose winding the isosurface extractor got wrong is not back-face culled into a pinhole.
+            RasterizerState prevRaster = null;
+            if (Mesh.IsFused)
+            {
+                prevRaster = device.RasterizerState;
+                device.RasterizerState = RasterizerState.CullNone;
+            }
+
             int i = 0;
             foreach (var spr in Mesh.Geoms)
             {
@@ -342,6 +351,8 @@ namespace FSO.LotView.Utils
                 }
                 i++;
             }
+
+            if (prevRaster != null) device.RasterizerState = prevRaster;
 
             if (Mesh.MaskType == DGRP3DMaskType.Portal)
             {
