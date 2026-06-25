@@ -12,7 +12,7 @@ on:
     branches: [ "main" ]
 
 jobs:
-  # Client: Windows = FSO.IDE (its output contains the full FreeSO.exe client); the other platforms =
+  # Client: Windows = FSO.IDE (its output contains the full OpenSO.exe client); the other platforms =
   # FSO.Unix. All four are the supported client targets.
   build-client:
     strategy:

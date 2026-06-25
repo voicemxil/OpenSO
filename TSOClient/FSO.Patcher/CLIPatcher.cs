@@ -25,7 +25,7 @@ namespace FSO.Patcher
 
         private void FSONotClosed()
         {
-            Console.WriteLine("Could not update FreeSO as write access could not be gained to the game files. Try running update.exe as an administrator.");
+            Console.WriteLine("Could not update OpenSO as write access could not be gained to the game files. Try running update.exe as an administrator.");
             Cleanup();
             Environment.Exit(0);
         }
@@ -48,8 +48,8 @@ namespace FSO.Patcher
         {
             try
             {
-                if (File.Exists("FreeSO.exe.old"))
-                    File.Move("FreeSO.exe.old", "FreeSO.exe");
+                if (File.Exists("OpenSO.exe.old"))
+                    File.Move("OpenSO.exe.old", "OpenSO.exe");
             }
             catch (Exception)
             {
@@ -62,7 +62,7 @@ namespace FSO.Patcher
             if (PathProgress >= Path.Count)
             {
                 //done
-                StartFreeSO();
+                StartOpenSO();
             }
             else
             {
@@ -126,7 +126,7 @@ namespace FSO.Patcher
                                 //abort.
                                 patcher.Revert();
                                 Cleanup();
-                                StartFreeSO();
+                                StartOpenSO();
                                 return;
                             }
                             else if (arc == 1)
@@ -167,7 +167,7 @@ namespace FSO.Patcher
                 fileList += $"\r\n    ...and {remaining.Count - 9} more.";
             }
             else fileList = string.Join("\r\n", remaining);
-            Console.WriteLine("Couldn't write one or more files. Make sure you are not running an instance of FreeSO! \r\nFiles:\r\n\r\n" + fileList);
+            Console.WriteLine("Couldn't write one or more files. Make sure you are not running an instance of OpenSO! \r\nFiles:\r\n\r\n" + fileList);
             return 0;
         }
 
@@ -177,21 +177,21 @@ namespace FSO.Patcher
             Console.WriteLine(message);
         }
 
-        public void StartFreeSO()
+        public void StartOpenSO()
         {
-            if (!File.Exists("FreeSO.exe")) File.Copy("FreeSO.exe.old", "FreeSO.exe", true);
+            if (!File.Exists("OpenSO.exe")) File.Copy("OpenSO.exe.old", "OpenSO.exe", true);
             if (Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.MacOSX)
             {
-                Console.WriteLine($"===== Starting FreeSO... Please wait! =====");
+                Console.WriteLine($"===== Starting OpenSO... Please wait! =====");
                 var args = string.Join(" ", Args);
                 if (args.Length > 0) args = " " + args;
-                var startArgs = new ProcessStartInfo("mono", "FreeSO.exe" + args);
+                var startArgs = new ProcessStartInfo("mono", "OpenSO.exe" + args);
                 startArgs.UseShellExecute = false;
                 System.Diagnostics.Process.Start(startArgs);
             }
             else
             {
-                System.Diagnostics.Process.Start("FreeSO.exe", string.Join(" ", Args));
+                System.Diagnostics.Process.Start("OpenSO.exe", string.Join(" ", Args));
             }
             Environment.Exit(0);
         }
@@ -224,18 +224,18 @@ namespace FSO.Patcher
 
         public void Begin()
         {
-            Console.WriteLine("===== FreeSO Patcher CLI - 2019 =====");
+            Console.WriteLine("===== OpenSO Patcher CLI - 2019 =====");
             Console.WriteLine(Path.Count + " update(s) to apply.");
 
             if (Args.Contains("--client"))
             {
-                Console.WriteLine("FreeSO client requested. Downloading from servo.freeso.org.");
+                Console.WriteLine("OpenSO client requested. Downloading from servo.freeso.org.");
                 ToDownload.Add("https://fso-builds.riperiperi.workers.dev/");
             }
 
             if (Args.Contains("--extras"))
             {
-                Console.WriteLine("Unix Extras requested. Downloading from FreeSO.org.");
+                Console.WriteLine("Unix Extras requested. Downloading from OpenSO.org.");
                 ToDownload.Add("http://freeso.org/stuff/macextras.zip");
                 AllowMonogameMod = true;
             }

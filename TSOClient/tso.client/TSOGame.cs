@@ -360,7 +360,7 @@ namespace FSO.Client
             }
             catch (Exception e)
             {
-                FSOProgram.ShowDialog("Content could not be loaded. Make sure that the FreeSO content has been compiled! (ContentSrc/TSOClientContent.mgcb) \r\n\r\n" + e.ToString());
+                FSOProgram.ShowDialog("Content could not be loaded. Make sure that the OpenSO content has been compiled! (ContentSrc/TSOClientContent.mgcb) \r\n\r\n" + e.ToString());
                 Exit();
                 Environment.Exit(0);
             }

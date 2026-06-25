@@ -236,7 +236,7 @@ namespace FSO.Client.Utils
 
         private async Task<bool> TryUPnP()
         {
-            var cityNat = new NatPuncher("FreeSO Archive City Server");
+            var cityNat = new NatPuncher("OpenSO Archive City Server");
 
             var cityResult = await cityNat.NatPunch(33101, 1, 10);
 
@@ -245,7 +245,7 @@ namespace FSO.Client.Utils
                 return false;
             }
 
-            var lotNat = new NatPuncher("FreeSO Archive Lot Server", cityNat);
+            var lotNat = new NatPuncher("OpenSO Archive Lot Server", cityNat);
 
             var lotResult = await lotNat.NatPunch(34101, 1, 10);
 

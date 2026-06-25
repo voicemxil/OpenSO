@@ -52,7 +52,7 @@
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Name = "Patcher";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
-            this.Text = "FreeSO Updater";
+            this.Text = "OpenSO Updater";
             this.Load += new System.EventHandler(this.Patcher_Load);
             this.ResumeLayout(false);
 

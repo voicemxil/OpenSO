@@ -4,15 +4,15 @@
 <plist version="1.0">
     <dict>
         <key>CFBundleName</key>
-        <string>FreeSO</string>
+        <string>OpenSO</string>
         <key>CFBundleDisplayName</key>
-        <string>FreeSO</string>
+        <string>OpenSO</string>
         <key>CFBundleIdentifier</key>
-        <string>org.freeso.fso</string>
+        <string>org.openso.fso</string>
         <key>CFBundleVersion</key>
         <string>1.0</string>
         <key>CFBundleExecutable</key>
-        <string>FreeSO</string>
+        <string>OpenSO</string>
         <key>CFBundleIconFile</key>
         <string>Icon</string>
         <key>LSApplicationCategoryType</key>
@@ -22,6 +22,6 @@
         <key>NSHumanReadableCopyright</key>
         <string><![CDATA[
 Licensed under the Mozilla Public License, v. 2.0.
-FreeSO is not in any way affiliated with Electronic Arts or The Sims, it is an unofficial community run project.]]></string>
+OpenSO is not in any way affiliated with Electronic Arts or The Sims, it is an unofficial community run project.]]></string>
     </dict>
 </plist>

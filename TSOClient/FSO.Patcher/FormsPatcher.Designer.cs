@@ -56,7 +56,7 @@
             this.StatusText.Name = "StatusText";
             this.StatusText.Size = new System.Drawing.Size(385, 28);
             this.StatusText.TabIndex = 1;
-            this.StatusText.Text = "Updating FreeSO... Please wait!";
+            this.StatusText.Text = "Updating OpenSO... Please wait!";
             this.StatusText.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
             // 
             // SingleProgress
@@ -127,7 +127,7 @@
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Name = "FormsPatcher";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
-            this.Text = "FreeSO Patcher";
+            this.Text = "OpenSO Patcher";
             this.Load += new System.EventHandler(this.FormsPatcher_Load);
             this.panel1.ResumeLayout(false);
             this.ResumeLayout(false);

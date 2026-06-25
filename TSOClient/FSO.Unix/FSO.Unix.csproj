@@ -5,7 +5,7 @@
         <OutputType>Exe</OutputType>
         <TargetFramework>net9.0</TargetFramework>
         <RootNamespace>FSO.Unix</RootNamespace>
-        <AssemblyName>FreeSO</AssemblyName>
+        <AssemblyName>OpenSO</AssemblyName>
         <ApplicationIcon>fso.ico</ApplicationIcon>
         <PublishReadyToRun>false</PublishReadyToRun>
         <TieredPGO>true</TieredPGO>
@@ -51,38 +51,38 @@
     <Target Name="_IncrementalCleanPublishDirectory" />
 
     <Target Name="CreateMacAppBundle" AfterTargets="Publish" Condition=" '$(RuntimeIdentifier)' == 'osx-arm64' ">
-        <RemoveDir Directories="$(PublishDir)/FreeSO.app"/>
+        <RemoveDir Directories="$(PublishDir)/OpenSO.app"/>
 
         <Exec Command="sleep 2"/>
 
-        <MakeDir Directories="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
-        <MakeDir Directories="$(PublishDir)/FreeSO.app/Contents/Resources"/>
+        <MakeDir Directories="$(PublishDir)/OpenSO.app/Contents/MacOS"/>
+        <MakeDir Directories="$(PublishDir)/OpenSO.app/Contents/Resources"/>
 
-        <Copy SourceFiles="$(PublishDir)/FreeSO" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
-        <Copy SourceFiles="$(PublishDir)/libSDL2-2.0.0.dylib" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
-        <Copy SourceFiles="$(PublishDir)/libopenal.dylib" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
-        <Copy SourceFiles="$(PublishDir)/libe_sqlite3.dylib" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS" Condition="Exists('$(PublishDir)/libe_sqlite3.dylib')"/>
+        <Copy SourceFiles="$(PublishDir)/OpenSO" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/MacOS"/>
+        <Copy SourceFiles="$(PublishDir)/libSDL2-2.0.0.dylib" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/MacOS"/>
+        <Copy SourceFiles="$(PublishDir)/libopenal.dylib" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/MacOS"/>
+        <Copy SourceFiles="$(PublishDir)/libe_sqlite3.dylib" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/MacOS" Condition="Exists('$(PublishDir)/libe_sqlite3.dylib')"/>
 
         <ItemGroup>
             <GameContent Include="$(PublishDir)/Content/**"/>
         </ItemGroup>
 
-        <Copy SourceFiles="@(GameContent)" DestinationFiles="@(GameContent->'$(PublishDir)/FreeSO.app/Contents/MacOS/Content/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true"/>
-        <Copy SourceFiles="$(PublishDir)/version.txt" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/MacOS"/>
+        <Copy SourceFiles="@(GameContent)" DestinationFiles="@(GameContent->'$(PublishDir)/OpenSO.app/Contents/MacOS/Content/%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true"/>
+        <Copy SourceFiles="$(PublishDir)/version.txt" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/MacOS"/>
 
         <!-- Clean up existing symlink/folder if present -->
-        <RemoveDir Directories="$(PublishDir)/FreeSO.app/Contents/Resources/Content" />
+        <RemoveDir Directories="$(PublishDir)/OpenSO.app/Contents/Resources/Content" />
 
         <!-- Create symlink because Monogame has code that only searches bundles apps Content in /Resources -->
         <!-- But our application is built to look in the root Application folder /MacOS/Content -->
-        <Exec Command="ln -s ../MacOS/Content &quot;$(PublishDir)/FreeSO.app/Contents/Resources/Content&quot;"/>
+        <Exec Command="ln -s ../MacOS/Content &quot;$(PublishDir)/OpenSO.app/Contents/Resources/Content&quot;"/>
 
-        <Copy SourceFiles="Icon.icns" DestinationFolder="$(PublishDir)/FreeSO.app/Contents/Resources"/>
-        <Copy SourceFiles="Info.plist" DestinationFolder="$(PublishDir)/FreeSO.app/Contents"/>
+        <Copy SourceFiles="Icon.icns" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/Resources"/>
+        <Copy SourceFiles="Info.plist" DestinationFolder="$(PublishDir)/OpenSO.app/Contents"/>
 
-        <Exec Command="chmod +x &quot;$(PublishDir)/FreeSO.app/Contents/MacOS/FreeSO&quot;"/>
-        <Exec Command="chmod +x &quot;$(PublishDir)/FreeSO.app/Contents/MacOS/libSDL2-2.0.0.dylib&quot;"/>
-        <Exec Command="chmod +x &quot;$(PublishDir)/FreeSO.app/Contents/MacOS/libopenal.dylib&quot;"/>
+        <Exec Command="chmod +x &quot;$(PublishDir)/OpenSO.app/Contents/MacOS/OpenSO&quot;"/>
+        <Exec Command="chmod +x &quot;$(PublishDir)/OpenSO.app/Contents/MacOS/libSDL2-2.0.0.dylib&quot;"/>
+        <Exec Command="chmod +x &quot;$(PublishDir)/OpenSO.app/Contents/MacOS/libopenal.dylib&quot;"/>
     </Target>
 
 </Project>

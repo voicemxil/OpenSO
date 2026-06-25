@@ -12,7 +12,7 @@ email-verification registration. Nothing here is live yet — this is the from-z
 ## 0. Architecture at a glance
 
 ```
-                 player browser                         game client (FreeSO.exe)
+                 player browser                         game client (OpenSO.exe)
                        |                                         |
         https://openso.org (GitHub Pages)            auth + city list over HTTPS
                        |                                         |

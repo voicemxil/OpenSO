@@ -29,9 +29,9 @@ permissions:
 jobs:
   # ---- Client builds. The Windows client is FSO.IDE (net9.0-windows) — the same project the
   #      original "Build FreeSO" CI published; it references FSO.Windows so its output folder
-  #      contains the full client (FreeSO.exe) plus the IDE/JIT tooling. The cross-platform client
-  #      is FSO.Unix (net9.0), which also produces FreeSO.exe. The launcher downloads the asset whose
-  #      name contains "client" and runs FreeSO.exe.
+  #      contains the full client (OpenSO.exe) plus the IDE/JIT tooling. The cross-platform client
+  #      is FSO.Unix (net9.0), which also produces OpenSO.exe. The launcher downloads the asset whose
+  #      name contains "client" and runs OpenSO.exe.
   build-client:
     strategy:
       fail-fast: false
@@ -72,7 +72,7 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then VERSION="${GITHUB_REF_NAME}"; else VERSION="${{ github.event.inputs.version }}"; fi
           echo "Stamping version: $VERSION"
           printf '%s\n' "$VERSION" > publish/version.txt
-          if [ -f "publish/FreeSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/FreeSO.app/Contents/MacOS/version.txt"; fi
+          if [ -f "publish/OpenSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/OpenSO.app/Contents/MacOS/version.txt"; fi
 
       - name: Package + checksum
         shell: bash

@@ -6,7 +6,7 @@
     <Nullable>disable</Nullable>
     <OutputType>WinExe</OutputType>
     <RootNamespace>FSO.Windows</RootNamespace>
-    <AssemblyName>FreeSO</AssemblyName>
+    <AssemblyName>OpenSO</AssemblyName>
     <FileAlignment>512</FileAlignment>
     <UseWindowsForms>true</UseWindowsForms>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>

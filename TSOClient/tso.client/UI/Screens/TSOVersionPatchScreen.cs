@@ -121,11 +121,11 @@ namespace FSO.Client.UI.Screens
             {
                 if (FSOEnvironment.Linux)
                 {
-                    System.Diagnostics.Process.Start("mono", "FreeSO.exe " + FSOEnvironment.Args);
+                    System.Diagnostics.Process.Start("mono", "OpenSO.exe " + FSOEnvironment.Args);
                 }
                 else
                 {
-                    var args = new ProcessStartInfo(".\\FreeSO.exe", FSOEnvironment.Args);
+                    var args = new ProcessStartInfo(".\\OpenSO.exe", FSOEnvironment.Args);
                     try
                     {
 
@@ -133,7 +133,7 @@ namespace FSO.Client.UI.Screens
                     }
                     catch (Exception)
                     {
-                        args.FileName = "FreeSO.exe";
+                        args.FileName = "OpenSO.exe";
                         System.Diagnostics.Process.Start(args);
                     }
                 }

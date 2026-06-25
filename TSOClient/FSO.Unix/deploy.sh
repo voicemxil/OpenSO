@@ -20,31 +20,31 @@ echo "Building FSO.Unix for $OS..."
 dotnet publish -c Release -r "$RID" --self-contained true -p:PublishSingleFile=true
 
 if [ "$OS" = "Darwin" ]; then
-    rm -rf /Applications/FreeSO.app
-    cp -R "$PUBLISH_DIR/FreeSO.app" /Applications/
-    open /Applications/FreeSO.app
+    rm -rf /Applications/OpenSO.app
+    cp -R "$PUBLISH_DIR/OpenSO.app" /Applications/
+    open /Applications/OpenSO.app
 else
-    INSTALL_DIR="$HOME/.local/share/FreeSO"
+    INSTALL_DIR="$HOME/.local/share/OpenSO"
     mkdir -p "$INSTALL_DIR"
     rm -rf "$INSTALL_DIR"/*
     cp -R "$PUBLISH_DIR"/* "$INSTALL_DIR/"
-    chmod +x "$INSTALL_DIR/FreeSO"
+    chmod +x "$INSTALL_DIR/OpenSO"
 
     mkdir -p "$HOME/.local/share/icons"
     cp "$SCRIPT_DIR/fso.png" "$HOME/.local/share/icons/freeso.png"
 
-    cat > "$HOME/.local/share/applications/FreeSO.desktop" << EOF
+    cat > "$HOME/.local/share/applications/OpenSO.desktop" << EOF
 [Desktop Entry]
-Name=FreeSO
+Name=OpenSO
 Comment=Free re-implementation of The Sims Online
-Exec=$INSTALL_DIR/FreeSO
+Exec=$INSTALL_DIR/OpenSO
 Icon=$HOME/.local/share/icons/freeso.png
 Terminal=false
 Type=Application
 Categories=Game;
 EOF
 
-    "$INSTALL_DIR/FreeSO" &
+    "$INSTALL_DIR/OpenSO" &
 fi
 
 echo "Done."

@@ -7,7 +7,7 @@ namespace FSO.Client
 {
     public class GlobalSettings : IniConfig
     {
-        public override string HeadingComment => "FreeSO Settings File. Properties are self explanatory.";
+        public override string HeadingComment => "OpenSO Settings File. Properties are self explanatory.";
         private static GlobalSettings defaultInstance;
 
         public static GlobalSettings Default

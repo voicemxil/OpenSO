@@ -33,8 +33,8 @@ namespace FSO.Patcher
 
             if (!File.Exists("PatchFiles/patch.zip"))
             {
-                MessageBox.Show("Could not find FreeSO Patch Files (these must be downloaded by the game!). Starting FreeSO...");
-                StartFreeSO();
+                MessageBox.Show("Could not find OpenSO Patch Files (these must be downloaded by the game!). Starting OpenSO...");
+                StartOpenSO();
                 return;
             }
 
@@ -75,7 +75,7 @@ namespace FSO.Patcher
 
         public async void Extract()
         {
-            StatusLabel.Text = "Extracting FreeSO Files...";
+            StatusLabel.Text = "Extracting OpenSO Files...";
 
             var archive = ZipFile.OpenRead("PatchFiles/patch.zip");
             foreach (var file in Directory.GetFiles("Content/Patch/"))
@@ -92,7 +92,7 @@ namespace FSO.Patcher
                     var result = await ExtractEntry(entry, 0);
                     if (!result)
                     {
-                        var dresult = MessageBox.Show("Couldn't replace a file. Make sure you are not running an instance of FreeSO! If this is discord-rpc.dll, you can safely ignore this.", "Error", MessageBoxButtons.AbortRetryIgnore);
+                        var dresult = MessageBox.Show("Couldn't replace a file. Make sure you are not running an instance of OpenSO! If this is discord-rpc.dll, you can safely ignore this.", "Error", MessageBoxButtons.AbortRetryIgnore);
                         if (dresult == DialogResult.Abort)
                         {
                             Cleanup();
@@ -109,22 +109,22 @@ namespace FSO.Patcher
                 }
             }
             archive.Dispose();
-            StartFreeSO();
+            StartOpenSO();
         }
 
         public void AttemptRename()
         {
             try
             {
-                File.Delete("FreeSO.exe.old");
-                if (File.Exists("FreeSO.exe"))  //shouldn't be in use, unless the user has incorrectly renamed and run the freeso executable
-                    File.Move("FreeSO.exe", "FreeSO.exe.old");
+                File.Delete("OpenSO.exe.old");
+                if (File.Exists("OpenSO.exe"))  //shouldn't be in use, unless the user has incorrectly renamed and run the freeso executable
+                    File.Move("OpenSO.exe", "OpenSO.exe.old");
             }
             catch (Exception)
             {
                 if (RenameRetry++ < RENAME_MAX_ATTEMPTS)
                 {
-                    StatusLabel.Text = "Waiting for FreeSO to Close...";
+                    StatusLabel.Text = "Waiting for OpenSO to Close...";
                     Task.Run(async () =>
                     {
                         await Task.Delay(2000);
@@ -134,7 +134,7 @@ namespace FSO.Patcher
                 }
                 else
                 {
-                    var result = MessageBox.Show("Could not update FreeSO as write access could not be gained to the game files. Try running update.exe as an administrator.", "Error", MessageBoxButtons.RetryCancel);
+                    var result = MessageBox.Show("Could not update OpenSO as write access could not be gained to the game files. Try running update.exe as an administrator.", "Error", MessageBoxButtons.RetryCancel);
                     if (result == DialogResult.Cancel)
                     {
                         Cleanup();
@@ -153,8 +153,8 @@ namespace FSO.Patcher
         {
             try
             {
-                if (File.Exists("FreeSO.exe.old"))
-                    File.Move("FreeSO.exe.old", "FreeSO.exe");
+                if (File.Exists("OpenSO.exe.old"))
+                    File.Move("OpenSO.exe.old", "OpenSO.exe");
             }
             catch (Exception)
             {
@@ -162,15 +162,15 @@ namespace FSO.Patcher
             }
         }
 
-        public void StartFreeSO()
+        public void StartOpenSO()
         {
             if (Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.MacOSX)
             {
-                System.Diagnostics.Process.Start("mono", "FreeSO.exe "+string.Join(" ", Args));
+                System.Diagnostics.Process.Start("mono", "OpenSO.exe "+string.Join(" ", Args));
             }
             else
             {
-                System.Diagnostics.Process.Start("FreeSO.exe", string.Join(" ", Args));
+                System.Diagnostics.Process.Start("OpenSO.exe", string.Join(" ", Args));
             }
             Application.Exit();
         }

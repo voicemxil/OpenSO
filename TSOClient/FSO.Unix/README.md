@@ -36,7 +36,7 @@ To build, install, and launch in one step:
 ```
 
 This script works on both macOS and Linux:
-- **macOS**: Installs to `/Applications/FreeSO.app` and opens the app
+- **macOS**: Installs to `/Applications/OpenSO.app` and opens the app
 - **Linux**: Installs to `~/.local/share/FreeSO` and creates a desktop entry
 
 ## Launch 3D
@@ -48,7 +48,7 @@ To open the app in 3D mode, run the open command with `--args -3d`:
 E.g when the application is placed in the Applications folder, you can run:
 
 ```bash
-open /Applications/FreeSO.app --args -3d
+open /Applications/OpenSO.app --args -3d
 ```
 
 ### Linux

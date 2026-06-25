@@ -117,7 +117,7 @@ namespace FSO.Common
         {
             { "PlayerName", "" },
             { "LastJoinedHost", "127.0.0.1" },
-            { "SelectedArchiveName", "FreeSO Archive" },
+            { "SelectedArchiveName", "OpenSO Archive" },
 
             { "ServerPrivateKey", "" },
             { "ServerPublicKey", "" },

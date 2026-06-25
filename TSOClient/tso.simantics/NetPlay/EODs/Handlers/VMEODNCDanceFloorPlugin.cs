@@ -33,7 +33,7 @@ namespace FSO.SimAntics.NetPlay.EODs.Handlers
         public string[] TextMessages = new string[]
         {
             //normal messages
-            "FreeSO",
+            "OpenSO",
             "PARTY",
             "DANCE",
             "~(o.o)~",
@@ -501,7 +501,7 @@ namespace FSO.SimAntics.NetPlay.EODs.Handlers
 
                         case VMEODNCRandomAnims.Text:
                             ClearScreen((byte)((10 + lit) % 11));
-                            var s = TextMessage ?? "FreeSO";
+                            var s = TextMessage ?? "OpenSO";
                             var scrollX = TileWrap % (ScreenWidth + (s.Length + 1) * 4);
                             DrawString(s, ScreenWidth - scrollX, (ScreenHeight - 1) / 2 - 2, col);
                             var border = ScreenHeight / 2 - 3;

@@ -27,7 +27,7 @@ namespace FSO.Patcher
         private void FSONotClosed()
         {
             Invoke(new Action(() => {
-                var result = MessageBox.Show("Could not update FreeSO as write access could not be gained to the game files. Try running update.exe as an administrator.", "Error", MessageBoxButtons.RetryCancel);
+                var result = MessageBox.Show("Could not update OpenSO as write access could not be gained to the game files. Try running update.exe as an administrator.", "Error", MessageBoxButtons.RetryCancel);
                 if (result == DialogResult.Cancel)
                 {
                     Cleanup();
@@ -64,8 +64,8 @@ namespace FSO.Patcher
         {
             try
             {
-                if (File.Exists("FreeSO.exe.old"))
-                    File.Move("FreeSO.exe.old", "FreeSO.exe");
+                if (File.Exists("OpenSO.exe.old"))
+                    File.Move("OpenSO.exe.old", "OpenSO.exe");
             }
             catch (Exception)
             {
@@ -85,7 +85,7 @@ namespace FSO.Patcher
                 {
 
                 }
-                Invoke(new Action(() => StartFreeSO()));
+                Invoke(new Action(() => StartOpenSO()));
             }
             else
             {
@@ -155,7 +155,7 @@ namespace FSO.Patcher
                                 //abort.
                                 patcher.Revert();
                                 Cleanup();
-                                Invoke(new Action(() => StartFreeSO()));
+                                Invoke(new Action(() => StartOpenSO()));
                                 return;
                             }
                             else if (arc == 1)
@@ -195,7 +195,7 @@ namespace FSO.Patcher
                     fileList += $"\r\n    ...and {remaining.Count - 9} more.";
                 }
                 else fileList = string.Join("\r\n", remaining);
-                var dresult = MessageBox.Show("Couldn't write one or more files. Make sure you are not running an instance of FreeSO! \r\nFiles:\r\n\r\n" + fileList,
+                var dresult = MessageBox.Show("Couldn't write one or more files. Make sure you are not running an instance of OpenSO! \r\nFiles:\r\n\r\n" + fileList,
                     "Error", MessageBoxButtons.AbortRetryIgnore);
 
                 if (dresult == DialogResult.Abort) dialogResponse.SetResult(0);
@@ -216,20 +216,20 @@ namespace FSO.Patcher
             }));
         }
 
-        public void StartFreeSO()
+        public void StartOpenSO()
         {
             try
             {
-                if (!File.Exists("FreeSO.exe")) File.Copy("FreeSO.exe.old", "FreeSO.exe", true);
+                if (!File.Exists("OpenSO.exe")) File.Copy("OpenSO.exe.old", "OpenSO.exe", true);
                 if (Environment.OSVersion.Platform == PlatformID.Unix || Environment.OSVersion.Platform == PlatformID.MacOSX)
                 {
-                    var startArgs = new ProcessStartInfo("mono", "FreeSO.exe " + string.Join(" ", Args));
+                    var startArgs = new ProcessStartInfo("mono", "OpenSO.exe " + string.Join(" ", Args));
                     startArgs.UseShellExecute = false;
                     System.Diagnostics.Process.Start(startArgs);
                 }
                 else
                 {
-                    System.Diagnostics.Process.Start("FreeSO.exe", string.Join(" ", Args));
+                    System.Diagnostics.Process.Start("OpenSO.exe", string.Join(" ", Args));
                 }
             } catch (Exception)
             {
@@ -241,7 +241,7 @@ namespace FSO.Patcher
         private void EmergencyDownload()
         {
             var result = MessageBox.Show("You've started the patcher without any updates queued. If you wish to update the game, log into the game server and it will tell you what to do.\r\n\r\n" +
-                "If you opened this application because FreeSO is unopenable, you can attempt to redownload a neutral client version using this application. Do you want to reinstall FreeSO this way?",
+                "If you opened this application because OpenSO is unopenable, you can attempt to redownload a neutral client version using this application. Do you want to reinstall OpenSO this way?",
                 "Reinstall", MessageBoxButtons.YesNo);
             if (result == DialogResult.Yes)
             {
@@ -269,7 +269,7 @@ namespace FSO.Patcher
             }
             else
             {
-                StartFreeSO();
+                StartOpenSO();
             }
         }
 

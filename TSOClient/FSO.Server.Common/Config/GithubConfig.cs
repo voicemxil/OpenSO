@@ -5,11 +5,11 @@ namespace FSO.Server.Common.Config
     public class GithubConfig
     {
         [JsonProperty("appName")]
-        public string AppName { get; set; } = "FreeSO";
+        public string AppName { get; set; } = "OpenSO";
         [JsonProperty("user")]
-        public string User { get; set; } = "riperiperi";
+        public string User { get; set; } = "voicemxil";
         [JsonProperty("repository")]
-        public string Repository { get; set; } = "FreeSO";
+        public string Repository { get; set; } = "OpenSO";
         [JsonProperty("clientID")]
         public string ClientID { get; set; }
         [JsonProperty("clientSecret")]

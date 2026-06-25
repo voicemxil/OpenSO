@@ -113,15 +113,15 @@ namespace FSO.Patcher
         {
             try
             {
-                File.Delete("FreeSO.exe.old");
-                if (File.Exists("FreeSO.exe"))  //shouldn't be in use, unless the user has incorrectly renamed and run the freeso executable
-                    File.Move("FreeSO.exe", "FreeSO.exe.old");
+                File.Delete("OpenSO.exe.old");
+                if (File.Exists("OpenSO.exe"))  //shouldn't be in use, unless the user has incorrectly renamed and run the freeso executable
+                    File.Move("OpenSO.exe", "OpenSO.exe.old");
             }
             catch (Exception)
             {
                 if (renameRetry++ < RENAME_MAX_ATTEMPTS)
                 {
-                    Status($"Waiting for FreeSO to Close ({renameRetry}/{RENAME_MAX_ATTEMPTS})...");
+                    Status($"Waiting for OpenSO to Close ({renameRetry}/{RENAME_MAX_ATTEMPTS})...");
                     await Task.Delay(2000);
                     return await AttemptRename(renameRetry);
                 }

@@ -150,7 +150,7 @@ namespace FSO.Server.Api.Core
 
             confirmOKMail.AddString("username", username);
 
-            confirmOKMail.Send(email, "Welcome to FreeSO, " + username + "!");
+            confirmOKMail.Send(email, "Welcome to OpenSO, " + username + "!");
         }
 
         /// <summary>
@@ -170,7 +170,7 @@ namespace FSO.Server.Api.Core
             confirmMail.AddString("expires", Epoch.HMSRemaining(expires));
             confirmMail.AddString("confirmation_url", confirmation_url);
 
-            return confirmMail.Send(email, "Verify your FreeSO account");
+            return confirmMail.Send(email, "Verify your OpenSO account");
         }
 
         /// <summary>

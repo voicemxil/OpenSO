@@ -23,14 +23,14 @@ Remember that you should only install updates and content packs from servers you
 
 
 14 ^Incorrect TSO Version^
-15 ^FreeSO requires files from The Sims Online to run. FreeSO did detect these files, but with version '%s', when FreeSO expects version '1.1097.1.0'. 
+15 ^OpenSO requires files from The Sims Online to run. OpenSO did detect these files, but with version '%s', when OpenSO expects version '1.1097.1.0'. 
 
 %s
 
 (you can ignore this by pressing the cheat combo from TS1, but it is DEV ONLY as your game will likely just crash.)^
 
 16 ^A patch is available to convert your TSO version into the correct one. It will be applied if you click OK. (only perform this operation once)^
-17 ^Your version could not be identified, so the FreeSO client does not know what to do with it. Please visit http://freeso.org for the correct way to download TSO files. (usually via a launcher)^
+17 ^Your version could not be identified, so the OpenSO client does not know what to do with it. Please visit https://openso.org for the correct way to download TSO files. (usually via a launcher)^
 18 ^Patching TSO Files...^
 
 19 ^Fatal Error^
@@ -38,7 +38,7 @@ Remember that you should only install updates and content packs from servers you
 
 %s
 
-If The Sims Online is installed in Program Files, make sure FreeSO is running as admin (this is the default when using the launcher). If you have an antivirus installed, it may also be preventing FreeSO from modifying files in Program Files - try adding an exception for FreeSO.exe and update.exe, or disabling it altogether when updating FreeSO (last resort!).^
+If The Sims Online is installed in Program Files, make sure OpenSO is running as admin (this is the default when using the launcher). If you have an antivirus installed, it may also be preventing OpenSO from modifying files in Program Files - try adding an exception for OpenSO.exe and update.exe, or disabling it altogether when updating OpenSO (last resort!).^
 
 21 ^Update Required^
 22 ^The server you are connecting to requires version %s to be installed. Given your current version (%s) the following update path has been found:
@@ -58,7 +58,7 @@ Remember that you should only install updates and content packs from servers you
 29 ^ Manifest^
 
 30 ^Updater failed!^
-31 ^The updater could not be opened. If you have anti-virus software, try disabling real-time protection or adding an exception for FreeSO.exe and update.exe. If you still experience problems, open up update.exe from the FreeSO folder manually. (as administrator if you have installed in Program Files)
+31 ^The updater could not be opened. If you have anti-virus software, try disabling real-time protection or adding an exception for OpenSO.exe and update.exe. If you still experience problems, open up update.exe from the OpenSO folder manually. (as administrator if you have installed in Program Files)
 
 Error Message:
 %s^
