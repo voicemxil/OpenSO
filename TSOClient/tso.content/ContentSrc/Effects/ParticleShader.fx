@@ -227,36 +227,58 @@ float dpth(float4 v) {
 #endif
 }
 
-float4 MainPS(ParticleOutput input) : COLOR
+// PSOutputV emits color to COLOR0 (existing behavior) plus (0,0,0,0) to COLOR1, which — when MRT1 is
+// bound and ColorWriteChannels1=Alpha — invalidates the alpha mask at particle pixels so the motion
+// blur pass falls through them instead of smearing them along the velocity of whatever object was
+// rendered beneath. Note: rain uses BlendState.Additive which keeps prev alpha; rain still smears
+// somewhat. Per-RT blend would let us fix that cleanly but isn't exposed by MonoGame's BlendState.
+struct PSOutputV { float4 color : COLOR0; float4 velocity : COLOR1; };
+
+PSOutputV MainPS(ParticleOutput input)
 {
+	PSOutputV o;
 	float level = (input.ModelPos.y) / (2.95*3);
 	float indoorsLevel = round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories);
 	if (level >= ClipLevel || indoorsLevel > max(0.0, level)) discard;
-	return gammaMul(tex2D(TexSampler, input.TexCoord)*input.Color * Color, lightInterpClamp(input.ModelPos, 1)) - SubColor;
+	o.color = gammaMul(tex2D(TexSampler, input.TexCoord)*input.Color * Color, lightInterpClamp(input.ModelPos, 1)) - SubColor;
+	o.velocity = float4(0, 0, 0, 0);
+	return o;
 }
 
-float4 SimplePS(ParticleOutput input) : COLOR
+PSOutputV SimplePS(ParticleOutput input)
 {
-	return tex2D(TexSampler, input.TexCoord)*input.Color;
+	PSOutputV o;
+	o.color = tex2D(TexSampler, input.TexCoord)*input.Color;
+	o.velocity = float4(0, 0, 0, 0);
+	return o;
 }
 
-float4 RainPS(ParticleOutput input) : COLOR
+PSOutputV RainPS(ParticleOutput input)
 {
+	PSOutputV o;
 	float level = (input.ModelPos.y) / (2.95 * 3);
 	float indoorsLevel = round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories);
 	if (level >= ClipLevel || indoorsLevel > max(0.0, level)) discard;
-	return gammaMul(((1-cos(input.TexCoord.y*3.1415*2)) * (1 - cos(input.TexCoord.x*3.1415 * 2))/4) *input.Color, lightInterpClamp(input.ModelPos, 1)) - SubColor;
+	o.color = gammaMul(((1-cos(input.TexCoord.y*3.1415*2)) * (1 - cos(input.TexCoord.x*3.1415 * 2))/4) *input.Color, lightInterpClamp(input.ModelPos, 1)) - SubColor;
+	o.velocity = float4(0, 0, 0, 0);
+	return o;
 }
 
-float4 RainSimplePS(ParticleOutput input) : COLOR
+PSOutputV RainSimplePS(ParticleOutput input)
 {
-	return ((1 - cos(input.TexCoord.y*3.1415 * 2)) * (1 - cos(input.TexCoord.x*3.1415 * 2)) / 4) * input.Color - SubColor;
+	PSOutputV o;
+	o.color = ((1 - cos(input.TexCoord.y*3.1415 * 2)) * (1 - cos(input.TexCoord.x*3.1415 * 2)) / 4) * input.Color - SubColor;
+	o.velocity = float4(0, 0, 0, 0);
+	return o;
 }
 
-float4 ParticlePS(ParticleOutput input) : COLOR
+PSOutputV ParticlePS(ParticleOutput input)
 {
+	PSOutputV o;
 	if (input.Color.a == 0) discard;
-	return gammaMul(tex2D(TexSampler, input.TexCoord)*input.Color, lightProcess(input.ModelPos)) - SubColor;
+	o.color = gammaMul(tex2D(TexSampler, input.TexCoord)*input.Color, lightProcess(input.ModelPos)) - SubColor;
+	o.velocity = float4(0, 0, 0, 0);
+	return o;
 }
 
 //snow particles that follow the camera

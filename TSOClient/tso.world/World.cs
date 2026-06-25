@@ -118,11 +118,35 @@ namespace FSO.LotView
         {
             PPXDepthEngine.InitScreenTargets();
             var newSize = PPXDepthEngine.GetWidthHeight();
-            var ssaa = new Point(newSize.X / PPXDepthEngine.SSAA, newSize.Y / PPXDepthEngine.SSAA);
+            var ssaa = new Point((int)Math.Round(newSize.X / PPXDepthEngine.SSAA), (int)Math.Round(newSize.Y / PPXDepthEngine.SSAA));
             State._2D.GenBuffers(ssaa.X, ssaa.Y);
             State.SetDimensions(ssaa.ToVector2());
 
             Blueprint?.Changes?.SetFlag(BlueprintGlobalChanges.ZOOM);
+
+            // InitScreenTargets disposed the velocity buffer (size changed). Re-apply the AA/motion config
+            // so it's re-allocated at the new screen size; otherwise motion blur stays disabled until the
+            // options dialog is reopened.
+            if (State?.Device != null) ChangeAAMode(State.Device);
+        }
+
+        // Previous frame's NDC jitter, for computing the per-frame jitter delta handed to the TAA resolve.
+        private Vector2 _PrevTAAJitterNDC;
+
+        // Halton sequence — base-N radical-inverse of integer i. Halton(2,3) gives well-distributed 2D
+        // samples without clustering, which is exactly what TAA needs for sub-pixel jittering.
+        private static float HaltonValue(int i, int b)
+        {
+            float result = 0f;
+            float f = 1f / b;
+            int idx = i;
+            while (idx > 0)
+            {
+                result += f * (idx % b);
+                idx /= b;
+                f /= b;
+            }
+            return result;
         }
 
         public virtual void InitDefaultGraphicsMode()
@@ -654,7 +678,60 @@ namespace FSO.LotView
         {
             base.PreDraw(device);
             if (HasInit == false) { return; }
+            // Marks "first PrepareCulling call this frame can update PreviousViewProjection". Without this,
+            // the 5+ PrepareCulling calls per frame each overwrite PreviousViewProjection -> velocity = 0.
+            State.BeginFrameForVelocity();
+            // Compute TAA sub-pixel jitter from a Halton(2,3) sequence ONLY when TAA is fully operational
+            // (setting on + 3D + history buffers + shader present). Gating it this way means jitter only
+            // runs when TAA's accumulation is actually present to resolve it (a half-enabled jitter without
+            // accumulation reads as constant shake — the "way too strong" the user saw before the gate).
+            // JITTER_PIXELS=0.5 gives the reference ±0.5px range (samples spread across the full pixel
+            // footprint), which is what properly resolves stairstepping on high-contrast edges. The earlier
+            // 0.25 under-sampled the pixel and left some edges aliased.
+            const float JITTER_PIXELS = 0.5f;
+            bool taaJitterReady = WorldConfig.Current.TAA
+                && State.CameraMode == CameraRenderMode._3D
+                && WorldContent.TAA != null
+                && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
+            if (taaJitterReady)
+            {
+                int i = (State.TAAFrameIndex++ & 0xF) + 1; // 1..16, Halton starts at sample 1
+                float hx = HaltonValue(i, 2) - 0.5f; // [-0.5, +0.5)
+                float hy = HaltonValue(i, 3) - 0.5f;
+                var bb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
+                int w = bb?.Width ?? device.Viewport.Width;
+                int h = bb?.Height ?? device.Viewport.Height;
+                // Sub-pixel offset in PIXELS, range ±JITTER_PIXELS (reference ±0.5px footprint at 0.5).
+                float jpxX = hx * (2f * JITTER_PIXELS);
+                float jpxY = hy * (2f * JITTER_PIXELS);
+                // Camera is PERSPECTIVE — jitter is applied as an NDC translation via Projection.M31/M32
+                // (depth-independent for perspective). NDC<->pixel: ndc = 2*px/dim, hence the 2x (this is
+                // the standard pixel->NDC conversion, NOT a doubling of the jitter amount).
+                var ndcJitter = new Vector2(2f * jpxX / w, 2f * jpxY / h);
+                State.TAAJitter = ndcJitter;
+                // The velocity buffer is built from the jittered projection, so it carries the per-frame
+                // jitter delta. Hand that delta (in the velocity buffer's UV units — same *(0.5,-0.5)
+                // mapping ComputeVelocity uses) to the resolve so it can cancel it during reprojection.
+                var prev = _PrevTAAJitterNDC;
+                FSO.LotView.Utils.TAAResolve.JitterDeltaUV =
+                    new Vector2((ndcJitter.X - prev.X) * 0.5f, (ndcJitter.Y - prev.Y) * -0.5f);
+                _PrevTAAJitterNDC = ndcJitter;
+            }
+            else
+            {
+                State.TAAJitter = Vector2.Zero;
+                FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
+                _PrevTAAJitterNDC = Vector2.Zero;
+            }
             State.Cameras.PreDraw(this);
+            // Snapshot the active 3D camera's projection params for GTAO's depth linearization.
+            // Falls through when no 3D camera (2D modes don't write velocity, so AO is gated off anyway).
+            var active3D = (State.Cameras.ActiveCamera as FSO.LotView.Utils.Camera.CameraController3D)?.Camera;
+            if (active3D != null && device != null)
+            {
+                float aspect = (device.Viewport.Height > 0) ? ((float)device.Viewport.Width / device.Viewport.Height) : 1f;
+                FSO.LotView.Utils.AOPass.SetCamera(active3D, aspect);
+            }
             BoundView();
             State._2D.PreciseZoom = State.PreciseZoom;
             State.OutsideColor = Blueprint.OutsideColor;
@@ -1025,36 +1102,102 @@ namespace FSO.LotView
             var lasts = PPXDepthEngine.SSAA;
             var cfg = WorldConfig.Current;
 
-            // Decoupled: hardware MSAA and supersampling are now independent and can combine.
+            // Decoupled: hardware MSAA and render scale are independent and can combine.
             var msaa = cfg.MSAA;                                         //0/2/4/8
-            var ssaa = (cfg.SuperSampling > 1) ? cfg.SuperSampling : 1;
+            float scale = (cfg.RenderScale > 0f) ? cfg.RenderScale : 1f; //<1 upscale, 1 native, >1 supersample
+            // Back-compat: an older config only set the legacy int SuperSampling; honor it at default RenderScale.
+            if (scale == 1f && cfg.SuperSampling > 1) scale = cfg.SuperSampling;
 
             // Back-compat: an older/stale options UI only sets the legacy WorldConfig.AA preset (0/1/2). If the
-            // decoupled fields were left at defaults but AA is set, derive MSAA/supersampling from it so AA
+            // decoupled fields were left at defaults but AA is set, derive MSAA/render scale from it so AA
             // still works regardless of which UI build is running.
-            if (msaa == 0 && ssaa == 1 && cfg.AA > 0)
+            if (msaa == 0 && scale == 1f && cfg.AA > 0)
             {
                 if (cfg.AA == 1) msaa = 4;
-                else ssaa = 2;
+                else scale = 2f;
             }
 
             PPXDepthEngine.MSAA = msaa;
-            PPXDepthEngine.SSAA = ssaa;
+            PPXDepthEngine.SSAA = scale;
 
             // The 2D path can't blit a multisampled supersample target the way the 3D path does, so when
-            // supersampling in 2D we fold it into hardware MSAA (matches the original behaviour).
-            if (PPXDepthEngine.SSAA > 1 && State.CameraMode < CameraRenderMode._3D)
+            // supersampling (scale > 1) in 2D we fold it into hardware MSAA (matches the original behaviour).
+            // Upscaling (scale < 1) is left as an actual reduced-resolution render resolved back up.
+            if (PPXDepthEngine.SSAA > 1f && State.CameraMode < CameraRenderMode._3D)
             {
                 PPXDepthEngine.MSAA = System.Math.Max(PPXDepthEngine.MSAA, 8);
-                PPXDepthEngine.SSAA = 1;
+                PPXDepthEngine.SSAA = 1f;
             }
 
-            // Resolve pass. The plain box-downsample is the default; FXAA/SMAA/FSR are post-process passes
-            // applied here once their effects are built (Windows shader build) — see PostProcessAA. Until
-            // those .xnb exist the chooser falls back to the box-downsample, so this is safe to ship now.
-            PPXDepthEngine.SSAAFunc = SSAADownsample.Draw;
+            // Resolve pass. The plain box-downsample is the default supersample resolve; FXAA/SMAA/FSR are
+            // post-process passes applied via PostProcessFunc once their effects are built (Windows shader
+            // build). When a pass's shader is missing the chooser leaves it off, so this is safe everywhere.
+            // Supersampling (scale > 1) uses the box downsample; upscaling (scale < 1) uses the FSR bicubic
+            // upscale. Falls back to the box resolve if the FSR shader isn't present (e.g. non-HiDef device).
+            PPXDepthEngine.SSAAFunc = (PPXDepthEngine.SSAA < 0.999f && WorldContent.FSR != null) ? FSRUpscale.Draw : SSAADownsample.Draw;
+
+            // FXAA is the only post-process pass built so far, so any selected post-AA mode (PostAA > 0,
+            // including the SMAA presets) routes through it until SMAA's own shaders land. Sharpen (FSR) is
+            // a separate pass and stays off here until its shader exists. null => DrawBackbuffer keeps the
+            // plain blit (no behaviour change). DrawBackbuffer only invokes this when SSAA == 1.
+            // Post-process AA mode selector. Priority: TAA > SMAA > FXAA > off. TAA replaces FXAA/SMAA's
+            // slot because it's itself an anti-aliasing pass (temporal + sub-pixel jitter); running FXAA on
+            // top would soften the already-temporally-blended frame for no benefit.
+            System.Action<GraphicsDevice, RenderTarget2D> postFn = null;
+            bool taaReady = cfg.TAA && State.CameraMode == CameraRenderMode._3D
+                            && WorldContent.TAA != null && WorldContent.MotionBlur != null; //TAA needs velocity buffer
+            if (taaReady)
+                postFn = TAAResolve.Draw;
+            else if (cfg.PostAA >= 2 && WorldContent.SMAA != null && WorldContent.SMAAAreaTex != null && WorldContent.SMAASearchTex != null)
+                postFn = SMAAResolve.Draw;
+            else if (cfg.PostAA >= 1 && WorldContent.FXAA != null)
+                postFn = PostProcessAA.Draw;
+            PPXDepthEngine.PostProcessFunc = postFn;
+
+            // FSR RCAS sharpening: a final pass over the resolved frame, enabled when a sharpen mode is
+            // selected with non-zero strength and the shader is present. null => no extra pass (no change).
+            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
+            PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
+
+            // Velocity buffer for TAA / per-pixel motion blur. Only meaningful in 3D mode (the 2D path is
+            // cached sprites; for it MotionBlur=1 uses a cheap camera-delta blur with no velocity buffer).
+            // Allocates ~16MB at 1080p; freed when both features are off.
+            bool wantVelocity = FSOEnvironment.Enable3D && State.CameraMode == CameraRenderMode._3D
+                                && (cfg.TAA || cfg.MotionBlur == 2 || cfg.VelocityDebug);
+            PPXDepthEngine.EnableVelocityTarget(wantVelocity);
+            // History buffers for TAA's ping-pong. Allocated alongside velocity (same scope as TAA itself).
+            PPXDepthEngine.EnableHistoryTargets(cfg.TAA && State.CameraMode == CameraRenderMode._3D);
+
+            // Per-pixel motion blur consumer: reads color + velocity, samples N taps along velocity.
+            bool motionBlur3D = wantVelocity && cfg.MotionBlur == 2 && WorldContent.MotionBlur != null && cfg.MotionBlurAmount > 0f;
+            PPXDepthEngine.MotionBlurFunc = motionBlur3D ? PerPixelMotionBlur.Draw : null;
+
+            // Bloom: post-process, independent of velocity/3D. Enabled when on with a non-zero intensity
+            // and the shader is present.
+            bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
+            PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
+
+            // GTAO/SSAO: functional but DISABLED for now — the path and its UI are hidden until the grass
+            // (and other content) is ready for it. Flip AOEnabled to re-enable; the menu controls in
+            // UIGraphicsOptionsDialog must be restored alongside. Kept wired (not deleted) so it's a one-line
+            // re-enable.
+            const bool AOEnabled = false;
+            bool ao = AOEnabled && wantVelocity && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null;
+            PPXDepthEngine.AOFunc = ao ? Utils.AOPass.Draw : null;
+            // AO needs the velocity buffer too — force-enable it even when TAA/motion blur are off.
+            if (AOEnabled && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null && State.CameraMode == CameraRenderMode._3D)
+            {
+                PPXDepthEngine.EnableVelocityTarget(true);
+                PPXDepthEngine.AOFunc = Utils.AOPass.Draw;
+            }
+
+            // Velocity diagnostic visualizer: when on, overrides the entire post chain in DrawBackbuffer
+            // so the user sees the raw MRT1 buffer instead of the scene. Surfacing this lets us debug
+            // which shaders' DrawWithVelocity techniques are correct without guessing from blur artifacts.
+            bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
+            PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }
 
         public virtual void ChangedWorldConfig(GraphicsDevice gd)

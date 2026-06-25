@@ -46,13 +46,17 @@ float4 SRGBToLinear(float4 col) {
 }
 
 float4 SSAASample4(float2 uv) {
+	// Average directly in gamma (sRGB-encoded) space. The previous version round-tripped through the
+	// approximate sRGB<->linear helpers above, which aren't exact inverses, so it shifted even flat
+	// regions slightly darker. The engine composites in gamma space and the non-supersampled resolve is
+	// a plain blit, so a gamma-space box average keeps brightness identical to "supersampling off".
 	float4 result = float4(0, 0, 0, 0);
 	uv += SSAASize / 2;
-	result += SRGBToLinear(tex2D(texSampler, uv));
-	result += SRGBToLinear(tex2D(texSampler, uv + float2(SSAASize.x, 0)));
-	result += SRGBToLinear(tex2D(texSampler, uv + float2(0, SSAASize.y)));
-	result += SRGBToLinear(tex2D(texSampler, uv + float2(SSAASize.x, SSAASize.y)));
-	return LinearToSRGB(result / 4);
+	result += tex2D(texSampler, uv);
+	result += tex2D(texSampler, uv + float2(SSAASize.x, 0));
+	result += tex2D(texSampler, uv + float2(0, SSAASize.y));
+	result += tex2D(texSampler, uv + float2(SSAASize.x, SSAASize.y));
+	return result / 4;
 }
 
 float4 PixelShaderFunction(VertexShaderOutput input) : COLOR0

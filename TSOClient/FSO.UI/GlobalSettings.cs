@@ -70,10 +70,21 @@ namespace FSO.Client
             { "AntiAlias", "0"}, //legacy AA preset (0/1/2). Kept in sync as a summary for UI/icon render targets.
             // Decoupled AA pipeline. MSAALevel (-1 = "unset", migrated from AntiAlias on first load).
             { "MSAALevel", "-1"},        //hardware MSAA samples: 0/2/4/8
-            { "SuperSampling", "1"},     //supersample factor: 1 (off) or 2
+            { "SuperSampling", "1"},     //legacy supersample factor: 1 (off) or 2; superseded by RenderScale, kept in sync
+            { "RenderScale", "1"},       //render-scale slider: <1 upscales (FSR/EASU), >1 supersamples (downsample resolve)
             { "PostAA", "0"},            //post-process AA: 0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High (shader pass; built on Windows)
             { "Sharpen", "0"},           //resolve sharpening: 0=Bilinear, 1=FSR (EASU+RCAS) (shader pass; built on Windows)
             { "SharpenAmount", "0.25"},  //RCAS sharpening strength, 0..1
+            { "TAA", "false"},           //temporal AA (3D mode only; needs velocity buffer)
+            { "MotionBlur", "0"},        //0=Off, 1=Camera (2D zoom/pan), 2=PerPixel (3D, needs velocity)
+            { "MotionBlurAmount", "0.5"},//motion blur strength 0..1
+            { "Bloom", "false"},         //threshold bright-pass bloom (post-process)
+            { "BloomThreshold", "1.0"},  //bloom luminance threshold (0..2)
+            { "BloomIntensity", "0.5"},  //bloom composite strength (0..1, shader scales internally)
+            { "AO", "false"},            //GTAO ambient occlusion (3D only)
+            { "AORadius", "0.5"},        //world-space AO sample radius
+            { "AOIntensity", "1.0"},     //AO composite strength (0..2)
+            { "VelocityDebug", "false"}, //diagnostic: render the MRT1 velocity buffer to screen (3D only)
             { "EdgeScroll", "true"},
             { "Lighting", "true"},
             { "FXVolume", "10"},
@@ -95,7 +106,7 @@ namespace FSO.Client
             { "SurroundingLotMode", "2" },
 
             { "UseCustomServer", "true" },
-            { "ModernCAS", "false" },
+            { "ModernCAS", "true" },
             { "GameEntryUrl", "http://api.freeso.org" },
             { "CitySelectorUrl", "http://api.freeso.org" },
 
@@ -150,10 +161,21 @@ namespace FSO.Client
         public bool SmoothZoom { get; set; }
         public int AntiAlias { get; set; } //legacy AA preset summary (0/1/2), kept in sync for UI/icon render targets
         public int MSAALevel { get; set; } //hardware MSAA samples: 0/2/4/8
-        public int SuperSampling { get; set; } //supersample factor: 1 (off) or 2
+        public int SuperSampling { get; set; } //legacy supersample factor: 1 (off) or 2; kept in sync with RenderScale
+        public float RenderScale { get; set; } //render scale: <1 upscale (FSR/EASU), 1 native, >1 supersample
         public int PostAA { get; set; } //0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High
         public int Sharpen { get; set; } //0=Bilinear, 1=FSR (EASU+RCAS)
         public float SharpenAmount { get; set; } //RCAS strength 0..1
+        public bool TAA { get; set; } //temporal anti-aliasing (3D, needs velocity buffer)
+        public int MotionBlur { get; set; } //0=Off, 1=Camera (2D), 2=PerPixel (3D)
+        public float MotionBlurAmount { get; set; } //motion blur strength 0..1
+        public bool Bloom { get; set; } //threshold bright-pass bloom
+        public float BloomThreshold { get; set; } //bloom luminance threshold
+        public float BloomIntensity { get; set; } //bloom composite strength
+        public bool AO { get; set; } //GTAO ambient occlusion (3D only)
+        public float AORadius { get; set; } //world-space AO sample radius
+        public float AOIntensity { get; set; } //AO composite strength
+        public bool VelocityDebug { get; set; } //diagnostic: visualize MRT1 velocity buffer to screen
         public bool EdgeScroll { get; set; }
         public bool Lighting { get; set; }
         public byte FXVolume { get; set; }

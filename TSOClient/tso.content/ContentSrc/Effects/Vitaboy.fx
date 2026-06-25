@@ -4,6 +4,15 @@ float4x4 World;
 float4x4 View;
 float4x4 Projection;
 
+// Velocity-technique matrices + previous-frame bone array for skinned-deformation velocity. The second
+// 50-matrix array (PreviousSkelBindings) doubles the constant budget past the 256 vec4 limit of
+// vs_4_0, so the entire effect file is built at pure vs_4_0 / ps_4_0 (DX HiDef, OGL Reach can
+// still consume it via its higher feature level mapping). Device already requires HiDef for FSR/SMAA.
+float4x4 ViewProjection;
+float4x4 PreviousViewProjection;
+float4x4 PreviousWorld;
+float4x4 PreviousSkelBindings[50];
+
 float ObjectID;
 float4 AmbientLight;
 float4x4 SkelBindings[50];
@@ -239,8 +248,8 @@ technique NoSSAA
     pass Pass1
     {
 #if SM4
-        VertexShader = compile vs_4_0_level_9_1 vsVitaboy();
-        PixelShader = compile ps_4_0_level_9_1 psVitaboyNoSSAA();
+        VertexShader = compile vs_4_0 vsVitaboy();
+        PixelShader = compile ps_4_0 psVitaboyNoSSAA();
 #else
         VertexShader = compile vs_3_0 vsVitaboy();
         PixelShader = compile ps_3_0 psVitaboyNoSSAA();
@@ -253,8 +262,8 @@ technique ObjIDMode
     pass Pass1
     {
 #if SM4
-        VertexShader = compile vs_4_0_level_9_1 vsVitaboy();
-        PixelShader = compile ps_4_0_level_9_1 psObjID();
+        VertexShader = compile vs_4_0 vsVitaboy();
+        PixelShader = compile ps_4_0 psObjID();
 #else
         VertexShader = compile vs_3_0 vsVitaboy();
         PixelShader = compile ps_3_0 psObjID();
@@ -268,8 +277,8 @@ technique AdvancedLighting
 	pass Pass1
 	{
 #if SM4
-		VertexShader = compile vs_4_0_level_9_1 vsVitaboy();
-		PixelShader = compile ps_4_0_level_9_3 psVitaboyAdv();
+		VertexShader = compile vs_4_0 vsVitaboy();
+		PixelShader = compile ps_4_0 psVitaboyAdv();
 #else
 		VertexShader = compile vs_3_0 vsVitaboy();
 		PixelShader = compile ps_3_0 psVitaboyAdv();
@@ -282,8 +291,8 @@ technique SSAA
 	pass Pass1
 	{
 #if SM4
-		VertexShader = compile vs_4_0_level_9_1 vsVitaboy();
-		PixelShader = compile ps_4_0_level_9_3 psVitaboy();
+		VertexShader = compile vs_4_0 vsVitaboy();
+		PixelShader = compile ps_4_0 psVitaboy();
 #else
 		VertexShader = compile vs_3_0 vsVitaboy();
 		PixelShader = compile ps_3_0 psVitaboy();
@@ -393,8 +402,8 @@ technique ShadowTech
 	pass Pass1
 	{
 #if SM4
-		VertexShader = compile vs_4_0_level_9_1 vsShadow();
-		PixelShader = compile ps_4_0_level_9_3 psShadow();
+		VertexShader = compile vs_4_0 vsShadow();
+		PixelShader = compile ps_4_0 psShadow();
 #else
 		VertexShader = compile vs_3_0 vsShadow();
 		PixelShader = compile ps_3_0 psShadow();
@@ -407,8 +416,8 @@ technique AdvancedLightingDirection
 	pass Pass1
 	{
 #if SM4
-		VertexShader = compile vs_4_0_level_9_1 vsVitaboy();
-		PixelShader = compile ps_4_0_level_9_3 psVitaboyDir();
+		VertexShader = compile vs_4_0 vsVitaboy();
+		PixelShader = compile ps_4_0 psVitaboyDir();
 #else
 		VertexShader = compile vs_3_0 vsVitaboy();
 		PixelShader = compile ps_3_0 psVitaboyDir();
@@ -422,11 +431,93 @@ technique HeadObject
 	pass Pass1
 	{
 #if SM4
-		VertexShader = compile vs_4_0_level_9_1 vsHeadObject();
-		PixelShader = compile ps_4_0_level_9_3 psHeadObject();
+		VertexShader = compile vs_4_0 vsHeadObject();
+		PixelShader = compile ps_4_0 psHeadObject();
 #else
 		VertexShader = compile vs_3_0 vsHeadObject();
 		PixelShader = compile ps_3_0 psHeadObject();
 #endif;
 	}
 }
+
+// ---------------------------------------------------------------------------- DrawWithVelocity
+// Velocity-writing technique. MUST stay LAST in the file so WorldEntities.DrawAvatars' literal index 0..6
+// selections still point at the original techniques. Body-translation velocity only — reuses current bone
+// matrices for both current and previous positions, so a sim walking shows blur but arm animation doesn't.
+struct VitaVertexOutV
+{
+    float4 position : SV_Position0;
+    float2 texCoord : TEXCOORD0;
+    float4 screenPos : TEXCOORD1;
+    float3 normal : TEXCOORD2;
+    float4 modelPos : TEXCOORD3;
+    float4 currClip : TEXCOORD4;
+    float4 prevClip : TEXCOORD5;
+};
+struct PSOutputV
+{
+    float4 color    : COLOR0;
+    float4 velocity : COLOR1;
+    float4 normal   : COLOR2;
+};
+VitaVertexOutV vsVitaboyV(VitaVertexIn v)
+{
+    VitaVertexOutV result;
+    float4 position = (1.0-v.params.z) * mul(v.position, SkelBindings[int(v.params.x)]) + v.params.z * mul(float4(v.bvPosition, 1.0), SkelBindings[int(v.params.y)]);
+    result.texCoord = v.texCoord;
+    float3 normal = mul(v.normal, (float3x3)SkelBindings[int(v.params.x)]);
+    float4 wPos = mul(position, World);
+    float4 finalPos = mul(wPos, ViewProjection);
+    result.position = finalPos;
+    result.modelPos = wPos;
+    result.normal = mul(normal, (float3x3)World);
+    result.screenPos = float4(finalPos.xy*float2(0.5, -0.5) + float2(0.5, 0.5), finalPos.zw);
+    result.currClip = finalPos;
+    // Previous-frame skinned position: same vertex data + bone indices, but PreviousSkelBindings holds
+    // last frame's bone matrices. Captures walk animation, arm-waving, idle bob — anything that moves a
+    // bone between frames creates a per-pixel velocity for that part of the mesh.
+    float4 prevPosition = (1.0-v.params.z) * mul(v.position, PreviousSkelBindings[int(v.params.x)]) + v.params.z * mul(float4(v.bvPosition, 1.0), PreviousSkelBindings[int(v.params.y)]);
+    float4 prevWPos = mul(prevPosition, PreviousWorld);
+    result.prevClip = mul(prevWPos, PreviousViewProjection);
+    return result;
+}
+float2 ComputeVitaboyVelocity(float4 curr, float4 prev)
+{
+    float currW = max(curr.w, 1e-4);
+    float prevW = max(prev.w, 1e-4);
+    float2 currNDC = curr.xy / currW;
+    float2 prevNDC = prev.xy / prevW;
+    float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
+    return clamp(v, -0.05, 0.05);
+}
+PSOutputV psVitaboyV(VitaVertexOutV v)
+{
+    PSOutputV o;
+    float depth = v.screenPos.z / v.screenPos.w;
+#if SIMPLE
+    if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
+#endif
+    float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcess(v.modelPos) * AmbientLight);
+    color.rgb *= pow((dot(normalize(v.normal), float3(0, 1, 0)) + 1) / 2, 0.5)*0.5 + 0.5f;
+    o.color = color;
+    // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. Linear (not NDC clip.z/clip.w)
+    // so half-float depth precision stays ~distance*2^-10 — NDC banding broke SSAO. See RCObject.PackDepth.
+    o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
+    // World-space normal for screen-space AO. v.normal already transformed by World in the VS.
+    o.normal = float4(normalize(v.normal), 1);
+    return o;
+}
+technique DrawWithVelocity
+{
+    pass Pass1
+    {
+#if SM4
+        VertexShader = compile vs_4_0 vsVitaboyV();
+        PixelShader = compile ps_4_0 psVitaboyV();
+#else
+        VertexShader = compile vs_3_0 vsVitaboyV();
+        PixelShader = compile ps_3_0 psVitaboyV();
+#endif;
+    }
+}
+

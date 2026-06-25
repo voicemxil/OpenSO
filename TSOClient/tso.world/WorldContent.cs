@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.IO;
 using Microsoft.Xna.Framework.Content;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -31,6 +32,37 @@ namespace FSO.LotView
             GrassEffect = new GrassEffect(ContentManager.Load<Effect>("Effects/GrassShader" + EffectSuffix));
             RCObject = new RCObjectEffect(ContentManager.Load<Effect>("Effects/RCObject" + EffectSuffix));
             SSAA = ContentManager.Load<Effect>("Effects/SSAA");
+            // Post-process AA resolve. Optional: only present in content profiles where the shader was
+            // built (Windows DX/OGL). Missing -> null, and the AA pipeline falls back to the plain blit.
+            try { FXAA = ContentManager.Load<Effect>("Effects/FXAA"); }
+            catch { FXAA = null; }
+            // FSR (RCAS sharpening). Optional, same as FXAA.
+            try { FSR = ContentManager.Load<Effect>("Effects/FSR"); }
+            catch { FSR = null; }
+            // SMAA (3-pass post-AA) and its precomputed AreaTex/SearchTex lookup textures. Optional, same as
+            // FXAA/FSR — if any piece is missing the SMAA path stays off (resolve falls back to FXAA / blit).
+            try { SMAA = ContentManager.Load<Effect>("Effects/SMAA"); }
+            catch { SMAA = null; }
+            SMAAAreaTex = TryLoadPNG("Textures/SMAA_AreaTex.png");
+            SMAASearchTex = TryLoadPNG("Textures/SMAA_SearchTex.png");
+            // Per-pixel motion blur (3D). Reads color + velocity buffer.
+            try { MotionBlur = ContentManager.Load<Effect>("Effects/MotionBlur"); }
+            catch { MotionBlur = null; }
+            // Temporal AA (3D). Needs velocity buffer + history ping-pong.
+            try { TAA = ContentManager.Load<Effect>("Effects/TAA"); }
+            catch { TAA = null; }
+            // Velocity diagnostic visualizer (3D). Decodes MRT1 to screen color.
+            try { VelocityViz = ContentManager.Load<Effect>("Effects/VelocityViz"); }
+            catch { VelocityViz = null; }
+            // Sky dome shader with velocity output (replaces BasicEffect when velocity is active).
+            try { SkyVelocity = ContentManager.Load<Effect>("Effects/SkyVelocity"); }
+            catch { SkyVelocity = null; }
+            // Bloom (threshold + Kawase dual-filter + composite).
+            try { Bloom = ContentManager.Load<Effect>("Effects/Bloom"); }
+            catch { Bloom = null; }
+            // GTAO (slice-based ambient occlusion).
+            try { GTAO = ContentManager.Load<Effect>("Effects/GTAO"); }
+            catch { GTAO = null; }
             SpriteEffect = new Effects.SpriteEffect(ContentManager.Load<Effect>("Effects/SpriteEffects" + EffectSuffix));
             ParticleEffect = new LightMappedEffect(ContentManager.Load<Effect>("Effects/ParticleShader"));
             AvatarEffect = new LightMappedEffect(ContentManager.Load<Effect>("Effects/Vitaboy" + EffectSuffix));
@@ -65,6 +97,36 @@ namespace FSO.LotView
         public static RCObjectEffect RCObject;
 
         public static Effect SSAA;
+
+        public static Effect FXAA;
+
+        public static Effect FSR;
+
+        public static Effect SMAA;
+        public static Texture2D SMAAAreaTex;
+        public static Texture2D SMAASearchTex;
+
+        public static Effect MotionBlur;
+        public static Effect TAA;
+        public static Effect VelocityViz;
+        public static Effect SkyVelocity;
+        public static Effect Bloom;
+        public static Effect GTAO;
+
+        // Load a PNG from ContentDir as a Texture2D. Returns null if missing/unreadable so the caller can
+        // disable the dependent feature (matches the ParticleComponent/AbstractSkyDome pattern).
+        private static Texture2D TryLoadPNG(string relPath)
+        {
+            try
+            {
+                var gd = ((IGraphicsDeviceService)ContentManager.ServiceProvider.GetService(typeof(IGraphicsDeviceService))).GraphicsDevice;
+                using (var fs = File.OpenRead(Path.Combine(FSOEnvironment.ContentDir, relPath)))
+                {
+                    return Texture2D.FromStream(gd, fs);
+                }
+            }
+            catch { return null; }
+        }
 
         public static Effects.SpriteEffect SpriteEffect;
 

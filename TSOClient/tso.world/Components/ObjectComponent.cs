@@ -61,6 +61,12 @@ namespace FSO.LotView.Components
         private BoundingBox _Bounds;
         private Matrix _World3D;
         private bool _World3DDirty;
+        // Previous-frame World3D snapshot, captured at the end of each Draw. Used by velocity-aware shaders
+        // (motion vectors -> motion blur, TAA) to compute per-pixel screen-space motion. On the first draw
+        // it mirrors the current World3D so velocity = 0 (no motion).
+        private Matrix _PreviousWorld3D;
+        private bool _PrevWorld3DValid;
+        public Matrix PreviousWorld3D => _PrevWorld3DValid ? _PreviousWorld3D : World3D;
 
         protected override bool _WorldDirty {
             get => base._WorldDirty;
@@ -529,7 +535,10 @@ namespace FSO.LotView.Components
             {
                 var mworld = World3D;
                 dgrp.World = mworld;
+                dgrp.PreviousWorld = _PrevWorld3DValid ? _PreviousWorld3D : mworld;
                 if (this.DrawGroup != null) dgrp.Draw3D(world);
+                _PreviousWorld3D = mworld;
+                _PrevWorld3DValid = true;
             }
             if (world.CameraMode == CameraRenderMode._2D && Mode.IsSet(ComponentRenderMode._2D))
             {

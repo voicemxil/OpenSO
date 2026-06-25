@@ -80,6 +80,60 @@
 /processorParam:DebugMode=Auto
 /build:Effects/SSAA.fx
 
+#begin Effects/FXAA.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/FXAA.fx
+
+#begin Effects/FSR.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/FSR.fx
+
+#begin Effects/SMAA.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/SMAA.fx
+
+#begin Effects/MotionBlur.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/MotionBlur.fx
+
+#begin Effects/TAA.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/TAA.fx
+
+#begin Effects/VelocityViz.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/VelocityViz.fx
+
+#begin Effects/SkyVelocity.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/SkyVelocity.fx
+
+#begin Effects/Bloom.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/Bloom.fx
+
+#begin Effects/GTAO.fx
+/importer:EffectImporter
+/processor:EffectProcessor
+/processorParam:DebugMode=Auto
+/build:Effects/GTAO.fx
+
 #begin Effects/ParticleShader.fx
 /importer:EffectImporter
 /processor:EffectProcessor

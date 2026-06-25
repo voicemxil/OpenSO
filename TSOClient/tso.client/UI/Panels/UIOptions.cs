@@ -516,7 +516,7 @@ namespace FSO.Client.UI.Panels
                 // Simple in-game AA on/off, mapped onto the decoupled pipeline (on = MSAA 4x).
                 settings.AntiAlias = settings.AntiAlias ^ 1;
                 if (settings.AntiAlias > 0) settings.MSAALevel = 4;
-                else { settings.MSAALevel = 0; settings.SuperSampling = 1; settings.PostAA = 0; settings.Sharpen = 0; }
+                else { settings.MSAALevel = 0; settings.SuperSampling = 1; settings.RenderScale = 1f; settings.PostAA = 0; settings.Sharpen = 0; }
             }
             else if (button == ShadowsCheckButton) settings.SmoothZoom = !(settings.SmoothZoom);
             else if (button == LightingCheckButton) settings.Lighting = !(settings.Lighting);
@@ -584,7 +584,18 @@ namespace FSO.Client.UI.Panels
                 AA = settings.AntiAlias,
                 MSAA = settings.MSAALevel,
                 SuperSampling = settings.SuperSampling,
+                RenderScale = settings.RenderScale,
                 PostAA = settings.PostAA,
+                TAA = settings.TAA,
+                MotionBlur = settings.MotionBlur,
+                MotionBlurAmount = settings.MotionBlurAmount,
+                Bloom = settings.Bloom,
+                BloomThreshold = settings.BloomThreshold,
+                BloomIntensity = settings.BloomIntensity,
+                AO = settings.AO,
+                AORadius = settings.AORadius,
+                AOIntensity = settings.AOIntensity,
+                VelocityDebug = settings.VelocityDebug,
                 Sharpen = settings.Sharpen,
                 SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,

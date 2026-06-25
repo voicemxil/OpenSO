@@ -134,6 +134,10 @@ namespace FSO.Client.Rendering.City
         private int[] m_SelTile = new int[] { -1, -1 };
         private Vector2? m_VecSelTile;
         private Matrix m_MovMatrix;
+        // Previous-frame surroundings mvp (BaseMatrix) for city-backdrop velocity output. Tracked across
+        // frames so the velocity shaders can reproject (the backdrop is static; only the camera moves).
+        private Matrix m_PrevMovMatrix;
+        private bool m_PrevMovValid;
         private int[][] m_SurTileOffs = new int[][] 
         {
             new int[] {0, -1},
@@ -1731,6 +1735,11 @@ namespace FSO.Client.Rendering.City
             m_MovMatrix = mvp;
             VertexShader.Parameters["BaseMatrix"].SetValue(mvp);
             VertexShader.Parameters["MV"].SetValue(mv);
+            // Previous-frame mvp for backdrop velocity (foliage/terrain velocity passes). First frame uses
+            // the current mvp so velocity starts at zero rather than a huge spurious value.
+            VertexShader.Parameters["PrevBaseMatrix"]?.SetValue(m_PrevMovValid ? m_PrevMovMatrix : mvp);
+            m_PrevMovMatrix = mvp;
+            m_PrevMovValid = true;
             var frustum = new BoundingFrustum(mvp);
                 
             PixelShader.CurrentTechnique = PixelShader.Techniques[2];
@@ -1821,11 +1830,32 @@ namespace FSO.Client.Rendering.City
 
             //Geometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, 3, 3);
 
-            if (SubdivGeometry.Ready != -1) SubdivGeometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, 3,3);
-            Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, 3,3, SubdivGeometry.Ready, 16);
+            // Velocity output for the whole surroundings (distant terrain + water + procedural foliage +
+            // facade houses/trees). Bind the velocity MRT ONCE around the entire sequence so the shared
+            // depth buffer stays continuous — switching render targets per-draw discards the depth buffer
+            // and makes trees/terrain depth-fight (terrain showing through trees). Each sub-draw selects
+            // its own velocity pass (terrain pass 5; foliage/facades self-detect). PrevBaseMatrix was set
+            // above. Restored before particles. Camera is static-world here so velocity is camera-induced.
+            var velRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            bool useVel = velRT != null;
+            int cityPass = useVel ? 5 : 3;
+            RenderTargetBinding[] savedSurrRTs = null;
+            if (useVel)
+            {
+                savedSurrRTs = gfx.GetRenderTargets();
+                var colorRT = (savedSurrRTs != null && savedSurrRTs.Length > 0)
+                    ? (RenderTarget2D)savedSurrRTs[0].RenderTarget
+                    : FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gfx, colorRT, velRT);
+            }
+
+            if (SubdivGeometry.Ready != -1) SubdivGeometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, cityPass, cityPass);
+            Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, cityPass, cityPass, SubdivGeometry.Ready, 16);
 
             Foliage.Draw(this, m_GraphicsDevice, Content, VertexShader, PixelShader, 3, 1, frustum);
             DrawFacades(new Vector2(id >> 16, id & 0xFFFF), 3, true, frustum);
+
+            if (useVel && savedSurrRTs != null) gfx.SetRenderTargets(savedSurrRTs);
             gfx.DepthStencilState = DepthStencilState.Default;
 
             
@@ -1839,7 +1869,7 @@ namespace FSO.Client.Rendering.City
             }
         }
 
-        private void DrawFacade(FSOF fsof, ref Matrix baseMat, Vector3 position, int passIndex, bool drawNight)
+        private void DrawFacade(FSOF fsof, ref Matrix baseMat, Vector3 position, int vsPass, int psPass, bool drawNight)
         {
             if (fsof == null) return;
             var b = (1 / 75f);
@@ -1847,7 +1877,7 @@ namespace FSO.Client.Rendering.City
             var gfx = m_GraphicsDevice;
             VertexShader.Parameters["ObjModel"].SetValue(mat);
             VertexShader.Parameters["DepthBias"].SetValue(-0.18f * Camera.DepthBiasScale);
-            VertexShader.CurrentTechnique.Passes[passIndex].Apply();
+            VertexShader.CurrentTechnique.Passes[vsPass].Apply();
 
             if (drawNight)
             {
@@ -1858,7 +1888,8 @@ namespace FSO.Client.Rendering.City
             if (fsof.WallVGPU != null)
             {
                 PixelShader.Parameters["ObjTex"].SetValue((drawNight) ? fsof.NightWallTexture : fsof.WallTexture);
-                PixelShader.CurrentTechnique.Passes[passIndex].Apply();
+                PixelShader.CurrentTechnique.Passes[psPass].Apply();
+                VertexShader.CurrentTechnique.Passes[vsPass].Apply();
                 gfx.SetVertexBuffer(fsof.WallVGPU);
                 gfx.Indices = fsof.WallIGPU;
 
@@ -1868,7 +1899,8 @@ namespace FSO.Client.Rendering.City
             if (fsof.FloorVGPU != null)
             {
                 PixelShader.Parameters["ObjTex"].SetValue((drawNight) ? fsof.NightFloorTexture : fsof.FloorTexture);
-                PixelShader.CurrentTechnique.Passes[passIndex].Apply();
+                PixelShader.CurrentTechnique.Passes[psPass].Apply();
+                VertexShader.CurrentTechnique.Passes[vsPass].Apply();
                 gfx.SetVertexBuffer(fsof.FloorVGPU);
                 gfx.Indices = fsof.FloorIGPU;
 
@@ -1894,11 +1926,19 @@ namespace FSO.Client.Rendering.City
             m_GraphicsDevice.RasterizerState = RasterizerState.CullNone;
             m_GraphicsDevice.BlendState = BlendState.NonPremultiplied;
 
+            // Velocity output for facade art (surrounding-lot houses + trees). The velocity MRT is bound
+            // once by DrawSurrounding around the whole sequence (keeps depth continuous), so here we only
+            // select the velocity passes: RenderCityObj VS pass 7 (facade FinalFogVelocity) + PS pass 5
+            // (CityObjPSFogV). Facades are static -> camera-induced velocity.
+            bool useVel = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null;
+            int fVsPass = useVel ? 7 : passIndex;
+            int fPsPass = useVel ? 5 : passIndex;
+
             PixelShader.CurrentTechnique = PixelShader.Techniques[1];
-            PixelShader.CurrentTechnique.Passes[passIndex].Apply();
-            
+            PixelShader.CurrentTechnique.Passes[fPsPass].Apply();
+
             VertexShader.CurrentTechnique = VertexShader.Techniques[1];
-            VertexShader.CurrentTechnique.Passes[passIndex].Apply();
+            VertexShader.CurrentTechnique.Passes[fVsPass].Apply();
 
             double biasTime = FinaleUtils.BiasSunTime(Time);
             var night = biasTime < 0.25f || biasTime > 0.75f;
@@ -1955,7 +1995,7 @@ namespace FSO.Client.Rendering.City
 
                                 if (lotImg != null)
                                 {
-                                    DrawFacade(lotImg, ref baseMat, new Vector3(x, elev / 12.0f, y), passIndex, night && online);
+                                    DrawFacade(lotImg, ref baseMat, new Vector3(x, elev / 12.0f, y), fVsPass, fPsPass, night && online);
                                 }
                             }
                         }
@@ -1981,7 +2021,7 @@ namespace FSO.Client.Rendering.City
                         if (LotTileLookup.ContainsKey(house.Location)) lhouse = LotTileLookup[house.Location];
                         var online = ((lhouse?.flags ?? 0) & LotTileFlags.Online) > 0;
 
-                        DrawFacade(house.LotImg.LotFacade, ref baseMat, house.Position, passIndex, night && online);
+                        DrawFacade(house.LotImg.LotFacade, ref baseMat, house.Position, fVsPass, fPsPass, night && online);
                     }
                 }
             }

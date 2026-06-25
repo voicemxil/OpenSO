@@ -312,6 +312,45 @@ float4 ObjShadowMapPS(VertexToShad Input) : COLOR0
 	return float4(Input.Depth.x, 0, 0, 1);
 }
 
+// Velocity-aware city object PS (matches CityObjPSFog colour + emits screen-space velocity to MRT1).
+struct ObjVertexOutV
+{
+	float4 position : SV_Position0;
+	float2 texCoord : TEXCOORD0;
+	float3 vPos : TEXCOORD1;
+	float3 normal : TEXCOORD2;
+	float3 shadPos : TEXCOORD3;
+	float4 currClip : TEXCOORD4;
+	float4 prevClip : TEXCOORD5;
+};
+struct CityPSOutV { float4 color : COLOR0; float4 velocity : COLOR1; float4 normal : COLOR2; };
+
+float2 CityComputeVel(float4 curr, float4 prev)
+{
+	float cw = max(curr.w, 1e-4);
+	float pw = max(prev.w, 1e-4);
+	float2 c = curr.xy / cw;
+	float2 p = prev.xy / pw;
+	return clamp((c - p) * float2(0.5, -0.5), -0.05, 0.05);
+}
+
+CityPSOutV CityObjPSFogV(ObjVertexOutV Input)
+{
+	CityPSOutV o;
+	float4 BCol = tex2D(ObjSampler, Input.texCoord);
+	if (BCol.a < 0.01) discard;
+	float diffuse = 1;
+	float fogDistance = min(1, length(Input.vPos) / FogMaxDist);
+	float4 c = float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz*lerp(ShadowMult, 1, diffuse), 1)).rgb, BCol.a);
+	c.xyz = lerp(c.xyz, FogColor.xyz, fogDistance);
+	o.color = c;
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	// World-space normal for screen-space AO. Trees use a hardcoded up-vector in the VS (TreeVSv) so this
+	// is the billboard normal; ordinary city objects use their geometric normal.
+	o.normal = float4(normalize(Input.normal), 1);
+	return o;
+}
+
 technique RenderCityObj
 {
 	pass Final
@@ -358,10 +397,19 @@ technique RenderCityObj
 		PixelShader = compile ps_3_0 CityObjPSFogShad();
 #endif;
 	}
+
+	pass FinalFogVelocity
+	{
+#if SM4
+		PixelShader = compile ps_4_0_level_9_3 CityObjPSFogV();
+#else
+		PixelShader = compile ps_3_0 CityObjPSFogV();
+#endif;
+	}
 	//
 }
 
-//new city 
+//new city
 
 bool UseVertexColor;
 struct CityVertexOut
@@ -410,6 +458,44 @@ float4 ShadLight(float4 BCol, CityVertexOut Input) {
 	float depth = Input.shadPos.z;
 
 	return float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz * lerp(ShadowMult, 1, min(Diffuse(Input), shadowLerp(ShadSampler, ShadSize, Input.shadPos.xy, depth + 0.003*(2048.0 / ShadSize.x)))), 1)).rgb, BCol.w);
+}
+
+// Velocity-aware new-city PS path. CityVertexOutV mirrors VerShader's; ToBaseV copies the shared fields
+// so we can reuse the existing colour helpers, then we emit velocity to MRT1.
+struct CityVertexOutV
+{
+	float4 VertexPosition : SV_Position0;
+	float4 TextureCoords : TEXCOORD0;
+	float4 NormalTrans : TEXCOORD1;
+	float2 VertexCoord : TEXCOORD2;
+	float3 shadPos : TEXCOORD3;
+	float3 vPos : TEXCOORD4;
+	float4 currClip : TEXCOORD5;
+	float4 prevClip : TEXCOORD6;
+};
+
+CityVertexOut ToBaseV(CityVertexOutV v)
+{
+	CityVertexOut o = (CityVertexOut)0;
+	o.VertexPosition = v.VertexPosition;
+	o.TextureCoords = v.TextureCoords;
+	o.NormalTrans = v.NormalTrans;
+	o.VertexCoord = v.VertexCoord;
+	o.shadPos = v.shadPos;
+	o.vPos = v.vPos;
+	return o;
+}
+
+CityPSOutV NCityPSFogV(CityVertexOutV Input)
+{
+	CityPSOutV o;
+	CityVertexOut b = ToBaseV(Input);
+	float4 BCol = GetNCityColor(b);
+	BCol = float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz * lerp(ShadowMult, 1, Diffuse(b)), 1)).rgb, BCol.w);
+	o.color = Fog(BCol, b);
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	o.normal = float4(normalize(Input.NormalTrans.xyz), 1);
+	return o;
 }
 
 float4 NCityPS(CityVertexOut Input) : COLOR0
@@ -486,6 +572,15 @@ pass FinalFogShadow
 	PixelShader = compile ps_4_0_level_9_3 NCityPSFogShad();
 #else
 	PixelShader = compile ps_3_0 NCityPSFogShad();
+#endif;
+}
+
+pass FinalFogVelocity
+{
+#if SM4
+	PixelShader = compile ps_4_0_level_9_3 NCityPSFogV();
+#else
+	PixelShader = compile ps_3_0 NCityPSFogV();
 #endif;
 }
 //
@@ -598,6 +693,18 @@ float4 WCityPSFogShad(CityVertexOut Input) : COLOR0
 	return Fog(ShadLight(BCol, Input), Input);
 }
 
+CityPSOutV WCityPSFogV(CityVertexOutV Input)
+{
+	CityPSOutV o;
+	CityVertexOut b = ToBaseV(Input);
+	float4 BCol = GetWCityColor(b);
+	BCol = float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz * lerp(ShadowMult, 1, Diffuse(b)), 1)).rgb, BCol.w);
+	o.color = Fog(BCol, b);
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	o.normal = float4(normalize(Input.NormalTrans.xyz), 1);
+	return o;
+}
+
 technique RenderWCity
 {
 	pass Final
@@ -642,6 +749,15 @@ technique RenderWCity
 		PixelShader = compile ps_4_0_level_9_3 WCityPSFogShad();
 #else
 		PixelShader = compile ps_3_0 WCityPSFogShad();
+#endif;
+	}
+
+	pass FinalFogVelocity
+	{
+#if SM4
+		PixelShader = compile ps_4_0_level_9_3 WCityPSFogV();
+#else
+		PixelShader = compile ps_3_0 WCityPSFogV();
 #endif;
 	}
 	//

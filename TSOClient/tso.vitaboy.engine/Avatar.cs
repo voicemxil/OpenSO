@@ -322,11 +322,25 @@ namespace FSO.Vitaboy
             }
         }
 
+        // Previous-frame bones for the velocity-aware Vitaboy technique. First frame mirrors current so
+        // velocity = 0 (no motion). Snapshotted at the end of DrawGeometry below.
+        protected Matrix[] PreviousSkelBones;
+
         public void DrawGeometry(Microsoft.Xna.Framework.Graphics.GraphicsDevice device, Effect effect)
         {
             //Effect.CurrentTechnique = Effect.Techniques[0];
             if (SkelBones == null) ReloadSkeleton();
             effect.Parameters["SkelBindings"].SetValue(SkelBones);
+            var prevParam = effect.Parameters["PreviousSkelBindings"];
+            if (prevParam != null)
+            {
+                if (PreviousSkelBones == null || PreviousSkelBones.Length != SkelBones.Length)
+                {
+                    PreviousSkelBones = new Matrix[SkelBones.Length];
+                    System.Array.Copy(SkelBones, PreviousSkelBones, SkelBones.Length); //first draw: no motion
+                }
+                prevParam.SetValue(PreviousSkelBones);
+            }
 
             lock (Bindings)
             {
@@ -396,6 +410,12 @@ namespace FSO.Vitaboy
             }
 
             DrawHeadObject(device, effect);
+
+            // Snapshot the current bone array for next frame's velocity computation.
+            if (PreviousSkelBones != null && PreviousSkelBones.Length == SkelBones.Length)
+            {
+                System.Array.Copy(SkelBones, PreviousSkelBones, SkelBones.Length);
+            }
         }
 
         public void DrawHeadObject(GraphicsDevice device, Effect effect)

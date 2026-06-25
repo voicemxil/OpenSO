@@ -203,6 +203,11 @@ namespace FSO.LotView.Components
             DepthClipEnable = false
         };
 
+        // Previous-frame dome MVP for velocity output (camera-rotation reprojection). The sky has no
+        // velocity system of its own, so we track it here across frames.
+        private Matrix _prevSkyMVP;
+        private bool _prevSkyMVPValid;
+
         public void Draw(GraphicsDevice gd, Color outsideColor, Matrix view, Matrix projection, float time, WeatherController weather, Vector3 sunVector, float scale)
         {
             var ocolor = outsideColor.ToVector4();
@@ -217,7 +222,11 @@ namespace FSO.LotView.Components
             effect.LightingEnabled = false;
             effect.Texture = GradTex;
             effect.Alpha = (1 - (float)Math.Sqrt(wint) * 0.75f);
-            effect.DiffuseColor = Vector3.One;
+            // Sky exposure < 1 tames the eye-burning white band at sunrise/sunset (gradient texture is pre-
+            // baked with a 1.0 sun-glow band; in LDR that reads as solid white). Same value pushed to both
+            // the BasicEffect fallback and SkyVelocity for visual parity.
+            const float SkyExposure = 0.85f;
+            effect.DiffuseColor = new Vector3(SkyExposure);
             effect.AmbientLightColor = Vector3.One;
             //effect.DiffuseColor = new Vector3(Math.Min(1, color.X), Math.Min(1, color.Y), Math.Min(1, color.Z));
             //effect.AmbientLightColor = new Vector3(color.X, color.Y, color.Z);
@@ -236,13 +245,43 @@ namespace FSO.LotView.Components
             gd.BlendState = BlendState.AlphaBlend;
             gd.SamplerStates[0] = SamplerState.LinearWrap;
 
-            foreach (var pass in effect.CurrentTechnique.Passes)
+            // Velocity path: when a velocity target is bound (TAA / motion blur active in 3D), draw the
+            // dome with the custom SkyVelocity shader so it writes camera-rotation velocity to MRT1.
+            // Otherwise fall back to the BasicEffect path (zero behaviour change when velocity is off).
+            var velRT = PPXDepthEngine.GetVelocityTarget();
+            var skyVel = WorldContent.SkyVelocity;
+            if (velRT != null && skyVel != null)
             {
-                pass.Apply();
-                gd.Indices = Indices;
-                gd.SetVertexBuffer(Verts);
+                var domeMVP = Matrix.CreateScale(5f * scale) * view * projection;
+                var savedRTs = gd.GetRenderTargets();
+                PPXDepthEngine.BindVelocityMRT(gd, velRT);
+                skyVel.Parameters["MVP"]?.SetValue(domeMVP);
+                skyVel.Parameters["PrevMVP"]?.SetValue(_prevSkyMVPValid ? _prevSkyMVP : domeMVP);
+                skyVel.Parameters["Alpha"]?.SetValue(1 - (float)Math.Sqrt(wint) * 0.75f);
+                skyVel.Parameters["Exposure"]?.SetValue(SkyExposure);
+                skyVel.Parameters["SkyTex"]?.SetValue(GradTex);
+                skyVel.CurrentTechnique = skyVel.Techniques["DrawSky"];
+                foreach (var pass in skyVel.CurrentTechnique.Passes)
+                {
+                    pass.Apply();
+                    gd.Indices = Indices;
+                    gd.SetVertexBuffer(Verts);
+                    gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, PrimCount);
+                }
+                gd.SetRenderTargets(savedRTs); // unbind MRT — sun/moon below use BasicEffect (no velocity)
+                _prevSkyMVP = domeMVP;
+                _prevSkyMVPValid = true;
+            }
+            else
+            {
+                foreach (var pass in effect.CurrentTechnique.Passes)
+                {
+                    pass.Apply();
+                    gd.Indices = Indices;
+                    gd.SetVertexBuffer(Verts);
 
-                gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, PrimCount);
+                    gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, PrimCount);
+                }
             }
 
             gd.BlendState = BlendState.NonPremultiplied;
