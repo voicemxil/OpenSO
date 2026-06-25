@@ -1,0 +1,11 @@
+# OpenSO public-API reverse proxy.
+# Terminates HTTPS (automatic Let's Encrypt) for the UserApi so the HTTPS website (openso.org) and the
+# email-verification links can reach it. API_DOMAIN is injected by docker-compose (default api.openso.org).
+#
+# Requirement: API_DOMAIN must resolve to this box and be DNS-only in Cloudflare (grey cloud), otherwise
+# Cloudflare proxies the ACME HTTP-01 challenge and cert issuance fails. (If you'd rather keep it proxied,
+# use a Cloudflare Origin certificate + the tls directive instead of automatic issuance.)
+{$API_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy freeso-server:9000
+}

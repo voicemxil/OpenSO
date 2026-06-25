@@ -1,13 +1,18 @@
-name: freeso
+name: openso
+
+# OpenSO self-hosted server stack: the game server + MariaDB + a Caddy reverse proxy that terminates
+# HTTPS for the public API (the website on GitHub Pages is HTTPS, so it can only call the API over HTTPS,
+# and email-verification links must be https://). Full walkthrough: docker/DEPLOY.md.
 
 services:
   mariadb:
     image: mariadb:11
     environment:
-      MARIADB_ROOT_PASSWORD: rootpassword
+      # CHANGE these for a real deployment (and match the password in config.json's connectionString).
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
       MARIADB_DATABASE: fso
-      MARIADB_USER: fsoserver
-      MARIADB_PASSWORD: password
+      MARIADB_USER: ${DB_USER:-fsoserver}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-password}
     volumes:
       - mariadb_data:/var/lib/mysql
     healthcheck:
@@ -21,13 +26,16 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     labels:
-      org.opencontainers.image.source: "https://github.com/riperiperi/FreeSO"
+      org.opencontainers.image.source: "https://github.com/voicemxil/OpenSO"
       org.opencontainers.image.licenses: "MPL-2.0"
     depends_on:
       mariadb:
         condition: service_healthy
     ports:
+      # API (9000) is normally reached through Caddy on 443; exposed here too for direct/debug access.
       - "9000:9000"
+      # Game traffic (city / lots / tasks) — raw TCP. Must be reachable DIRECTLY (Cloudflare's HTTP proxy
+      # can't carry these), i.e. via game.openso.org as a DNS-only record -> this box.
       - "33100:33100"
       - "33101:33101"
       - "34100:34100"
@@ -35,9 +43,30 @@ services:
       - "35100:35100"
       - "35101:35101"
     volumes:
-      - ~/Documents/The Sims Online/TSOClient:/game:ro
+      # Your own TSO client files (must contain TSOClient/tuning.dat). Put them at docker/tso/TSOClient or
+      # set TSO_GAME_PATH. NEVER redistribute these — each host supplies their own (MPL / fair-use line).
+      - ${TSO_GAME_PATH:-./tso/TSOClient}:/game:ro
       - ./nfs:/nfs:rw
       - ./config.json:/app/config.json:cached
 
+  # HTTPS reverse proxy for the public API: https://api.openso.org -> Caddy:443 -> freeso-server:9000,
+  # with automatic Let's Encrypt certs. api.openso.org must be a DNS-only (grey-cloud) record pointing at
+  # this box so Caddy's ACME challenge reaches it. Set API_DOMAIN to your API hostname.
+  caddy:
+    image: caddy:2
+    depends_on:
+      - freeso-server
+    environment:
+      API_DOMAIN: ${API_DOMAIN:-api.openso.org}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
 volumes:
   mariadb_data:
+  caddy_data:
+  caddy_config:

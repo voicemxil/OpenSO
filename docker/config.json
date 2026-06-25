@@ -14,7 +14,7 @@
       "call_sign": "callisto",
       "binding": "0.0.0.0:35100",
       "internal_host": "127.0.0.1:35101",
-      "public_host": "localhost:35101",
+      "public_host": "game.openso.org:35101",
       "schedule": [
         {
           "cron": "0 3 * * *",
@@ -71,7 +71,14 @@
       "bindings": [
         "http://+:9000/"
       ],
-      "maintenance": false
+      "maintenance": false,
+
+      "cdnUrl": "https://api.openso.org",
+
+      "smtpHost": "smtp.your-email-provider.com",
+      "smtpPort": 587,
+      "smtpUser": "noreply@openso.org",
+      "smtpPassword": "REPLACE_WITH_SMTP_APP_PASSWORD"
     },
     "cities": [
       {
@@ -79,7 +86,7 @@
         "id": 1,
         "binding": "0.0.0.0:33100",
         "internal_host": "127.0.0.1:33101",
-        "public_host": "localhost:33101",
+        "public_host": "game.openso.org:33101",
         "neighborhoods": {
           "mayor_elegibility_limit": 4,
           "mayor_elegibility_falloff": 4,
@@ -94,7 +101,7 @@
         "call_sign": "europa",
         "binding": "0.0.0.0:34100",
         "internal_host": "127.0.0.1:34101",
-        "public_host": "localhost:34101",
+        "public_host": "game.openso.org:34101",
         "max_lots": 25,
         "cities": [
           {
