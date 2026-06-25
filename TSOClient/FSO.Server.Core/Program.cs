@@ -37,6 +37,7 @@ namespace FSO.Server.Core
             settings.Add("smtpUser", userApiConfig.SmtpUser);
             settings.Add("smtpPassword", userApiConfig.SmtpPassword);
             settings.Add("smtpPort", userApiConfig.SmtpPort.ToString());
+            settings.Add("smtpFrom", userApiConfig.SmtpFrom);
             settings.Add("useProxy", userApiConfig.UseProxy.ToString());
             settings.Add("updateID", config.UpdateID?.ToString() ?? "");
             settings.Add("branchName", config.UpdateBranch);

@@ -48,6 +48,10 @@ namespace FSO.Server.Servers.UserApi
         public string SmtpPassword { get; set; }
         [JsonProperty("smtpUser")]
         public string SmtpUser { get; set; }
+        // The "From" address on outgoing mail (e.g. noreply@openso.org). Distinct from SmtpUser, which is the
+        // SMTP auth login (for Brevo et al. the login is NOT the sender address). Defaults to SmtpUser.
+        [JsonProperty("smtpFrom")]
+        public string SmtpFrom { get; set; }
         [JsonProperty("useProxy")]
         public bool UseProxy { get; set; } = true;
 
