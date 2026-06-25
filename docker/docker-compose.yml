@@ -22,18 +22,15 @@ services:
       retries: 10
 
   freeso-server:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    labels:
-      org.opencontainers.image.source: "https://github.com/voicemxil/OpenSO"
-      org.opencontainers.image.licenses: "MPL-2.0"
+    # Prebuilt image from CI (.github/workflows/docker.yml pushes it to GHCR). No building on the box —
+    # `docker compose pull` to update. For a local-source build instead, use `docker build -f docker/Dockerfile ..`.
+    image: ghcr.io/voicemxil/openso-server:latest
     depends_on:
       mariadb:
         condition: service_healthy
     ports:
-      # API (9000) is normally reached through Caddy on 443; exposed here too for direct/debug access.
-      - "9000:9000"
+      # API (9000) is fronted by Caddy on 443 and is NOT published to the host (keep it off the public
+      # internet). Reach it locally for debugging via `docker compose exec` or a temporary publish.
       # Game traffic (city / lots / tasks) — raw TCP. Must be reachable DIRECTLY (Cloudflare's HTTP proxy
       # can't carry these), i.e. via game.openso.org as a DNS-only record -> this box.
       - "33100:33100"

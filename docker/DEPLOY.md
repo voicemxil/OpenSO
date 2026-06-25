@@ -109,15 +109,26 @@ TSO_GAME_PATH=./tso/TSOClient
 
 ## 5. Bring it up
 
-From the repo root:
+The server image is **built by CI and published to GHCR** (`.github/workflows/docker.yml` →
+`ghcr.io/voicemxil/openso-server:latest`), so the box never compiles anything — it just pulls. From the
+repo root:
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build -d
+docker compose -f docker/docker-compose.yml pull        # download prebuilt server + mariadb + caddy
+docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml logs -f freeso-server   # watch startup
 ```
 
-`entrypoint.sh` auto-generates the `secret` (if `GENERATE`), runs `db-init` (creates all `fso_*` tables),
-then `run`. Caddy fetches a Let's Encrypt cert for `api.openso.org` on first request.
+To ship new server code: push to `main` → CI rebuilds the image → on the box `docker compose pull &&
+docker compose up -d` swaps it in.
+
+> **One-time:** make the GHCR package public so the box can pull without logging in — GitHub →
+> your packages → `openso-server` → Package settings → Change visibility → Public. Otherwise run
+> `docker login ghcr.io` on the box with a PAT that has `read:packages`.
+
+`entrypoint.sh` (baked into the image) auto-generates the `secret` (if `GENERATE`), runs `db-init`
+(creates all `fso_*` tables), then `run`. Caddy fetches a Let's Encrypt cert for `api.openso.org` on first
+request.
 
 Quick checks:
 ```bash
