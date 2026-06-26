@@ -74,12 +74,21 @@ jobs:
           printf '%s\n' "$VERSION" > publish/version.txt
           if [ -f "publish/OpenSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/OpenSO.app/Contents/MacOS/version.txt"; fi
 
-      - name: Package + checksum
+      - name: Package + checksum (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
           ( cd publish && zip -r "../dist/${{ matrix.asset }}.zip" . )
           ( cd dist && shasum -a 256 "${{ matrix.asset }}.zip" > "${{ matrix.asset }}.zip.sha256" )
+      - name: Package + checksum (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path publish/* -DestinationPath "dist/${{ matrix.asset }}.zip" -Force
+          $h = (Get-FileHash "dist/${{ matrix.asset }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$h  ${{ matrix.asset }}.zip" | Out-File -Encoding ascii "dist/${{ matrix.asset }}.zip.sha256"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -111,12 +120,21 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then VERSION="${GITHUB_REF_NAME}"; else VERSION="${{ github.event.inputs.version }}"; fi
           echo "Stamping version: $VERSION"
           printf '%s\n' "$VERSION" > publish/version.txt
-      - name: Package + checksum
+      - name: Package + checksum (Unix)
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           mkdir -p dist
           ( cd publish && zip -r "../dist/${{ matrix.asset }}.zip" . )
           ( cd dist && shasum -a 256 "${{ matrix.asset }}.zip" > "${{ matrix.asset }}.zip.sha256" )
+      - name: Package + checksum (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path publish/* -DestinationPath "dist/${{ matrix.asset }}.zip" -Force
+          $h = (Get-FileHash "dist/${{ matrix.asset }}.zip" -Algorithm SHA256).Hash.ToLower()
+          "$h  ${{ matrix.asset }}.zip" | Out-File -Encoding ascii "dist/${{ matrix.asset }}.zip.sha256"
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
