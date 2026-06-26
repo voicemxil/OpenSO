@@ -341,7 +341,8 @@ namespace FSO.Client.UI.Controls
             {
                 case UIMouseEventType.MouseOver:
                     m_isOver = true;
-                    if (TabIndex >= 0) state.InputManager.SetFocus(this);
+                    // Don't grab focus just by hovering - that yanks focus out of a text box the user is
+                    // typing in. The button still takes focus on MouseDown (click) below.
                     if (!m_isDown)
                     {
                         CurrentFrame = 2;

@@ -332,7 +332,8 @@ namespace FSO.Client.UI.Controls
 
                 case UIMouseEventType.MouseOver:
                     GameFacade.Cursor.SetCursor(CursorType.IBeam);
-                    state.InputManager.SetFocus(this);
+                    // Focus on click (MouseDown), not on hover - hovering shouldn't steal focus from
+                    // whatever the user is currently typing in.
                     break;
 
                 case UIMouseEventType.MouseOut:
