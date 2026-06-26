@@ -356,7 +356,7 @@ namespace FSO.LotView
                 /** We need to scroll **/
                 if (scrollVector != Vector2.Zero)
                 {
-                    State.CenterTile += scrollVector * 0.0625f * (60f / FSOEnvironment.RefreshRate);
+                    State.CenterTile += scrollVector * 0.0625f * (60f * FSOEnvironment.DeltaTime);
                     State.ScrollAnchor = null;
                 }
             }
@@ -1093,7 +1093,12 @@ namespace FSO.LotView
         public Texture2D GetLotThumb(GraphicsDevice gd, Action<Texture2D> rooflessCallback)
         {
             State._2D.Begin(this.State.Camera2D);
-            return Platform.GetLotThumb(gd, State, rooflessCallback);
+            var thumb = Platform.GetLotThumb(gd, State, rooflessCallback);
+            // The 2D thumb path leaves the PPX Backbuffer (a render target) bound via SetPPXTarget(null);
+            // restore the real backbuffer so a following Present (this can run outside the draw loop)
+            // doesn't throw "Cannot call Present when a render target is active".
+            gd.SetRenderTarget(null);
+            return thumb;
         }
 
         public void ChangeAAMode(GraphicsDevice gd)
@@ -1204,6 +1209,82 @@ namespace FSO.LotView
             // which shaders' DrawWithVelocity techniques are correct without guessing from blur artifacts.
             bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
+        }
+
+        // --- Post pipeline config for the 3D city/map view -----------------------------------------------
+        // The city/map renderer (FSO.LotView is not its owner - it's a separate Terrain scene) has no World
+        // or WorldState, so it can't drive ChangeAAMode. This static path configures the shared PPXDepthEngine
+        // for it: same WorldConfig.Current source as the lot path (so MSAA / render scale stay consistent),
+        // always 3D, and - for now - with the velocity-dependent passes (TAA, per-pixel motion blur, AO,
+        // velocity debug) left OFF, because the terrain renderer doesn't emit a velocity buffer yet. The
+        // heavy target (re)allocation only runs when the scale / MSAA / viewport actually changes.
+        private static int _CityLastMSAA = -1;
+        private static float _CityLastSSAA = -1f;
+        private static int _CityLastW = -1, _CityLastH = -1;
+        public static void ConfigureCityAA(GraphicsDevice gd)
+        {
+            PPXDepthEngine.InitGD(gd);
+            var cfg = WorldConfig.Current;
+
+            var msaa = cfg.MSAA;
+            float scale = (cfg.RenderScale > 0f) ? cfg.RenderScale : 1f;
+            if (scale == 1f && cfg.SuperSampling > 1) scale = cfg.SuperSampling;
+            if (msaa == 0 && scale == 1f && cfg.AA > 0) { if (cfg.AA == 1) msaa = 4; else scale = 2f; }
+
+            PPXDepthEngine.MSAA = msaa;
+            PPXDepthEngine.SSAA = scale;
+
+            PPXDepthEngine.SSAAFunc = (scale < 0.999f && WorldContent.FSR != null) ? FSRUpscale.Draw : SSAADownsample.Draw;
+
+            System.Action<GraphicsDevice, RenderTarget2D> postFn = null;
+            if (cfg.PostAA >= 2 && WorldContent.SMAA != null && WorldContent.SMAAAreaTex != null && WorldContent.SMAASearchTex != null)
+                postFn = SMAAResolve.Draw;
+            else if (cfg.PostAA >= 1 && WorldContent.FXAA != null)
+                postFn = PostProcessAA.Draw;
+            PPXDepthEngine.PostProcessFunc = postFn;
+
+            bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
+            PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
+
+            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
+            PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
+
+            PPXDepthEngine.WithOpacity = false; //3D scene is opaque; no per-pixel opacity blend on resolve.
+
+            // Re-allocate shared targets only on a real size/scale/MSAA change (resize, settings change, or the
+            // lot path having left them sized differently). InitScreenTargets is expensive - never per-frame.
+            int w = gd.Viewport.Width, h = gd.Viewport.Height;
+            var bb = PPXDepthEngine.GetBackbuffer();
+            int wantW = System.Math.Max(1, (int)System.Math.Round(scale * w));
+            int wantH = System.Math.Max(1, (int)System.Math.Round(scale * h));
+            if (bb == null || _CityLastMSAA != msaa || _CityLastSSAA != scale || _CityLastW != w || _CityLastH != h
+                || bb.Width != wantW || bb.Height != wantH)
+            {
+                PPXDepthEngine.InitScreenTargets();
+                _CityLastMSAA = msaa; _CityLastSSAA = scale; _CityLastW = w; _CityLastH = h;
+            }
+
+            // Velocity buffer for per-pixel motion blur / TAA / velocity debug. The city terrain is static
+            // geometry, so velocity is camera-induced - Terrain.Draw tracks the previous BaseMatrix and selects
+            // the pass-5 velocity technique. Allocated AFTER InitScreenTargets so it matches the (re)sized
+            // backbuffer (InitScreenTargets disposes it).
+            bool wantVelocity = cfg.TAA || cfg.MotionBlur == 2 || cfg.VelocityDebug;
+            PPXDepthEngine.EnableVelocityTarget(wantVelocity);
+            PPXDepthEngine.EnableHistoryTargets(cfg.TAA);
+
+            bool motionBlur3D = wantVelocity && cfg.MotionBlur == 2 && WorldContent.MotionBlur != null && cfg.MotionBlurAmount > 0f;
+            PPXDepthEngine.MotionBlurFunc = motionBlur3D ? PerPixelMotionBlur.Draw : null;
+
+            bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
+            PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
+
+            // TAA: resolve-chain stage applied after the spatial AA. Needs the velocity buffer + history
+            // (enabled above when cfg.TAA) and the shaders. Terrain.Draw applies the matching sub-pixel
+            // projection jitter each frame whenever TAAFunc is set. AO stays disabled (as in ChangeAAMode).
+            bool taaReady = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null
+                            && PPXDepthEngine.GetVelocityTarget() != null && PPXDepthEngine.GetHistoryPrev() != null;
+            PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
+            PPXDepthEngine.AOFunc = null;
         }
 
         public virtual void ChangedWorldConfig(GraphicsDevice gd)

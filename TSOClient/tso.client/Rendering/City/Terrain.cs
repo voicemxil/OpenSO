@@ -134,10 +134,32 @@ namespace FSO.Client.Rendering.City
         private int[] m_SelTile = new int[] { -1, -1 };
         private Vector2? m_VecSelTile;
         private Matrix m_MovMatrix;
+        // Render-space / native-screen ratio: >1 when the 3D city renders into a supersampled PPX backbuffer
+        // (Stage 1). Terrain projection (transformSpr*, picking, markers) stays native; the pixel-positioned
+        // SpriteBatch overlays (tile-border grid) scale their batch transform by this so they land correctly
+        // in the supersampled target after the downsample resolve.
+        public float PPXSpriteScale { get; private set; } = 1f;
         // Previous-frame surroundings mvp (BaseMatrix) for city-backdrop velocity output. Tracked across
         // frames so the velocity shaders can reproject (the backdrop is static; only the camera moves).
         private Matrix m_PrevMovMatrix;
         private bool m_PrevMovValid;
+        // Same, but for the full city-MAP Draw (separate from DrawSurrounding's so a city<->lot transition
+        // doesn't reproject one frame against the other context's matrix and flash a giant velocity).
+        private Matrix m_PrevMainMov;
+        private bool m_PrevMainValid;
+        // TAA sub-pixel jitter state for the city map (mirrors World's per-frame Halton jitter).
+        private int m_TAAFrameIndex;
+        private Vector2 m_PrevTAAJitterNDC;
+
+        // Halton(b) radical inverse - well-distributed sub-pixel sample sequence for TAA jitter (copy of
+        // World.HaltonValue; the city renderer has no World/State to borrow it from).
+        private static float HaltonValue(int i, int b)
+        {
+            float result = 0f, f = 1f / b;
+            int idx = i;
+            while (idx > 0) { result += f * (idx % b); idx /= b; f /= b; }
+            return result;
+        }
         private int[][] m_SurTileOffs = new int[][] 
         {
             new int[] {0, -1},
@@ -459,9 +481,16 @@ namespace FSO.Client.Rendering.City
             pos *= new Vector2(FSOEnvironment.DPIScaleFactor);
             var sPos = new Vector3(pos, 0);
 
-            var p1 = GameFacade.GraphicsDevice.Viewport.Unproject(sPos, Camera.Projection, Camera.View, Matrix.Identity);
+            // Unproject against the NATIVE back-buffer viewport, not the live device viewport. With render
+            // scale on, the city now renders into a supersampled PPX backbuffer (Stage 1), so the live
+            // viewport can be N* the screen; unprojecting native mouse coords through it maps the whole window
+            // into just the top-left 1/N quadrant. The camera projection is aspect-based (resolution-
+            // independent), so the native screen viewport is the correct one (matches how the lot picks).
+            var pp = GameFacade.GraphicsDevice.PresentationParameters;
+            var pickVP = new Viewport(0, 0, pp.BackBufferWidth, pp.BackBufferHeight);
+            var p1 = pickVP.Unproject(sPos, Camera.Projection, Camera.View, Matrix.Identity);
             sPos.Z = 1;
-            var p2 = GameFacade.GraphicsDevice.Viewport.Unproject(sPos, Camera.Projection, Camera.View, Matrix.Identity);
+            var p2 = pickVP.Unproject(sPos, Camera.Projection, Camera.View, Matrix.Identity);
             var dir = p2 - p1;
             dir.Normalize();
             var ray = new Ray(p1, p2 - p1);
@@ -1164,10 +1193,12 @@ namespace FSO.Client.Rendering.City
             ((CoreGameScreen)GameFacade.Screens.CurrentUIScreen).ucp.UpdateZoomButton();
         }
 
-        private int ITime;
+        private float OceanTime; //wall-clock seconds for scrolling the water normal maps. Accumulated from the
+                                 //real frame delta so it's frame-rate independent - dividing a frame counter by the
+                                 //(now dynamic) RefreshRate rescaled/jumped whenever the measured rate shifted.
         public override void Update(UpdateState state)
         {
-            ITime++;
+            OceanTime += FSOEnvironment.DeltaTime;
             if (!(GameFacade.Screens.CurrentUIScreen is CoreGameScreen)) return;
             CoreGameScreen CurrentUIScr = (CoreGameScreen)GameFacade.Screens.CurrentUIScreen;
 
@@ -1383,8 +1414,8 @@ namespace FSO.Client.Rendering.City
 
         private void FixedTimeUpdate(UpdateState state)
         {
-            var rScale = 60f / FSOEnvironment.RefreshRate;
-            m_SpotOsc = (m_SpotOsc + 0.01f*rScale) % 1; //spotlight oscillation. Cycles fully every 100 frames.
+            var rScale = 60f * FSOEnvironment.DeltaTime; //real frame delta, not the banded RefreshRate
+            m_SpotOsc = (m_SpotOsc + 0.01f*rScale) % 1; //spotlight oscillation. Cycles fully every ~1.67s.
         }
 
         private Texture2D DrawDepth()
@@ -1464,8 +1495,23 @@ namespace FSO.Client.Rendering.City
             m_GraphicsDevice.RasterizerState = RasterizerState.CullNone; //don't cull
             m_GraphicsDevice.DepthStencilState = DepthStencilState.Default;
 
+            // Route the 3D city/map through the shared post pipeline (Stage 1): configure PPX up front so its
+            // supersampled backbuffer exists, then bind it after the shadow pass. Terrain projection
+            // (transformSpr*, GetFar2DFromTile, picking, UI marker positions) stays in NATIVE screen space so
+            // every UI/picking consumer is automatically correct. The 3D geometry is matrix-projected and fills
+            // the larger target via NDC; Draw2DPoly is NDC-based too. Only the pixel-positioned SpriteBatch
+            // overlays (the tile-border grid) need scaling up into the target - they do it via PPXSpriteScale
+            // (render-space / native ratio; 1 when not supersampling).
+            bool usePPX = !is2D && FSOEnvironment.Enable3D && Camera is CityCamera3D;
+            if (usePPX)
+            {
+                World.ConfigureCityAA(m_GraphicsDevice);
+                if (FSO.Common.Utils.PPXDepthEngine.GetBackbuffer() == null) usePPX = false;
+            }
+            var ppxBB = usePPX ? FSO.Common.Utils.PPXDepthEngine.GetBackbuffer() : null;
             m_ScrHeight = m_GraphicsDevice.Viewport.Height;
             m_ScrWidth = m_GraphicsDevice.Viewport.Width;
+            PPXSpriteScale = (ppxBB != null && m_ScrWidth > 0) ? (ppxBB.Width / (float)m_ScrWidth) : 1f;
 
             if (RegenData) GenerateAssets(); //if assets are flagged as requiring regeneration, regenerate them!
 
@@ -1478,6 +1524,34 @@ namespace FSO.Client.Rendering.City
             if ((Camera is CityCamera3D && m_Zoomed == TerrainZoomMode.Lot) || (Camera is CityCamera2D && m_LotZoomProgress == 1f)) return;
 
             Matrix ProjectionMatrix = Camera.Projection;
+
+            // TAA sub-pixel jitter (Stage 2b): when TAA is active, offset the projection by a Halton(2,3)
+            // fraction of a pixel each frame (NDC translation via M31/M32 - the city camera is perspective).
+            // The velocity buffer is built from this jittered projection, so it carries the per-frame jitter;
+            // TAAResolve cancels it via JitterDelta during the history reproject. Mirrors World.PreDraw.
+            bool cityTAA = usePPX && FSO.Common.Utils.PPXDepthEngine.TAAFunc != null
+                           && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
+            if (cityTAA)
+            {
+                const float JITTER_PIXELS = 0.5f;
+                int ji = (m_TAAFrameIndex++ & 0xF) + 1; // 1..16
+                float hx = HaltonValue(ji, 2) - 0.5f;
+                float hy = HaltonValue(ji, 3) - 0.5f;
+                var jbb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
+                int jw = jbb?.Width ?? m_GraphicsDevice.Viewport.Width;
+                int jh = jbb?.Height ?? m_GraphicsDevice.Viewport.Height;
+                var ndcJitter = new Vector2(2f * (hx * 2f * JITTER_PIXELS) / jw, 2f * (hy * 2f * JITTER_PIXELS) / jh);
+                ProjectionMatrix.M31 -= ndcJitter.X;
+                ProjectionMatrix.M32 -= ndcJitter.Y;
+                var pj = m_PrevTAAJitterNDC;
+                FSO.LotView.Utils.TAAResolve.JitterDeltaUV = new Vector2((ndcJitter.X - pj.X) * 0.5f, (ndcJitter.Y - pj.Y) * -0.5f);
+                m_PrevTAAJitterNDC = ndcJitter;
+            }
+            else
+            {
+                FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
+                m_PrevTAAJitterNDC = Vector2.Zero;
+            }
 
             Matrix ViewMatrix = Camera.View;
             Matrix WorldMatrix = Matrix.Identity;
@@ -1493,7 +1567,7 @@ namespace FSO.Client.Rendering.City
             PixelShader.Parameters["LightCol"].SetValue(new Vector4(m_TintColor.R / 255.0f, m_TintColor.G / 255.0f, m_TintColor.B / 255.0f, 1)*1.25f);
             var lightVec = Vector3.Normalize(m_LightPosition - new Vector3(256, 0, 256));
             PixelShader.Parameters["LightVec"].SetValue(lightVec);
-            PixelShader.Parameters["Time"].SetValue(ITime/(float)FSOEnvironment.RefreshRate);
+            PixelShader.Parameters["Time"].SetValue(OceanTime);
 
             var invView = Matrix.Invert(mv);
             if (Camera is CityCamera3D) invView.Translation = Vector3.Zero;
@@ -1550,6 +1624,11 @@ namespace FSO.Client.Rendering.City
                 }
             }
 
+            // Bind the supersampled PPX target now - after the shadow pass (DrawDepth above unbinds to the
+            // screen). usePPX and the PPX config were resolved at the top of Draw; everything from this Clear
+            // onward renders into the target and is resolved at the end of Draw.
+            if (usePPX) FSO.Common.Utils.PPXDepthEngine.SetPPXTarget(null, null, false);
+
             m_GraphicsDevice.Clear(m_TintColor);
             VertexShader.Parameters["LightMatrix"].SetValue(m_LightMatrix);
 
@@ -1579,19 +1658,38 @@ namespace FSO.Client.Rendering.City
                 }
             }
 
-            if (ShadowsEnabled)
+            // City terrain velocity (Stage 2): the map is static geometry, so velocity is camera-induced.
+            // When a velocity target is bound (TAA / per-pixel motion blur / velocity debug) render the terrain
+            // through the pass-5 velocity technique with the velocity MRT bound and the previous BaseMatrix set.
+            // Scoped to JUST the terrain draws - Draw3DHouses / spotlights / particles below aren't velocity-
+            // aware, and leaving MRT1 bound around them writes garbage there. (Pass 5 is fog+velocity, so city
+            // shadows aren't in the velocity pass yet - a follow-up if needed.)
+            var cityVelRT = usePPX ? FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() : null;
+            bool cityUseVel = cityVelRT != null;
+            int terrPass = cityUseVel ? 5 : (ShadowsEnabled ? ((fog) ? 4 : 0) : ((fog) ? 3 : 2));
+            RenderTargetBinding[] savedCityRTs = null;
+            if (cityUseVel)
             {
-                if (SubdivGeometry.Ready != -1) SubdivGeometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, (fog) ? 4 : 0, (fog) ? 4 : 0);
-                Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, (fog) ? 4 : 0, (fog) ? 4 : 0, SubdivGeometry.Ready, 16);
-            }
-            else
-            {
-                if (SubdivGeometry.Ready != -1) SubdivGeometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, (fog) ? 3 : 2, (fog) ? 3 : 2);
-                Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, (fog) ? 3 : 2, (fog) ? 3 : 2, SubdivGeometry.Ready, 16);
+                VertexShader.Parameters["PrevBaseMatrix"]?.SetValue(m_PrevMainValid ? m_PrevMainMov : mvp);
+                savedCityRTs = m_GraphicsDevice.GetRenderTargets();
+                var colorRT = (savedCityRTs != null && savedCityRTs.Length > 0)
+                    ? (RenderTarget2D)savedCityRTs[0].RenderTarget
+                    : FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(m_GraphicsDevice, colorRT, cityVelRT);
             }
 
+            if (SubdivGeometry.Ready != -1) SubdivGeometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, terrPass, terrPass);
+            Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, terrPass, terrPass, SubdivGeometry.Ready, 16);
+
+            if (cityUseVel && savedCityRTs != null) m_GraphicsDevice.SetRenderTargets(savedCityRTs);
+            // This frame's BaseMatrix becomes next frame's previous (camera-induced velocity reproject).
+            m_PrevMainMov = mvp; m_PrevMainValid = true;
+
             var pass = (ShadowsEnabled ? ((fog) ? 4 : 0) : ((fog) ? 3 : 2));
-            m_MovMatrix = ViewMatrix * ProjectionMatrix;
+            // Un-jittered projection for screen-space helpers (transformSpr -> UI markers, picking, spotlights,
+            // tile borders): only the rendered geometry/velocity (BaseMatrix above) carries the TAA jitter, so
+            // these stay rock-steady instead of shimmering by the sub-pixel offset each frame.
+            m_MovMatrix = ViewMatrix * Camera.Projection;
 
             if (m_Zoomed == TerrainZoomMode.Far) Draw3DHouses(pass); //DrawHouses(HB); //draw far view house icons
 
@@ -1603,16 +1701,18 @@ namespace FSO.Client.Rendering.City
             else
             {
                 if (((CityCamera3D)Camera).Zoom3D < 7f || Camera.HideUI)
-                    Foliage.Draw(this, m_GraphicsDevice, Content, VertexShader, PixelShader, pass, 2, frustum);
+                    CityVelDraw(cityUseVel, cityVelRT, () => Foliage.Draw(this, m_GraphicsDevice, Content, VertexShader, PixelShader, pass, 2, frustum));
                 if (Camera.Zoomed == TerrainZoomMode.Near)
                 {
                     m_2DVerts = new ArrayList(); //refresh list for tris under houses
-                    m_Batch.Begin(SpriteSortMode.Texture);
+                    // Tile-border grid is pixel-positioned via transformSpr (native screen space); scale the
+                    // batch up into the PPX supersampled target so it lands correctly after the resolve.
+                    m_Batch.Begin(SpriteSortMode.Texture, null, null, null, null, null, Matrix.CreateScale(PPXSpriteScale));
                     DrawTileBorders(0, m_Batch);
                     m_Batch.End();
                     m_GraphicsDevice.DepthStencilState = DepthStencilState.Default;
                     Draw2DPoly(true);
-                    DrawFacades(Camera.CalculateR(), pass, false, frustum);
+                    CityVelDraw(cityUseVel, cityVelRT, () => DrawFacades(Camera.CalculateR(), pass, false, frustum));
                 }
             }
             
@@ -1631,6 +1731,30 @@ namespace FSO.Client.Rendering.City
             }
 
             Plugin?.Draw(m_Batch);
+
+            if (usePPX)
+            {
+                // Resolve the city scene through the post chain (scale -> FXAA/SMAA -> bloom -> sharpen) to
+                // the real screen. Mirrors World.Draw's DrawBackbuffer.
+                m_GraphicsDevice.SetRenderTarget(null);
+                FSO.Common.Utils.PPXDepthEngine.DrawBackbuffer(1f, 1f);
+            }
+        }
+
+        // Run a velocity-aware city draw (foliage/facades self-detect velocity and pick the pass-5/6 technique)
+        // with the velocity MRT bound around it, then restore the colour-only target. PrevBaseMatrix is set
+        // once by the terrain block in Draw and persists for these (same VertexShader, same static-camera
+        // reproject). The Backbuffer is PreserveContents, so binding/unbinding keeps colour + depth.
+        private void CityVelDraw(bool useVel, RenderTarget2D velRT, System.Action draw)
+        {
+            if (!useVel || velRT == null) { draw(); return; }
+            var saved = m_GraphicsDevice.GetRenderTargets();
+            var colorRT = (saved != null && saved.Length > 0)
+                ? (RenderTarget2D)saved[0].RenderTarget
+                : FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
+            FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(m_GraphicsDevice, colorRT, velRT);
+            draw();
+            if (saved != null) m_GraphicsDevice.SetRenderTargets(saved);
         }
 
         public static DepthStencilState StencilWrite = new DepthStencilState()
@@ -1760,7 +1884,7 @@ namespace FSO.Client.Rendering.City
             PixelShader.Parameters["WavePow"].SetValue(5 / 2f);
             PixelShader.Parameters["RealNormalPct"].SetValue(2f);
             PixelShader.Parameters["ShadowMult"].SetValue(m_ShadowMult);
-            PixelShader.Parameters["Time"].SetValue(ITime / (float)FSOEnvironment.RefreshRate);
+            PixelShader.Parameters["Time"].SetValue(OceanTime);
 
             var weatherMult = (Camera is CityCamera3D) ? (1 + Weather.Darken) : 1;
             PixelShader.Parameters["FogMaxDist"].SetValue(m_LotZoomProgress*fogColor.W + (1- m_LotZoomProgress)* fogColor.W*weatherMult*Camera.FogMultiplier);
