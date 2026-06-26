@@ -1,8 +1,9 @@
-name: Server image
+name: Server image (edge)
 
-# Builds the OpenSO server Docker image on GitHub's runners and pushes it to GHCR, so the deploy box never
-# has to compile anything — it just `docker compose pull`s the prebuilt image (see docker/DEPLOY.md).
-# `latest` always tracks main; each build is also tagged with the commit SHA for pinning/rollback.
+# Builds the OpenSO server Docker image from main and pushes it to GHCR as `:edge` — a DIRTY dev build for
+# testing, NOT for production. The deploy box tracks `:release` instead (a stamped image cut only on a
+# dev-#/alpha-#/beta-# release by release.yml), so main commits never reach prod. Each edge build is also
+# tagged with the commit SHA for pinning/rollback. See docker/DEPLOY.md.
 
 on:
   push:
@@ -34,14 +35,16 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Build and push (edge)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: docker/Dockerfile
           push: true
+          build-args: |
+            VERSION=edge
           tags: |
-            ghcr.io/voicemxil/openso-server:latest
+            ghcr.io/voicemxil/openso-server:edge
             ghcr.io/voicemxil/openso-server:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

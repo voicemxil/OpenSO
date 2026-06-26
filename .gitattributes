@@ -3,6 +3,10 @@
 ###############################################################################
 * text=auto
 
+# Shell scripts must keep LF endings even when edited on Windows — they run on the Linux deploy box
+# (docker/entrypoint.sh, docker/openso-update.sh). CRLF would break the shebang/`set -e`.
+*.sh text eol=lf
+
 ###############################################################################
 # Set default behavior for command prompt diff.
 #

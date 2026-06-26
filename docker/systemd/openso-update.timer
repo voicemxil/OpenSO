@@ -1,0 +1,12 @@
+[Unit]
+Description=Nightly OpenSO server update check (~04:30, like FreeSO's morning restart)
+
+[Timer]
+# Fire at 04:30 box-local time. Persistent re-runs a missed check after downtime; the randomized delay
+# avoids a thundering-herd pull at exactly 04:30.
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

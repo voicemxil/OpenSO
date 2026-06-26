@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenSO server auto-update (pull :release image, restart if changed)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Adjust the path if you cloned OpenSO somewhere other than /root/OpenSO.
+ExecStart=/root/OpenSO/docker/openso-update.sh

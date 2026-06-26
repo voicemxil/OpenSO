@@ -22,9 +22,11 @@ services:
       retries: 10
 
   freeso-server:
-    # Prebuilt image from CI (.github/workflows/docker.yml pushes it to GHCR). No building on the box —
-    # `docker compose pull` to update. For a local-source build instead, use `docker build -f docker/Dockerfile ..`.
-    image: ghcr.io/voicemxil/openso-server:latest
+    # Prebuilt image from CI. The box tracks `:release` — a stamped image cut ONLY on a dev-#/alpha-#/beta-#
+    # release (release.yml), so prod never runs unreviewed main code (those are `:edge`). The nightly
+    # auto-update timer (openso-update.sh + docker/systemd/) pulls `:release` and restarts if it changed.
+    # Pin a specific version instead (e.g. :dev-1) to freeze; local-source build: `docker build -f docker/Dockerfile ..`.
+    image: ghcr.io/voicemxil/openso-server:release
     depends_on:
       mariadb:
         condition: service_healthy

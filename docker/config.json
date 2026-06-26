@@ -75,6 +75,8 @@
 
       "cdnUrl": "https://api.openso.org",
 
+      "updateUrl": "https://github.com/voicemxil/OpenSO/releases/latest/download/OpenSO-client-win-x64.zip",
+
       "smtpHost": "smtp.your-email-provider.com",
       "smtpPort": 587,
       "smtpUser": "noreply@openso.org",

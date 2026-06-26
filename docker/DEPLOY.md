@@ -109,9 +109,10 @@ TSO_GAME_PATH=./tso/TSOClient
 
 ## 5. Bring it up
 
-The server image is **built by CI and published to GHCR** (`.github/workflows/docker.yml` →
-`ghcr.io/voicemxil/openso-server:latest`), so the box never compiles anything — it just pulls. From the
-repo root:
+The server image is **built by CI and published to GHCR**, so the box never compiles anything — it just
+pulls. The box tracks **`:release`** (set in docker-compose.yml): a stamped image cut ONLY when a
+`dev-#`/`alpha-#`/`beta-#` release is tagged (release.yml). Main-branch builds are `:edge` (docker.yml) —
+dirty, for testing, never deployed. From the repo root:
 
 ```bash
 docker compose -f docker/docker-compose.yml pull        # download prebuilt server + mariadb + caddy
@@ -119,8 +120,9 @@ docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml logs -f freeso-server   # watch startup
 ```
 
-To ship new server code: push to `main` → CI rebuilds the image → on the box `docker compose pull &&
-docker compose up -d` swaps it in.
+To ship new server code: cut a release (`git tag dev-2 && git push origin dev-2`) → release.yml builds the
+stamped image + moves `:release` → the box's nightly timer (below) pulls it. To deploy immediately instead
+of waiting for the timer: `docker compose pull && docker compose up -d` on the box.
 
 > **One-time:** make the GHCR package public so the box can pull without logging in — GitHub →
 > your packages → `openso-server` → Package settings → Change visibility → Public. Otherwise run
@@ -197,6 +199,51 @@ creds or missing SPF/DKIM, not the server.
 
 ---
 
+## 9b. Updates — server auto-update + client patching
+
+Two independent mechanisms. Both key off the **same release tag** (`dev-#`/`alpha-#`/`beta-#`).
+
+### Server auto-update (the box upgrades itself)
+
+A nightly systemd timer pulls `:release` and restarts only if the image changed (so a quiet night is a
+no-op). Install it once on the box:
+
+```bash
+# from the repo root on the box (adjust paths in the unit files if you cloned elsewhere than /root/OpenSO)
+chmod +x docker/openso-update.sh
+sudo cp docker/systemd/openso-update.service docker/systemd/openso-update.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now openso-update.timer
+systemctl list-timers openso-update.timer        # confirm next run (~04:30)
+sudo systemctl start openso-update.service        # optional: run an update check right now
+```
+
+Because the box tracks `:release` (not `:edge`/main), it only ever moves to a **cut release**. Pin a
+specific version in docker-compose.yml (e.g. `:dev-1`) to freeze the box and skip auto-updates.
+
+### Client patching (the game updates itself at login)
+
+At login the client compares its `version.txt` to the version the **shard advertises** and, if behind,
+downloads the full client zip and relaunches via `update.exe`. To turn it on:
+
+1. **Advertise the current version** — set the shard's version to match the latest release:
+   ```bash
+   docker compose -f docker/docker-compose.yml exec mariadb \
+     mariadb -ufsoserver -p"$DB_PASSWORD" fso \
+     -e "UPDATE fso_shards SET version_name='dev', version_number='1' WHERE shard_id=1;"
+   ```
+   (i.e. `version_name`+`-`+`version_number` = the release, e.g. `dev`/`1` → `dev-1`. Bump
+   `version_number` each release; switch `version_name` to `alpha`/`beta` when the channel changes.)
+2. **Set the update URL** — already in `docker/config.json` (`userApi.updateUrl` →
+   `…/releases/latest/download/OpenSO-client-win-x64.zip`). Restart the server after editing config.
+
+A client already on the advertised version sees no prompt; an older one patches up to it. The shard poll
+picks up the SQL within ~60 s. **Caveat:** that single URL is win-x64 — in-game patching targets Windows;
+Linux/macOS players update through the launcher (which is per-platform). Smaller delta patches (vs. the
+full zip) need the admin-webapp update generator — a later workstream.
+
+---
+
 ## 10. Go-live checklist
 
 - [ ] DNS: `api`/`game` DNS-only → box; `openso.org` → Pages; HTTPS enforced.
@@ -211,9 +258,9 @@ creds or missing SPF/DKIM, not the server.
 
 ## Notes
 
-- **Updates** are deliberately deferred. When ready, the server's update generator (admin webapp) uploads
-  client/server zips + a diff manifest to GitHub Releases, and the client auto-updates at login. The
-  hardcoded FreeSO update URLs still need repointing first — that's the updater-wiring workstream.
+- **Updates** are wired (§9b): the box auto-updates to the latest `:release` image nightly, and clients
+  patch themselves at login against the shard-advertised version. Delta (incremental) patches via the admin
+  update generator remain a later enhancement; today the client pulls the full release zip.
 - **Backups:** the `mariadb_data` volume (DB) and `docker/nfs/` (lots/objects) are your state — snapshot both.
 - **Constraints (from the brief):** no cash donations, never redistribute TSO/copyrighted assets (hosts
   supply their own), keep the build open-source (MPL).
