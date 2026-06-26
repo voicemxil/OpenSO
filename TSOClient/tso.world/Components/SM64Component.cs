@@ -460,7 +460,7 @@ namespace FSO.LotView.Components
 
         private void CameraController(WorldState world)
         {
-            var refreshMultiplier = 1f / FSOEnvironment.RefreshRate;
+            var refreshMultiplier = 1f * FSOEnvironment.DeltaTime;
             var gamepad = GamePad.GetState(0);
 
             var camera = world.Cameras.Camera3D;
@@ -505,7 +505,7 @@ namespace FSO.LotView.Components
 
             if (visible)
             {
-                UpdateRemainderOther -= 1f / FSOEnvironment.RefreshRate;
+                UpdateRemainderOther -= 1f * FSOEnvironment.DeltaTime;
                 while (UpdateRemainderOther <= 0)
                 {
                     foreach (var other in OtherMarios.Values)
@@ -600,7 +600,7 @@ namespace FSO.LotView.Components
                         }
                     }
 
-                    UpdateRemainder -= 1f / FSOEnvironment.RefreshRate;
+                    UpdateRemainder -= 1f * FSOEnvironment.DeltaTime;
                     while (UpdateRemainder <= 0)
                     {
                         if (DeathFrames > 0)

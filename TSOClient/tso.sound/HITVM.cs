@@ -135,7 +135,7 @@ namespace FSO.HIT
                 }
             }
 
-            var timeDiff = 1f / FSOEnvironment.RefreshRate;
+            var timeDiff = FSOEnvironment.DeltaTime; //real elapsed time so the sequencer advances at wall-clock rate
             for (int i = 0; i < FSCPlayers.Count; i++)
             {
                 FSCPlayers[i].Tick(timeDiff);

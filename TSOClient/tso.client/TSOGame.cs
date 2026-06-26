@@ -429,5 +429,16 @@ namespace FSO.Client
                     FSOEnvironment.RefreshRate = fps;
             }
         }
+
+        protected override void EndDraw()
+        {
+            // Safety net before Present. Some lot/thumbnail/transition render paths bind a render target
+            // and finish by rebinding the PPX Backbuffer (still a render target) rather than the real
+            // screen. When that runs outside the world draw (e.g. a city->lot load) and IsFixedTimeStep is
+            // off, a Present can land before the world draw resets the target, throwing "Cannot call Present
+            // when a render target is active". Force the real backbuffer so the present is always valid.
+            GraphicsDevice.SetRenderTarget(null);
+            base.EndDraw();
+        }
     }
 }

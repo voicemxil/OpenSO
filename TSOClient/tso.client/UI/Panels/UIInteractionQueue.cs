@@ -236,7 +236,7 @@ namespace FSO.Client.UI.Panels
         public void Update()
         {
             if (TweenProgress < 1) {
-                TweenProgress = Math.Min(TweenProgress + MotionPerFrame * (60.0/FSOEnvironment.RefreshRate), 1);
+                TweenProgress = Math.Min(TweenProgress + MotionPerFrame * (60.0* FSOEnvironment.DeltaTime), 1);
                 UI.Position = GetTweenPosition();
             }
         }

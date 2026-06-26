@@ -76,7 +76,7 @@ namespace FSO.LotView
         {
             this.Device = device;
             this.World = world;
-            this.FramePerDraw = 30f/FSOEnvironment.RefreshRate;
+            this.FramePerDraw = 30f* FSOEnvironment.DeltaTime;
             this.Cameras = new CameraControllers(device, this);
             Rooms = new GPURoomMaps(device);
             WorldSpace = new WorldSpace(worldPxWidth, worldPxHeight, this);

@@ -96,8 +96,8 @@ namespace FSO.LotView.Utils.Camera
                     LastFP = false;
                 }
 
-                world.Scroll(new Vector2(FPCamVelocity.X / FSOEnvironment.RefreshRate, FPCamVelocity.Z / FSOEnvironment.RefreshRate));
-                FPCamHeight = Math.Max((terrainHeight - CamHeight) - 2, FPCamHeight + (FPCamVelocity.Y * 3) / FSOEnvironment.RefreshRate);
+                world.Scroll(new Vector2(FPCamVelocity.X * FSOEnvironment.DeltaTime, FPCamVelocity.Z * FSOEnvironment.DeltaTime));
+                FPCamHeight = Math.Max((terrainHeight - CamHeight) - 2, FPCamHeight + (FPCamVelocity.Y * 3) * FSOEnvironment.DeltaTime);
                 for (int i = 0; i < FSOEnvironment.RefreshRate / 60; i++)
                     FPCamVelocity *= 0.9f;
             }

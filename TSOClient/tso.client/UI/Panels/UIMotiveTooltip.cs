@@ -51,7 +51,7 @@ namespace FSO.Client.UI.Panels
 
         public override void Update(UpdateState state)
         {
-            var fadeSpeed = 5f / FSOEnvironment.RefreshRate;
+            var fadeSpeed = 5f * FSOEnvironment.DeltaTime;
             if (Show)
             {
                 Opacity = Math.Min(1, Opacity + fadeSpeed);

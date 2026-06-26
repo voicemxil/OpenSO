@@ -169,7 +169,7 @@ namespace FSO.LotView.Utils.Camera
         protected float CorrectCameraHeight(World world)
         {
             var tt = world.Get3DTTHeights();
-            CamHeight += (tt.Item2 - CamHeight) * (1f - (float)Math.Pow(0.8f, 60f / FSOEnvironment.RefreshRate));
+            CamHeight += (tt.Item2 - CamHeight) * (1f - (float)Math.Pow(0.8f, 60f * FSOEnvironment.DeltaTime));
             return tt.Item1;
         }
 

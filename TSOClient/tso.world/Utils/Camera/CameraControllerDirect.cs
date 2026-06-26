@@ -51,8 +51,7 @@ namespace FSO.LotView.Utils.Camera
             {
                 var worldState = world.State;
                 var terrainHeight = CorrectCameraHeight(world);
-                var hz = FSOEnvironment.RefreshRate;
-                var power = 60f / hz;
+                var power = 60f * FSOEnvironment.DeltaTime;
                 var interpRate = (float)(1f - (float)Math.Pow(0.8f, power));
 
                 if (state.WindowFocused)

@@ -521,7 +521,7 @@ namespace FSO.Client.Rendering.City
             if (City.m_Zoomed <= TerrainZoomMode.Near)
             {
                 var list = HoverPct.ToList();
-                var speed = 3f / FSOEnvironment.RefreshRate;
+                var speed = 3f * FSOEnvironment.DeltaTime;
                 foreach (var hover in list)
                 {
                     var value = hover.Value + ((hover.Key == HoverNHood) ? speed : -speed);

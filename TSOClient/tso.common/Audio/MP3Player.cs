@@ -260,13 +260,16 @@ namespace FSO.Common.Audio
         public float Volume
         {
             get { lock (_controlLock) return _inst?.Volume ?? _volume; }
-            set { SetControlProperty(ref _volume, value, (inst, v) => inst.Volume = v); }
+            // Clamp 0..1: callers (e.g. HIT fade volumes derived from the live RefreshRate) can briefly
+            // overshoot, and DynamicSoundEffectInstance.Volume throws on out-of-range.
+            set { SetControlProperty(ref _volume, (value < 0f) ? 0f : (value > 1f ? 1f : value), (inst, v) => inst.Volume = v); }
         }
 
         public float Pan
         {
             get { lock (_controlLock) return _inst?.Pan ?? _pan; }
-            set { SetControlProperty(ref _pan, value, (inst, v) => inst.Pan = v); }
+            // Pan is valid in -1..1; clamp so an out-of-range value can't throw.
+            set { SetControlProperty(ref _pan, (value < -1f) ? -1f : (value > 1f ? 1f : value), (inst, v) => inst.Pan = v); }
         }
 
         private void SetControlProperty(ref float backingField, float value, Action<DynamicSoundEffectInstance, float> setter)

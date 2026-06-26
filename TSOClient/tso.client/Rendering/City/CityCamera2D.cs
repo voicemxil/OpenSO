@@ -357,7 +357,10 @@ namespace FSO.Client.Rendering.City
             LastTargOff = new Vector2(m_TargVOffX, m_TargVOffY);
 
 
-            var rScale = 60f / FSOEnvironment.RefreshRate;
+            // Frame-rate-independent motion scale from the real frame delta (matches the live-mode cameras).
+            // Using 60/RefreshRate instead made camera speed track the smoothed/banded measured rate, which
+            // drifts and oscillates; 60*DeltaTime is the true per-frame step.
+            var rScale = 60f * FSOEnvironment.DeltaTime;
             if (Zoomed != TerrainZoomMode.Far) ZoomProgress += (1.0f - ZoomProgress) * (float)(1 - Math.Pow(4 / 5.0f, rScale));
             if (Zoomed == TerrainZoomMode.Near)
             {

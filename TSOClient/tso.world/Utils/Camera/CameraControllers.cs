@@ -246,7 +246,7 @@ namespace FSO.LotView.Utils.Camera
                 var trans = TransitionWeights[i];
                 if (trans.Duration > 0)
                 {
-                    trans.Percent -= (1 / trans.Duration) / FSOEnvironment.RefreshRate;
+                    trans.Percent -= (1 / trans.Duration) * FSOEnvironment.DeltaTime;
                 }
                 if (trans.Percent <= 0f)
                 {

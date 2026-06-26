@@ -174,7 +174,7 @@ namespace FSO.LotView.Utils.Camera
                     }
                     if (RotationOffFrom != 0)
                     {
-                        RotationOffPct += 3f / FSOEnvironment.RefreshRate;
+                        RotationOffPct += 3f * FSOEnvironment.DeltaTime;
                         if (RotationOffPct > 1)
                         {
                             RotationOffFrom = 0;

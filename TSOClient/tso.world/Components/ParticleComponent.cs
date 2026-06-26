@@ -110,7 +110,7 @@ namespace FSO.LotView.Components
             base.Update(device, world);
             if (world != null) TimeRate = world.SimSpeed;
             else TimeRate = 1f;
-            Time += TimeRate*((Mode < ParticleType.GENERIC_BOX)?(0.001f / FSOEnvironment.RefreshRate):(1f / FSOEnvironment.RefreshRate));
+            Time += TimeRate*((Mode < ParticleType.GENERIC_BOX)?(0.001f * FSOEnvironment.DeltaTime):(1f * FSOEnvironment.DeltaTime));
 
             if (Time > StopTime + Duration)
             {
@@ -317,7 +317,7 @@ namespace FSO.LotView.Components
             var fade = FadeProgress ?? 0f;
             if (fade < 0) fade = fade * fade; //give a bias to weather fading in
             effect.Parameters["Color"].SetValue(Tint.ToVector4() * (1 - Math.Abs(fade)));
-            effect.Parameters["TimeRate"].SetValue(Math.Max(1,TimeRate)*0.001f/ FSOEnvironment.RefreshRate);
+            effect.Parameters["TimeRate"].SetValue(Math.Max(1,TimeRate)*0.001f* FSOEnvironment.DeltaTime);
 
             //Parameters:
             //miny, yrange, fall speed, fall speed variation

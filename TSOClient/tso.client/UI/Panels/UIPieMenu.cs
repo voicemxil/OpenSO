@@ -66,7 +66,7 @@ namespace FSO.Client.UI.Panels
             HighlightStyle = ButtonStyle.Clone();
             HighlightStyle.Color = Color.Yellow;
 
-            lerpSpeed = 0.125f * (60.0f / FSOEnvironment.RefreshRate);
+            lerpSpeed = 0.125f * (60.0f * FSOEnvironment.DeltaTime);
             m_Bg = new UIImage(TextureGenerator.GetPieBG(GameFacade.GraphicsDevice));
             m_Bg.SetSize(2, 2); //is scaled up later
             m_Bg.Position = new Vector2(-1, -1);
@@ -191,7 +191,7 @@ namespace FSO.Client.UI.Panels
             base.Update(state);
             if (m_BgGrow < 1)
             {
-                m_BgGrow += 1.0 / 30.0 * (60.0 / FSOEnvironment.RefreshRate);
+                m_BgGrow += 1.0 / 30.0 * (60.0 * FSOEnvironment.DeltaTime);
                 HeadCamera.Zoom = (float)m_BgGrow*5.12f;
 
                 m_Bg.SetSize((float)m_BgGrow * 200, (float)m_BgGrow * 200);

@@ -74,7 +74,7 @@ namespace FSO.Client.UI.Panels.Upgrades
             base.Update(state);
             if (Parent.Visible)
             {
-                var speed = 60f / FSOEnvironment.RefreshRate;
+                var speed = 60f * FSOEnvironment.DeltaTime;
                 FillSpeed += speed * ((TargetFill - AnimFill) / 40f);
                 AnimFill += FillSpeed;
                 FillSpeed *= (float)Math.Pow(0.93f, speed);
@@ -88,14 +88,14 @@ namespace FSO.Client.UI.Panels.Upgrades
                     if (i == HighlightLevel)
                     {
                         if (HighlightIntensity[i] < 1)
-                            HighlightIntensity[i] += 3f / FSOEnvironment.RefreshRate;
+                            HighlightIntensity[i] += 3f * FSOEnvironment.DeltaTime;
                         else
                             HighlightIntensity[i] = 1;
                     } 
                 else
                     {
                         if (HighlightIntensity[i] > 0)
-                            HighlightIntensity[i] -= 3f / FSOEnvironment.RefreshRate;
+                            HighlightIntensity[i] -= 3f * FSOEnvironment.DeltaTime;
                         else
                             HighlightIntensity[i] = 0;
                     }
@@ -143,7 +143,7 @@ namespace FSO.Client.UI.Panels.Upgrades
         private float HueOff;
         public override void Draw(UISpriteBatch batch)
         {
-            HueOff += 0.25f / FSOEnvironment.RefreshRate;
+            HueOff += 0.25f * FSOEnvironment.DeltaTime;
             var color = Color.White * Opacity;
             _BlendColor = Color.White;
             var effect = LotView.WorldContent.SpriteEffect;

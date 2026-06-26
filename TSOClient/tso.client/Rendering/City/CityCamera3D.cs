@@ -213,7 +213,7 @@ namespace FSO.Client.Rendering.City
                     }
                     else
                     {
-                        CenterTile += (new Vector2((float)(x + 1) - tile.Y, (float)(y + 0) + tile.X) - CenterTile) * (1f - (float)Math.Pow(0.975f, 60f / FSOEnvironment.RefreshRate));
+                        CenterTile += (new Vector2((float)(x + 1) - tile.Y, (float)(y + 0) + tile.X) - CenterTile) * (1f - (float)Math.Pow(0.975f, 60f * FSOEnvironment.DeltaTime));
                     }
                     TargRX = lotWorld.State.Cameras.Camera3D.RotationX - (float)Math.PI / 2;
                     TargRY = lotWorld.State.Cameras.Camera3D.RotationY;
@@ -225,7 +225,7 @@ namespace FSO.Client.Rendering.City
                     }
                     else if (LotZoomProgress != 1)
                     {
-                        var speed = 60.0 / FSOEnvironment.RefreshRate;
+                        var speed = 60.0 * FSOEnvironment.DeltaTime;
                         var interpPercent = 1 - (float)Math.Pow(0.9, speed);
 
                         var dirDiff = (float)DirectionUtils.Difference(RotationX, TargRX);
@@ -305,7 +305,7 @@ namespace FSO.Client.Rendering.City
                     }
                 }
             }
-            if (TargetZoom > 2f && inCity) TargetZoom -= (TargetZoom - 2f) * (1f - (float)Math.Pow(0.975f, 60f / FSOEnvironment.RefreshRate));
+            if (TargetZoom > 2f && inCity) TargetZoom -= (TargetZoom - 2f) * (1f - (float)Math.Pow(0.975f, 60f * FSOEnvironment.DeltaTime));
             Zoom3D += ((12f - (TargetZoom - 0.25f) * 6.8571428571428571428571428571429f) - Zoom3D) / 10;
 
             /*
@@ -378,7 +378,7 @@ namespace FSO.Client.Rendering.City
                     }
                     GameFacade.Cursor.SetCursor(type);
                 }
-                Scroll(scrollBy * (60f / FSOEnvironment.RefreshRate), true);
+                Scroll(scrollBy * (60f * FSOEnvironment.DeltaTime), true);
             }
 
             //get the camera height.
@@ -392,7 +392,7 @@ namespace FSO.Client.Rendering.City
             var heightAtCam = city.InterpElevationAt(new Vector2(Position.X, Position.Z));
             if (relative.Y + targHeight < heightAtCam + 0.5f) targHeight = (heightAtCam + 0.5f) - relative.Y;
             //targHeight = Math.Max(heightAtCam, terrainHeight);
-            CamHeight += (targHeight - CamHeight) * (1f - (float)Math.Pow(0.8f, 60f / FSOEnvironment.RefreshRate));
+            CamHeight += (targHeight - CamHeight) * (1f - (float)Math.Pow(0.8f, 60f * FSOEnvironment.DeltaTime));
 
             if (inCity && state.NewKeys.Contains(Microsoft.Xna.Framework.Input.Keys.Tab) && !state.AltDown && state.InputManager.GetFocus() == null)
             {
@@ -440,8 +440,8 @@ namespace FSO.Client.Rendering.City
                     LastFP = false;
                 }
 
-                Scroll(new Vector2(FPCamVelocity.X / FSOEnvironment.RefreshRate, FPCamVelocity.Z / FSOEnvironment.RefreshRate), false);
-                FPCamHeight = Math.Min(600, Math.Max((terrainHeight - CamHeight) - 0.25f, FPCamHeight + (FPCamVelocity.Y * 3) / FSOEnvironment.RefreshRate));
+                Scroll(new Vector2(FPCamVelocity.X * FSOEnvironment.DeltaTime, FPCamVelocity.Z * FSOEnvironment.DeltaTime), false);
+                FPCamHeight = Math.Min(600, Math.Max((terrainHeight - CamHeight) - 0.25f, FPCamHeight + (FPCamVelocity.Y * 3) * FSOEnvironment.DeltaTime));
                 for (int i = 0; i < FSOEnvironment.RefreshRate / 60; i++)
                     FPCamVelocity *= 0.9f;
 
@@ -485,7 +485,7 @@ namespace FSO.Client.Rendering.City
                 MouseWasDown = md;
             }
 
-            var rScale = 60f / FSOEnvironment.RefreshRate;
+            var rScale = 60f * FSOEnvironment.DeltaTime;
             //lot zoom.
             if (Zoomed == TerrainZoomMode.Lot)
             {
@@ -500,7 +500,7 @@ namespace FSO.Client.Rendering.City
                 CenterTile += (CenterCam.Center - CenterTile) * (float)(1 - Math.Pow(9f / 10.0f, rScale));
                 TargetZoom += (CenterCam.Dist - TargetZoom) * (float)(1 - Math.Pow(9f / 10.0f, rScale));
                 RotationY += (CenterCam.YAngle - RotationY) * (float)(1 - Math.Pow(9f / 10.0f, rScale));
-                RotationX += 0.2f / FSOEnvironment.RefreshRate;
+                RotationX += 0.2f * FSOEnvironment.DeltaTime;
                 if (TargetZoom > 0.75f && (CenterCam.Center - CenterTile).Length() < 5f) _Zoomed = TerrainZoomMode.Near;
                 else _Zoomed = TerrainZoomMode.Far;
                 InvalidateCamera();

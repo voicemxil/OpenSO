@@ -368,6 +368,13 @@ namespace FSO.Vitaboy
                 }
             }
 
+            // Snapshot the current bone array for next frame's velocity — MUST be here, after the main mesh
+            // draw but BEFORE the early returns below. Otherwise with Advanced Lighting OFF (LightPositions
+            // == null) or in ObjID mode the function returns first and the previous bones stay frozen, so the
+            // velocity buffer treats the whole sim as moving from its first-frame pose -> exaggerated garbage.
+            if (PreviousSkelBones != null && PreviousSkelBones.Length == SkelBones.Length)
+                System.Array.Copy(SkelBones, PreviousSkelBones, SkelBones.Length);
+
             //skip drawing shadows if we're drawing id
             if (LightPositions == null || effect.CurrentTechnique == effect.Techniques[1]) return;
 
@@ -410,12 +417,6 @@ namespace FSO.Vitaboy
             }
 
             DrawHeadObject(device, effect);
-
-            // Snapshot the current bone array for next frame's velocity computation.
-            if (PreviousSkelBones != null && PreviousSkelBones.Length == SkelBones.Length)
-            {
-                System.Array.Copy(SkelBones, PreviousSkelBones, SkelBones.Length);
-            }
         }
 
         public void DrawHeadObject(GraphicsDevice device, Effect effect)

@@ -425,7 +425,7 @@ namespace FSO.Client.UI.Panels.EODs
             for (int i=0; i<NotifyRects.Count; i++)
             {
                 var rect = NotifyRects[i];
-                var time = rect.Item2 - 1f / (FSOEnvironment.RefreshRate * 4);
+                var time = rect.Item2 - FSOEnvironment.DeltaTime / 4f;
                 if (time < 0)
                     NotifyRects.RemoveAt(i--);
                 else

@@ -988,7 +988,7 @@ namespace FSO.Client.UI.Panels
                     //switch to city
                     (UIScreen.Current as Screens.CoreGameScreen)?.ZoomToCity();
                     TargetZoom = 0;
-                    //TargetZoom -= (TargetZoom - 0.25f) * (1f - (float)Math.Pow(0.975f, 60f / FSOEnvironment.RefreshRate));
+                    //TargetZoom -= (TargetZoom - 0.25f) * (1f - (float)Math.Pow(0.975f, 60f * FSOEnvironment.DeltaTime));
                 }
                 else if (TargetZoom < -0.25f)
                 {
@@ -1184,7 +1184,7 @@ namespace FSO.Client.UI.Panels
 
                         var dir = World.Camera.Target - World.Camera.Position;
 
-                        FirstPersonSinceUpdate += 1f / FSOEnvironment.RefreshRate;
+                        FirstPersonSinceUpdate += 1f * FSOEnvironment.DeltaTime;
 
                         if (lastStack is VMDirectControlFrame frame)
                         {
@@ -1304,7 +1304,7 @@ namespace FSO.Client.UI.Panels
 
                         scrollBy *= 0.05f;
 
-                        World.Scroll(scrollBy * (60f / FSOEnvironment.RefreshRate));
+                        World.Scroll(scrollBy * (60f * FSOEnvironment.DeltaTime));
                     }
                 }
                 if (RMBScroll)
@@ -1341,7 +1341,7 @@ namespace FSO.Client.UI.Panels
                         }
                         GameFacade.Cursor.SetCursor(type);
                     }
-                    World.Scroll(scrollBy * (60f / FSOEnvironment.RefreshRate));
+                    World.Scroll(scrollBy * (60f * FSOEnvironment.DeltaTime));
                     scrolled = true;
                 }
                 var keyst = state.KeyboardState;
