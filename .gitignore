@@ -93,3 +93,6 @@ docker/nfs/
 docker/archives/
 
 TSOClient/Mario
+
+# MonoGame content-build stats (generated)
+*.mgstats
