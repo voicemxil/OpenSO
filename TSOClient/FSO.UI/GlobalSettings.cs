@@ -21,10 +21,22 @@ namespace FSO.Client
                         defaultInstance.DPIScaleFactor = 1; //sanity check
                     if (defaultInstance.ChatWindowsOpacity == 0 || defaultInstance.ChatWindowsOpacity > 1)
                         defaultInstance.ChatWindowsOpacity = 1; //sanity check
-                    if (defaultInstance.GameEntryUrl == "http://api.freeso.org")
+                    // Rebrand: any old FreeSO API endpoint -> our OpenSO API.
+                    if (defaultInstance.GameEntryUrl == "http://api.freeso.org" || defaultInstance.GameEntryUrl == "https://api.freeso.org")
                     {
-                        defaultInstance.GameEntryUrl = "https://api.freeso.org";
-                        defaultInstance.CitySelectorUrl = "https://api.freeso.org";
+                        defaultInstance.GameEntryUrl = "https://api.openso.org";
+                        defaultInstance.CitySelectorUrl = "https://api.openso.org";
+                        defaultInstance.Save();
+                    }
+
+                    // This fork only ever talks to a self-hosted custom server; the legacy EA login host
+                    // (auth.east.ea.com) has been dead since 2008. If the debug "Use default server (TSO)"
+                    // toggle ever flipped this off it would persist in config.ini and keep routing every
+                    // launch to that defunct host - heal it so we never get stuck there.
+                    if (!defaultInstance.UseCustomServer)
+                    {
+                        defaultInstance.UseCustomServer = true;
+                        defaultInstance.Save();
                     }
 
                     if (defaultInstance.ArchiveClientGUID == "")
@@ -107,8 +119,8 @@ namespace FSO.Client
 
             { "UseCustomServer", "true" },
             { "ModernCAS", "true" },
-            { "GameEntryUrl", "http://api.freeso.org" },
-            { "CitySelectorUrl", "http://api.freeso.org" },
+            { "GameEntryUrl", "https://api.openso.org" },
+            { "CitySelectorUrl", "https://api.openso.org" },
 
             { "TargetRefreshRate", "60" },
 
