@@ -265,7 +265,7 @@ namespace FSO.Patcher
                     Task.Run(() => AdvanceExtract());
                 };
 
-                client.DownloadFileAsync(new Uri("https://fso-builds.riperiperi.workers.dev/"), "PatchFiles/patch.zip");
+                client.DownloadFileAsync(new Uri("https://github.com/voicemxil/OpenSO/releases/latest/download/OpenSO-client-win-x64.zip"), "PatchFiles/patch.zip");
             }
             else
             {

@@ -229,14 +229,14 @@ namespace FSO.Patcher
 
             if (Args.Contains("--client"))
             {
-                Console.WriteLine("OpenSO client requested. Downloading from servo.freeso.org.");
-                ToDownload.Add("https://fso-builds.riperiperi.workers.dev/");
+                Console.WriteLine("OpenSO client requested. Downloading the latest release from GitHub.");
+                ToDownload.Add("https://github.com/voicemxil/OpenSO/releases/latest/download/OpenSO-client-win-x64.zip");
             }
 
             if (Args.Contains("--extras"))
             {
                 Console.WriteLine("Unix Extras requested. Downloading from OpenSO.org.");
-                ToDownload.Add("http://freeso.org/stuff/macextras.zip");
+                ToDownload.Add("https://api.openso.org/launcher/macextras");
                 AllowMonogameMod = true;
             }
 
