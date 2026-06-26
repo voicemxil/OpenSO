@@ -4,7 +4,7 @@
     <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
-    <ApplicationIcon>fso.ico</ApplicationIcon>
+    <ApplicationIcon>openso.ico</ApplicationIcon>
     <IsAotCompatible>True</IsAotCompatible>
     <PublishAot>true</PublishAot>
     <PublishTrimmed>true</PublishTrimmed>
@@ -26,7 +26,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="fso.ico" />
+    <Content Include="openso.ico" />
     <EmbeddedResource Include="IconNormal.bmp" />
     <EmbeddedResource Include="Icon.bmp" />
     <Content Include="MIConvexHull.xml" />

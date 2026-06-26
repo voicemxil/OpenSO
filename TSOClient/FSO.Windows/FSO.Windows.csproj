@@ -13,26 +13,26 @@
     <PublishAot>false</PublishAot>
     <IsAotCompatible>false</IsAotCompatible>
     <TrimMode>partial</TrimMode>
-    <ApplicationIcon>fso.ico</ApplicationIcon>
+    <ApplicationIcon>openso.ico</ApplicationIcon>
     <PublishReadyToRun>true</PublishReadyToRun>
     <TieredPGO>true</TieredPGO>
   </PropertyGroup>
 
   <ItemGroup>
-    <Content Include="fso.ico" />
+    <Content Include="openso.ico" />
   </ItemGroup>
 
   <PropertyGroup>
-    <ApplicationIcon>fso.ico</ApplicationIcon>
+    <ApplicationIcon>openso.ico</ApplicationIcon>
   </PropertyGroup>
   
   <ItemGroup>
-    <None Remove="fso.ico" />
+    <None Remove="openso.ico" />
     <None Remove="Icon.bmp" />
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="fso.ico">
+    <EmbeddedResource Include="openso.ico">
       <LogicalName>Icon.ico</LogicalName>
     </EmbeddedResource>
     <EmbeddedResource Include="Icon.bmp">
