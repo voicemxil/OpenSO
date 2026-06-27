@@ -203,10 +203,20 @@ creds or missing SPF/DKIM, not the server.
 
 Two independent mechanisms. Both key off the **same release tag** (`dev-#`/`alpha-#`/`beta-#`).
 
-### Server auto-update (the box upgrades itself)
+### Nightly warned restart (fully automatic, like FreeSO)
 
-A nightly systemd timer pulls `:release` and restarts only if the image changed (so a quiet night is a
-no-op). Install it once on the box:
+The server restarts itself every night with a player warning — this is FreeSO's native **`shutdown` task**
+in the `tasks` schedule (`config.json`, `"cron": "0 9 * * *"` = 09:00 UTC ≈ 4–5 AM US East). It broadcasts
+a **15-minute countdown** to everyone online (*"The game server will go down for maintenance in N
+minutes"* at 15/10/5/4/3/2/1 min + 30 s), **saves all lots**, then exits cleanly; `restart: unless-stopped`
+brings it back. No external trigger, no auth — it's in the config. (Adjust the cron time to taste; the
+container runs UTC.)
+
+### Server image auto-update (the box upgrades itself)
+
+A separate nightly systemd timer (**09:30 UTC**, just after the restart) pulls `:release` and recreates the
+server **only if the image changed** — a normal night is a no-op, a release night is a brief swap onto the
+already-emptied server. Install it once on the box:
 
 ```bash
 # from the repo root on the box (adjust paths in the unit files if you cloned elsewhere than /root/OpenSO)
@@ -214,12 +224,15 @@ chmod +x docker/openso-update.sh
 sudo cp docker/systemd/openso-update.service docker/systemd/openso-update.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now openso-update.timer
-systemctl list-timers openso-update.timer        # confirm next run (~04:30)
+systemctl list-timers openso-update.timer        # confirm next run (~09:30 UTC)
 sudo systemctl start openso-update.service        # optional: run an update check right now
 ```
 
 Because the box tracks `:release` (not `:edge`/main), it only ever moves to a **cut release**. Pin a
 specific version in docker-compose.yml (e.g. `:dev-1`) to freeze the box and skip auto-updates.
+
+To **force** a restart or update off-schedule, use the admin webapp / API (`POST /admin/shards/shutdown`
+with `restart` or `update`) — see §11.
 
 ### Client patching (the game updates itself at login)
 
@@ -253,6 +266,49 @@ full zip) need the admin-webapp update generator — a later workstream.
 - [ ] `https://api.openso.org/cityselector/app/InitialConnectServlet` responds.
 - [ ] Register a test account → verification email arrives → confirm → log in with the client.
 - [ ] One account promoted to admin.
+
+---
+
+## 11. Admin webapp (admin.openso.org)
+
+The admin UI is the AngularJS SPA in `TSOClient/FSO.Server/Admin/`. It's a **standalone static bundle** —
+the API server does not serve it — so you build it and host it anywhere over HTTPS. It talks to the
+`/admin/*` endpoints; you log in with an account that has `is_admin=1`. From it you can **force** a
+restart/update, schedule shutdowns, manage users/shards/hosts, and generate client updates.
+
+**Build it** (old toolchain — Node 20 via nvm; builds "with complaining"):
+```bash
+cd TSOClient/FSO.Server/Admin
+npm install
+npm install -g bower && bower install
+npm run start            # gulp build → outputs to dist/
+```
+The default API URL is already set to `https://api.openso.org` (`src/app/login/login.controller.js`); it's
+also editable on the login form.
+
+**Server side (already wired in this repo, ships in the next image):** `https://admin.openso.org` is added
+to the `AdminAppPolicy` CORS origins (`FSO.Server.Api.Core/Startup.cs`). That policy uses
+`AllowCredentials()`, so the admin origin must be listed explicitly — a wildcard won't work. If you host the
+admin UI on a *different* hostname, add it there too and redeploy.
+
+**Host it** — cleanest is a second Caddy site on the box (same auto-TLS as the API). Copy `dist/` to the box
+(e.g. `/root/OpenSO/admin`), mount it into the Caddy container, and add to the `Caddyfile`:
+```
+admin.openso.org {
+    encode zstd gzip
+    root * /srv/admin
+    try_files {path} /index.html
+    file_server
+}
+```
+Add a `./admin:/srv/admin:ro` volume to the `caddy` service in `docker-compose.yml`, point a **DNS-only**
+`admin.openso.org` A record at the box (so Caddy can issue the cert), and `docker compose up -d caddy`.
+(Alternatives: a GitHub Pages repo with `admin.openso.org` as its custom domain; both still need the CORS
+origin above.)
+
+**Log in:** open `https://admin.openso.org`, enter your admin username + password, API URL
+`https://api.openso.org`. Auth posts to `/admin/oauth/token`, which **rejects non-admins** — make sure your
+account is promoted (`UPDATE fso_users SET is_admin=1, is_moderator=1 WHERE username='osab';`).
 
 ---
 

@@ -36,6 +36,12 @@
           "parameter": {}
         },
         {
+          "cron": "0 9 * * *",
+          "task": "shutdown",
+          "timeout": 3600,
+          "parameter": {}
+        },
+        {
           "cron": "0 0 * * *",
           "task": "neighborhood_tick",
           "timeout": 3600,

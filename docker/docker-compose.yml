@@ -7,6 +7,7 @@ name: openso
 services:
   mariadb:
     image: mariadb:11
+    restart: unless-stopped
     environment:
       # CHANGE these for a real deployment (and match the password in config.json's connectionString).
       MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpassword}
@@ -27,6 +28,9 @@ services:
     # auto-update timer (openso-update.sh + docker/systemd/) pulls `:release` and restarts if it changed.
     # Pin a specific version instead (e.g. :dev-1) to freeze; local-source build: `docker build -f docker/Dockerfile ..`.
     image: ghcr.io/voicemxil/openso-server:release
+    # Bring the server back after the nightly graceful RESTART (the in-server `shutdown` task warns
+    # players, saves lots, then exits 3) and after any crash or host reboot.
+    restart: unless-stopped
     depends_on:
       mariadb:
         condition: service_healthy
@@ -53,6 +57,7 @@ services:
   # this box so Caddy's ACME challenge reaches it. Set API_DOMAIN to your API hostname.
   caddy:
     image: caddy:2
+    restart: unless-stopped
     depends_on:
       - freeso-server
     environment:

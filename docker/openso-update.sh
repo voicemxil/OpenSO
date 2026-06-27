@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# OpenSO server auto-update.
+# OpenSO server image auto-update.
 #
-# Pulls the latest `:release` server image and restarts the server only if the image actually changed.
-# Installed as a nightly systemd timer (see docker/systemd/ + docker/DEPLOY.md "Auto-update"), mirroring
-# FreeSO's early-morning server restart. The box tracks `:release`, which moves ONLY when a dev-#/alpha-#/
-# beta-# release is cut (release.yml) — so main-branch (`:edge`) builds never reach production.
+# Pulls the latest `:release` server image and recreates the server ONLY if the image actually changed.
+# The WARNED nightly restart itself is handled in-server by FreeSO's `shutdown` task (config.json tasks
+# schedule, 0 9 * * * UTC) — it broadcasts a 15-minute countdown to players and saves all lots before the
+# server exits, and `restart: unless-stopped` brings it back. This script (nightly systemd timer, ~09:30
+# UTC, just after that restart) only swaps in a NEW release image. The box tracks `:release`, which moves
+# ONLY when a dev-#/alpha-#/beta-# release is cut (release.yml) — main-branch (`:edge`) builds never reach
+# production. On a normal night `up -d` is a no-op (no restart); on a release night it's a brief swap on
+# an already-emptied server. See docker/DEPLOY.md "Updates".
 set -euo pipefail
 
 # Where docker-compose.yml lives. Override with OPENSO_DIR if you cloned elsewhere.

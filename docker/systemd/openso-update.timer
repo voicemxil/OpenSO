@@ -1,12 +1,14 @@
 [Unit]
-Description=Nightly OpenSO server update check (~04:30, like FreeSO's morning restart)
+Description=Nightly OpenSO server image update (applies a new :release after the graceful restart)
 
 [Timer]
-# Fire at 04:30 box-local time. Persistent re-runs a missed check after downtime; the randomized delay
-# avoids a thundering-herd pull at exactly 04:30.
-OnCalendar=*-*-* 04:30:00
+# The in-server `shutdown` task (config.json tasks schedule, 0 9 * * * UTC) already does the WARNED
+# nightly restart at 09:00 UTC (15-min countdown, lots saved). This timer runs ~30 min later to pull a
+# new :release image and recreate the server if one was published — so on a normal night it's a no-op,
+# and on a release night the (brief, unwarned) image swap lands on an already-emptied, just-restarted
+# server. Pinned to UTC to match the container's cron regardless of the box's local timezone.
+OnCalendar=*-*-* 09:30:00 UTC
 Persistent=true
-RandomizedDelaySec=900
 
 [Install]
 WantedBy=timers.target
