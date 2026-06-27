@@ -211,5 +211,28 @@ namespace FSO.Server.Database.DA.Updates
                 return false;
             }
         }
+
+        public DbUpdate GetUpdateByVersionName(int branch_id, string version_name)
+        {
+            return Context.Connection.Query<DbUpdate>(
+                "SELECT * FROM fso_updates WHERE branch_id = @branch_id AND version_name = @version_name LIMIT 1",
+                new { branch_id, version_name }).FirstOrDefault();
+        }
+
+        public bool UpdateArtifacts(int update_id, string full_zip, string incremental_zip, string manifest_url, int? last_update_id)
+        {
+            try
+            {
+                var result = Context.Connection.Execute(
+                    "UPDATE fso_updates SET full_zip = @full_zip, incremental_zip = @incremental_zip, " +
+                    "manifest_url = @manifest_url, last_update_id = @last_update_id WHERE update_id = @update_id",
+                    new { update_id, full_zip, incremental_zip, manifest_url, last_update_id });
+                return (result > 0);
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
     }
 }

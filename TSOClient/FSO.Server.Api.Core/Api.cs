@@ -84,6 +84,18 @@ namespace FSO.Server.Api.Core
             
             Shards = new Shards(DAFactory);
             Shards.AutoUpdate();
+
+            // Reconcile the managed-update list (fso_updates) from the OpenSO GitHub releases in the
+            // background, so GET /userapi/update serves the delta chain the client patches along. CI
+            // attaches each release's full + incremental + manifest; the releases are the source of truth
+            // (no admin/watchdog step). Non-fatal if GitHub is unreachable; `Github` is read at run time
+            // because Program.cs assigns it just after Init returns.
+            var self = this;
+            System.Threading.Tasks.Task.Run(async () =>
+            {
+                try { await new UpdateReconciler(self.DAFactory, self.Github, self.Config.BranchName).ReconcileAsync(); }
+                catch (Exception ex) { Console.WriteLine("[UpdateReconciler] failed: " + ex.Message); }
+            });
         }
 
         public JWTUser RequireAuthentication(HttpRequest request)

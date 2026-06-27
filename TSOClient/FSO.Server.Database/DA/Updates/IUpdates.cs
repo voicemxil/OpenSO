@@ -12,6 +12,8 @@ namespace FSO.Server.Database.DA.Updates
         PagedList<DbUpdate> All(int offset = 0, int limit = 20, string orderBy = "date");
         int AddUpdate(DbUpdate update);
         bool MarkUpdatePublished(int update_id);
+        DbUpdate GetUpdateByVersionName(int branch_id, string version_name);
+        bool UpdateArtifacts(int update_id, string full_zip, string incremental_zip, string manifest_url, int? last_update_id);
 
         DbUpdateAddon GetAddon(int addon_id);
         IEnumerable<DbUpdateAddon> GetAddons(int limit);
