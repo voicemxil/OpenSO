@@ -4,6 +4,7 @@
   "simNFS": "/nfs",
   "allOpenable": true,
   "updateBranch": "dev",
+  "serverDeployTriggerDir": "/deploy-trigger",
 
   "database": {
     "connectionString": "server=mariadb;uid=fsoserver;pwd=password;database=fso;"

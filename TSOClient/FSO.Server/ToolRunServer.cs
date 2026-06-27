@@ -351,6 +351,14 @@ namespace FSO.Server
                                 return 4;
                             }
 
+                            // Docker on-demand deploy: the watchdog/server-zip self-update is dead under
+                            // Docker, so an admin UPDATE shutdown instead drops a deploy-request flag into a
+                            // host-shared dir. A host-side systemd path-unit watches it and pulls/recreates the
+                            // latest :release image. Runs here, after all lots are saved and servers are down,
+                            // so the host swap lands on a fully-drained server.
+                            if (ShutdownMode == ShutdownType.UPDATE)
+                                WriteDeployRequest();
+
                             /*var domain = AppDomain.CreateDomain("RebootApp");
 
                             var assembly = "FSO.Server.Updater, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
@@ -366,6 +374,28 @@ namespace FSO.Server
                 }
             }
             return 1;
+        }
+
+        /// <summary>
+        /// Writes a "deploy.request" flag into Config.ServerDeployTriggerDir (a host-shared volume). A
+        /// host-side systemd path-unit watches the file and runs `docker compose pull &amp;&amp; up -d` to swap in
+        /// the latest :release image, then deletes the flag. No-op if the dir isn't configured (non-Docker).
+        /// </summary>
+        private void WriteDeployRequest()
+        {
+            var dir = Config.ServerDeployTriggerDir;
+            if (string.IsNullOrEmpty(dir)) return;
+            try
+            {
+                Directory.CreateDirectory(dir);
+                var path = Path.Combine(dir, "deploy.request");
+                File.WriteAllText(path, $"deploy requested {DateTime.UtcNow:o}\n");
+                LOG.Info($"Wrote deploy request to {path}; host path-unit will pull/recreate the latest image.");
+            }
+            catch (Exception e)
+            {
+                LOG.Error($"Failed to write deploy request to {dir}: {e.Message}");
+            }
         }
 
         private int[] ShutdownAlertTimings = new int[]

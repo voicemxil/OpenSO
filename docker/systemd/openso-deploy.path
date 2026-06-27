@@ -1,0 +1,13 @@
+[Unit]
+Description=Watch for OpenSO admin-triggered deploy requests
+
+[Path]
+# The freeso-server container writes this file at the end of an admin "Update" shutdown (the file lives in
+# the ./deploy-trigger volume, shared with the container at /deploy-trigger). PathExists fires the service
+# whenever the flag appears; openso-deploy.sh deletes it, re-arming the watch for the next request.
+# Adjust the path if you cloned OpenSO somewhere other than /root/OpenSO.
+PathExists=/root/OpenSO/docker/deploy-trigger/deploy.request
+Unit=openso-deploy.service
+
+[Install]
+WantedBy=multi-user.target

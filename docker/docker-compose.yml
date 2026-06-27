@@ -51,6 +51,10 @@ services:
       - ${TSO_GAME_PATH:-./tso/TSOClient}:/game:ro
       - ./nfs:/nfs:rw
       - ./config.json:/app/config.json:cached
+      # On-demand deploy: an admin "Update" shutdown writes deploy-trigger/deploy.request here (after lots
+      # save); the host's openso-deploy.path systemd unit watches ./deploy-trigger and pulls/recreates the
+      # latest :release image. See docker/DEPLOY.md "Admin-driven deploy".
+      - ./deploy-trigger:/deploy-trigger:rw
 
   # HTTPS reverse proxy for the public API: https://api.openso.org -> Caddy:443 -> freeso-server:9000,
   # with automatic Let's Encrypt certs. api.openso.org must be a DNS-only (grey-cloud) record pointing at

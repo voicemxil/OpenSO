@@ -1,0 +1,10 @@
+[Unit]
+Description=OpenSO admin-triggered deploy (pull :release image, recreate the drained server)
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# Adjust the path if you cloned OpenSO somewhere other than /root/OpenSO.
+ExecStart=/root/OpenSO/docker/openso-deploy.sh

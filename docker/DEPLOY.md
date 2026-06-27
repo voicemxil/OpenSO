@@ -231,8 +231,34 @@ sudo systemctl start openso-update.service        # optional: run an update chec
 Because the box tracks `:release` (not `:edge`/main), it only ever moves to a **cut release**. Pin a
 specific version in docker-compose.yml (e.g. `:dev-1`) to freeze the box and skip auto-updates.
 
-To **force** a restart or update off-schedule, use the admin webapp / API (`POST /admin/shards/shutdown`
-with `restart` or `update`) — see §11.
+### Admin-driven deploy (update from the dashboard, on demand)
+
+You don't have to wait for the nightly timer. The admin webapp's shard **Update** action (Shards → Shutdown
+→ tick *Update*, or `POST /admin/shards/shutdown {update:true}`) now drives a real image deploy:
+
+1. The server broadcasts the countdown to players and **saves all lots** (the normal graceful drain).
+2. After the drain, `ToolRunServer.WriteDeployRequest` drops a `deploy.request` flag into the
+   `./deploy-trigger` volume (config key `serverDeployTriggerDir`: `/deploy-trigger`).
+3. A host-side **systemd path-unit** sees the flag and runs `openso-deploy.sh` → `docker compose pull` +
+   `up -d`, swapping the drained server onto the latest `:release` image (no-op if `:release` didn't move).
+
+This replaces FreeSO's dead watchdog/server-zip self-update (the container can't update itself — no Docker
+socket is mounted, by design). Install the watcher once on the box:
+
+```bash
+# from the repo root on the box (adjust paths in the unit files if you cloned elsewhere than /root/OpenSO)
+chmod +x docker/openso-deploy.sh
+sudo cp docker/systemd/openso-deploy.path docker/systemd/openso-deploy.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now openso-deploy.path
+systemctl status openso-deploy.path               # confirm it's watching
+```
+
+Recreate the container once (`docker compose up -d freeso-server`) after pulling these changes so the new
+`./deploy-trigger` volume + `serverDeployTriggerDir` config take effect. Watch a deploy with
+`journalctl -u openso-deploy.service -f`.
+
+To **force** a plain restart (no image swap) off-schedule, use the same dialog with *Restart* instead.
 
 ### Client patching (the game updates itself at login)
 

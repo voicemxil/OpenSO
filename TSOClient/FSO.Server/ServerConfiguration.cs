@@ -24,6 +24,14 @@ namespace FSO.Server
         [JsonProperty("updateBranch")]
         public string UpdateBranch;
 
+        // When set, an admin-triggered UPDATE shutdown writes a "deploy.request" flag into this directory
+        // (a volume shared with the host) after lots are saved. A host-side systemd path-unit watches it and
+        // pulls/recreates the latest :release image — the Docker replacement for the dead watchdog server
+        // self-update. Null/empty = disabled (non-Docker deployments are unaffected). Docker sets it to the
+        // mounted trigger dir, e.g. "/deploy-trigger".
+        [JsonProperty("serverDeployTriggerDir")]
+        public string ServerDeployTriggerDir;
+
         [JsonProperty("allOpenable")]
         public bool AllOpenable;
 
