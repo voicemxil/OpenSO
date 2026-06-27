@@ -1785,7 +1785,7 @@ namespace FSO.Client.Rendering.City
         public uint StencilLotID;
         public VertexBuffer StencilVertices;
 
-        public void DrawSurrounding(GraphicsDevice gfx, ICamera camera, Vector4 fogColor, int surroundNumber) {
+        public void DrawSurrounding(GraphicsDevice gfx, ICamera camera, Vector4 fogColor, int surroundNumber, Vector2 taaJitter) {
             if (!GlobalSettings.Default.CitySkybox)
             {
                 if (camera is CameraControllers)
@@ -1855,6 +1855,12 @@ namespace FSO.Client.Rendering.City
 
             VertexShader.CurrentTechnique = VertexShader.Techniques[2];
             var mv = world * v;
+            // Apply the lot's TAA sub-pixel jitter to the backdrop projection so distant surroundings get
+            // temporal AA. The lot geometry jitters via WorldState.Projection, but this backdrop reads the
+            // un-jittered camera projection — so without matching jitter it samples the same pixel centers
+            // every frame and TAA can't resolve it (distant terrain stays aliased). Using the SAME jitter as
+            // the lot means the resolve's JitterDeltaUV (set from the lot's sequence) cancels it for both.
+            if (taaJitter.X != 0 || taaJitter.Y != 0) { p.M31 -= taaJitter.X; p.M32 -= taaJitter.Y; }
             var mvp = mv * p * Matrix.CreateScale(1f, 1f, 0.3f);
             m_MovMatrix = mvp;
             VertexShader.Parameters["BaseMatrix"].SetValue(mvp);

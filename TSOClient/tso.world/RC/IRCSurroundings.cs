@@ -6,6 +6,8 @@ namespace FSO.LotView.RC
 {
     public interface IRCSurroundings
     {
-        void DrawSurrounding(GraphicsDevice gfx, ICamera cam, Vector4 fogColor, int surroundNumber);
+        // taaJitter = the lot's current TAA sub-pixel projection jitter (NDC). The surroundings backdrop must
+        // apply the SAME jitter so distant terrain accumulates temporal samples like the lot geometry does.
+        void DrawSurrounding(GraphicsDevice gfx, ICamera cam, Vector4 fogColor, int surroundNumber, Vector2 taaJitter);
     };
 }

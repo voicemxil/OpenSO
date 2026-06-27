@@ -107,7 +107,7 @@ namespace FSO.LotView
                 Dome.BP = Bp;
                 Dome.Draw(gd, state);
 
-                World.Surroundings?.DrawSurrounding(gd, state.Camera, Bp.Weather.FogColor, (Bp.SubWorlds.Count > 0) ? 1 : 0);
+                World.Surroundings?.DrawSurrounding(gd, state.Camera, Bp.Weather.FogColor, (Bp.SubWorlds.Count > 0) ? 1 : 0, state.TAAJitter);
             }
             gd.Clear(ClearOptions.DepthBuffer, Color.White, 1, 0);
 
