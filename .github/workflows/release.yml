@@ -171,6 +171,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push (stamped release image + moving :release)
         uses: docker/build-push-action@v6
+        # Don't upload the .dockerbuild build-record artifact — the release job's download-artifact
+        # would try to pull it and fail. (The pattern filter there is the backstop.)
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           file: docker/Dockerfile
@@ -199,6 +203,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          # Only the client/server build zips — NOT the .dockerbuild provenance artifact that
+          # docker/build-push-action uploads from the server-image job (download-artifact chokes on it).
+          pattern: OpenSO-*
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
