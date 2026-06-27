@@ -2,9 +2,9 @@
 
 angular.module('admin')
   .controller('LoginCtrl', function ($scope, Auth, $location) {
-      $scope.apiUrl = "https://auth.east.ea.com/";
-      $scope.username = "admin";
-      $scope.password = "password";
+      $scope.apiUrl = "https://api.openso.org";
+      $scope.username = "";
+      $scope.password = "";
 
       $scope.loginLocked = false;
 
