@@ -237,23 +237,25 @@ with `restart` or `update`) — see §11.
 ### Client patching (the game updates itself at login)
 
 At login the client compares its `version.txt` to the version the **shard advertises** and, if behind,
-downloads the full client zip and relaunches via `update.exe`. To turn it on:
+downloads the full client zip and relaunches via `update.exe`.
 
-1. **Advertise the current version** — set the shard's version to match the latest release:
-   ```bash
-   docker compose -f docker/docker-compose.yml exec mariadb \
-     mariadb -ufsoserver -p"$DB_PASSWORD" fso \
-     -e "UPDATE fso_shards SET version_name='dev', version_number='1' WHERE shard_id=1;"
-   ```
-   (i.e. `version_name`+`-`+`version_number` = the release, e.g. `dev`/`1` → `dev-1`. Bump
-   `version_number` each release; switch `version_name` to `alpha`/`beta` when the channel changes.)
-2. **Set the update URL** — already in `docker/config.json` (`userApi.updateUrl` →
-   `…/releases/latest/download/OpenSO-client-win-x64.zip`). Restart the server after editing config.
+**The advertised version tracks the running server automatically — never set it by hand.** On every boot
+the city server writes its own `version.txt` into the shard row (`CityServer.cs` → `Shards.UpdateStatus`),
+so `fso_shards.version_name`/`version_number` always equals the build the server actually is. That's why
+stamping the image (`VERSION` arg → `version.txt`) is essential: deploy the `dev-2` image and the shard
+advertises `dev-2` the moment it boots. A hand-set version that doesn't match the running build would tell
+clients to "update" to a build the server isn't on — a patch loop. So patching needs only:
 
-A client already on the advertised version sees no prompt; an older one patches up to it. The shard poll
-picks up the SQL within ~60 s. **Caveat:** that single URL is win-x64 — in-game patching targets Windows;
-Linux/macOS players update through the launcher (which is per-platform). Smaller delta patches (vs. the
-full zip) need the admin-webapp update generator — a later workstream.
+- **The update URL** — already in `docker/config.json` (`userApi.updateUrl` →
+  `…/releases/latest/download/OpenSO-client-win-x64.zip`), advertised as `FSOUpdateUrl`.
+- **A published release** matching the deployed image, so `releases/latest` actually serves that version's
+  client zip. (Deploy the image and publish the release together — if the server advertises `dev-2` but
+  `releases/latest` is still `dev-1`, outdated clients download `dev-1` and never catch up.)
+
+A client already on the advertised version sees no prompt; an older one patches up to it. **Caveat:** that
+single URL is win-x64 — in-game patching targets Windows; Linux/macOS players update through the launcher
+(which is per-platform). Smaller delta patches (vs. the full zip) need the admin-webapp update generator —
+a later workstream.
 
 ---
 
