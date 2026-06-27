@@ -38,6 +38,14 @@ namespace FSO.Server.Api.Core
             }).AddMvc(options =>
             {
                 options.EnableEndpointRouting = false;
+            }).AddJsonOptions(options =>
+            {
+                // The admin API's request DTOs (ShutdownModel, AnnouncementModel, etc.) use public FIELDS,
+                // not properties. System.Text.Json ignores fields by default, so model binding silently left
+                // every value at its default — e.g. POST /admin/shards/shutdown always bound timeout=0,
+                // restart=false, update=false, turning every requested restart/update into an immediate
+                // blank SHUTDOWN. Enable field (de)serialization so these payloads bind correctly.
+                options.JsonSerializerOptions.IncludeFields = true;
             });
         }
 
