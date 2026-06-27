@@ -262,19 +262,25 @@ namespace FSO.Files.RC
 
         private void CleanupFailedLoad(DGRP dgrp, GraphicsDevice gd, string filePath)
         {
-            // TODO: force reconstruction to run
-            UnloadedGeoms.Clear();
+            // LoadData can throw before UnloadedGeoms is created (e.g. the "Reconstruction outdated" check
+            // fires right after reading the header, before the list is allocated). An unguarded Clear() here
+            // therefore NREs *inside the async streaming catch handler* and takes the whole client down.
+            // Guard it so a failed/outdated/corrupt .fsom degrades gracefully. (Outdated CACHE files are now
+            // skipped up-front in RCMeshProvider so they regenerate instead of reaching here.)
+            UnloadedGeoms?.Clear();
             CompleteFSOMLoad(gd);
         }
 
         /// <summary>
-        /// Cheaply checks whether an .fsom replacement file actually contains geometry, by reading just its
-        /// header (geomCount). Broken remesh-pack files can be valid-but-empty (geomCount == 0); trusting
-        /// them makes an object render nothing in 3D. Callers use this to skip such files and fall back to
-        /// the generated mesh. Returns false on any read/parse error too (corrupt -> don't trust).
-        /// Safe for both the sync and async (streaming) load paths since it runs before the mesh is built.
+        /// Cheaply checks whether an .fsom file is safe to stream-load, by reading only its header. It must
+        /// (a) contain geometry — broken remesh-pack files can be valid-but-empty (geomCount == 0, e.g. the
+        /// Soma Plasma TV on-state), and (b) not be an outdated reconstruction — ReconstructVersion below
+        /// CURRENT_RECONSTRUCT is what LoadData rejects by throwing, which the async streaming path cannot
+        /// recover from (it NREs / renders nothing). Callers skip such files and fall back to a freshly
+        /// generated mesh. ReconstructVersion 0 = hand-authored / replacement mesh, never "outdated".
+        /// Returns false on any read/parse error too (corrupt -> don't trust).
         /// </summary>
-        public static bool FileHasGeometry(string filePath)
+        public static bool FileMeshCurrent(string filePath)
         {
             try
             {
@@ -282,11 +288,12 @@ namespace FSO.Files.RC
                 using (var cstream = new GZipStream(source, CompressionMode.Decompress))
                 using (var io = IoBuffer.FromStream(cstream, ByteOrder.LITTLE_ENDIAN))
                 {
-                    io.ReadCString(4);      // "FSOm"
-                    io.ReadInt32();         // Version
-                    io.ReadInt32();         // ReconstructVersion
-                    io.ReadPascalString();  // Name
-                    return io.ReadInt32() > 0; // geomCount
+                    io.ReadCString(4);                // "FSOm"
+                    io.ReadInt32();                   // Version
+                    var reconstruct = io.ReadInt32(); // ReconstructVersion
+                    if (reconstruct != 0 && reconstruct < CURRENT_RECONSTRUCT) return false; // outdated -> regenerate
+                    io.ReadPascalString();            // Name
+                    return io.ReadInt32() > 0;        // geomCount
                 }
             }
             catch { return false; }

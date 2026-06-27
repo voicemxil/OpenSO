@@ -58,7 +58,7 @@ namespace FSO.Content
                     // Soma Plasma TV on-state) — it would render the object as nothing. Skip it so the fallback
                     // chain below (IFF FSOM / RC cache / freshly generated) runs and the object still appears.
                     var replPath = Path.Combine(repldir, name);
-                    if (DGRP3DMesh.FileHasGeometry(replPath))
+                    if (DGRP3DMesh.FileMeshCurrent(replPath))
                     {
                         try
                         {
@@ -88,14 +88,22 @@ namespace FSO.Content
                 {
                     if (result == null && !IgnoreRCCache.Contains(dgrp))
                     {
-                        //does it exist in rc cache
-                        try
+                        //does it exist in rc cache — but only if it's current. An outdated cache (older
+                        //ReconstructVersion) makes LoadData throw; in the async streaming path that can't be
+                        //recovered (it crashed the client), and even synchronously it would just blank the
+                        //object. Skipping it here leaves result == null so the "create it anew" path below
+                        //regenerates the mesh and overwrites the stale cache.
+                        var cachePath = Path.Combine(dir, name);
+                        if (DGRP3DMesh.FileMeshCurrent(cachePath))
                         {
-                            result = new DGRP3DMesh(dgrp, Path.Combine(dir, name), GD);
-                        }
-                        catch (Exception)
-                        {
-                            result = null;
+                            try
+                            {
+                                result = new DGRP3DMesh(dgrp, cachePath, GD);
+                            }
+                            catch (Exception)
+                            {
+                                result = null;
+                            }
                         }
                     }
                 } else
