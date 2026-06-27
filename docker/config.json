@@ -3,6 +3,7 @@
   "secret": "GENERATE",
   "simNFS": "/nfs",
   "allOpenable": true,
+  "updateBranch": "dev",
 
   "database": {
     "connectionString": "server=mariadb;uid=fsoserver;pwd=password;database=fso;"
@@ -81,7 +82,6 @@
 
       "cdnUrl": "https://api.openso.org",
 
-      "branchName": "dev",
       "updateUrl": "https://github.com/voicemxil/OpenSO/releases/latest/download/OpenSO-client-win-x64.zip",
 
       "smtpHost": "smtp.your-email-provider.com",
