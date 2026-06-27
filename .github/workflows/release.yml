@@ -213,3 +213,42 @@ jobs:
           name: OpenSO ${{ steps.ver.outputs.version }}
           generate_release_notes: true
           files: artifacts/**/*
+
+  # ---- Generate the incremental (delta) patch vs the PREVIOUS release and attach it to this release.
+  #      The server-side UpdateReconciler discovers these assets and publishes the fso_updates delta chain,
+  #      so an in-game client patches dev-(N-1) -> dev-N by downloading only the changed files (win-x64).
+  client-delta:
+    needs: [ release ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+      - name: Resolve this + previous version
+        id: ver
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.ref_type }}" = "tag" ]; then VER="${GITHUB_REF_NAME}"; else VER="${{ github.event.inputs.version }}"; fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          # Previous release in the same channel: <branch>-<N-1> (dev/alpha/beta). Skip if it doesn't exist
+          # (first release in the channel -> baseline, full zip only, no delta).
+          BRANCH="${VER%-*}"; NUM="${VER##*-}"; PREV="$BRANCH-$((NUM-1))"
+          if gh release view "$PREV" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          else
+            echo "prev=" >> "$GITHUB_OUTPUT"; echo "No previous release $PREV — baseline, skipping delta."
+          fi
+      - name: Generate + attach delta
+        if: steps.ver.outputs.prev != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release download "${{ steps.ver.outputs.prev }}"    -R "$GITHUB_REPOSITORY" -p OpenSO-client-win-x64.zip -O prev.zip
+          gh release download "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" -p OpenSO-client-win-x64.zip -O curr.zip
+          dotnet run --project TSOClient/FSO.DeltaGen -c Release -- prev.zip curr.zip "${{ steps.ver.outputs.version }}" out
+          gh release upload "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" \
+            out/OpenSO-client-win-x64.incremental.zip out/OpenSO-client-win-x64.manifest.json --clobber

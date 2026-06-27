@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Standalone CI tool: given the previous and current client release zips, produce the incremental
+       (delta) patch zip + manifest the in-game updater consumes. Mirrors FSO.Server.Api.Core's
+       GenerateUpdateService so the client patcher (ReversiblePatcher) applies the output unchanged,
+       but runs in CI (release.yml) instead of the admin-webapp generator. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>FSO.DeltaGen</AssemblyName>
+    <RootNamespace>FSO.DeltaGen</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- DiffGenerator + FileDiff (XxHash32 whole-file diffs) live here. -->
+    <ProjectReference Include="..\tso.files\FSO.Files.csproj" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+  </ItemGroup>
+
+</Project>
