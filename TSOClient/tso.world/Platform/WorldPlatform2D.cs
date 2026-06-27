@@ -55,6 +55,13 @@ namespace FSO.LotView.Platform
             state.InvalidateCamera();
 
             state._2D.ResizeBuffer(_2DWorldBatch.BUFFER_LOTTHUMB, size, size);
+            // The lot-thumbnail terrain/sprite/wall techniques (drawZSpriteDepthChannel, the grass depth
+            // passes, etc.) emit a depth value to COLOR1 in addition to colour to COLOR0. Bind a matching
+            // depth MRT so COLOR1 has a real target. Rendering with only the single colour target bound
+            // leaves MRT1 unbound, and on level_9_3 hardware that corrupts COLOR0 — which turned the
+            // thumbnail's transparent backdrop into opaque black. This mirrors GetObjectThumb, which has
+            // always bound BUFFER_THUMB + BUFFER_THUMB_DEPTH and renders a correct transparent background.
+            state._2D.ResizeBuffer(_2DWorldBatch.BUFFER_LOTTHUMB_DEPTH, size, size);
 
             state.CenterTile = bp.GetThumbCenterTile(state);
             state.CenterTile -= state.WorldSpace.GetTileFromScreen(new Vector2((size - state.WorldSpace.WorldPxWidth) / state.PreciseZoom, (size - state.WorldSpace.WorldPxHeight) / state.PreciseZoom) / 2);
@@ -64,11 +71,12 @@ namespace FSO.LotView.Platform
             var _2d = state._2D;
             state.ClearLighting(false);
             Promise<Texture2D> bufferTexture = null;
+            Promise<Texture2D> depthTexture = null;
             var lastLight = state.OutsideColor;
             state.OutsideColor = Color.White;
             state._2D.OBJIDMode = false;
             state.PrepareCamera();
-            using (var buffer = state._2D.WithBuffer(_2DWorldBatch.BUFFER_LOTTHUMB, ref bufferTexture))
+            using (var buffer = state._2D.WithBuffer(_2DWorldBatch.BUFFER_LOTTHUMB, ref bufferTexture, _2DWorldBatch.BUFFER_LOTTHUMB_DEPTH, ref depthTexture))
             {
                 _2d.SetScroll(pxOffset);
                 while (buffer.NextPass())

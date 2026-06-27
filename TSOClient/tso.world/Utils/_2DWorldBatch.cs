@@ -30,7 +30,8 @@ namespace FSO.LotView.Utils
             SurfaceFormat.Color, //depth, using a 24-bit packed format
 
             /** Lot Thumbnail Buffer **/
-            SurfaceFormat.Color
+            SurfaceFormat.Color,
+            SurfaceFormat.Color //lot thumb depth/MRT1, so the depth-channel techniques have a COLOR1 target
         };
 
         public static bool[] FORMAT_ALWAYS_DEPTHSTENCIL = new bool[] {
@@ -47,15 +48,18 @@ namespace FSO.LotView.Utils
 
             //lot thumb
             true,
+            //lot thumb depth
+            false,
         };
 
-        public static readonly int NUM_2D_BUFFERS = 6;
+        public static readonly int NUM_2D_BUFFERS = 7;
         public static readonly int BUFFER_STATIC = 0;
         public static readonly int BUFFER_STATIC_DEPTH = 1;
         public static readonly int BUFFER_OBJID = 2;
         public static readonly int BUFFER_THUMB = 3; //used for drawing thumbnails
         public static readonly int BUFFER_THUMB_DEPTH = 4; //used for drawing thumbnails
         public static readonly int BUFFER_LOTTHUMB = 5;
+        public static readonly int BUFFER_LOTTHUMB_DEPTH = 6; //depth/MRT1 companion to BUFFER_LOTTHUMB
 
         public static readonly int SCROLL_BUFFER = 512; //resolution to add to render size for scroll reasons
 
@@ -171,7 +175,8 @@ namespace FSO.LotView.Utils
                         width = 1024;
                         height = 1024;
                         break;
-                    case 5:
+                    case 5: //World2D.BUFFER_LOTTHUMB
+                    case 6: //World2D.BUFFER_LOTTHUMB_DEPTH (must match the colour buffer's size for the MRT)
                         width = 576;
                         height = 576;
                         break;
