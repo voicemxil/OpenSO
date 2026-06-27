@@ -283,6 +283,31 @@ namespace FSO.Files.RC
             CompleteFSOMLoad(gd);
         }
 
+        /// <summary>
+        /// Cheaply checks whether an .fsom replacement file actually contains geometry, by reading just its
+        /// header (geomCount). Broken remesh-pack files can be valid-but-empty (geomCount == 0); trusting
+        /// them makes an object render nothing in 3D. Callers use this to skip such files and fall back to
+        /// the generated mesh. Returns false on any read/parse error too (corrupt -> don't trust).
+        /// Safe for both the sync and async (streaming) load paths since it runs before the mesh is built.
+        /// </summary>
+        public static bool FileHasGeometry(string filePath)
+        {
+            try
+            {
+                using (var source = File.OpenRead(filePath))
+                using (var cstream = new GZipStream(source, CompressionMode.Decompress))
+                using (var io = IoBuffer.FromStream(cstream, ByteOrder.LITTLE_ENDIAN))
+                {
+                    io.ReadCString(4);      // "FSOm"
+                    io.ReadInt32();         // Version
+                    io.ReadInt32();         // ReconstructVersion
+                    io.ReadPascalString();  // Name
+                    return io.ReadInt32() > 0; // geomCount
+                }
+            }
+            catch { return false; }
+        }
+
         private void LoadData(DGRP dgrp, Stream source, GraphicsDevice gd)
         {
             using (var cstream = new GZipStream(source, CompressionMode.Decompress))
