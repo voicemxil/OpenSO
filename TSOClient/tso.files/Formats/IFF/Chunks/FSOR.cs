@@ -9,9 +9,7 @@ namespace FSO.Files.Formats.IFF.Chunks
     /// </summary>
     public class FSOR : IffChunk
     {
-        //1: initial file-wise params
-        //2: depth conditioning + quality params
-        public static int CURRENT_VERSION = 2;
+        public static int CURRENT_VERSION = 1;
         public int Version = CURRENT_VERSION;
         public DGRPRCParams Params = new DGRPRCParams();
 
