@@ -48,6 +48,11 @@ namespace FSO.LotView.Platform
             var lastCamera = (state.CameraMode == CameraRenderMode._3D) ? CameraControllerType._3D : CameraControllerType._2D;
             state.ForceCamera(CameraControllerType._2D);
             state.RenderingThumbnail = true;
+            // The thumbnail renders into a single colour target (LotThumbTarget). Suppress the velocity MRT
+            // so the terrain/wall/object shaders use their single-output techniques instead of writing
+            // velocity (COLOR1) / normal (COLOR2) into unbound MRT slots, which corrupts COLOR0 to opaque
+            // black on level_9_3 (the black 3D thumbnail backdrop). Reset in the restore block below.
+            FSO.Common.Utils.PPXDepthEngine.SuppressVelocityTarget = true;
 
             var wCam = state.Camera2D;
             var oldViewDimensions = wCam.ViewDimensions;
@@ -150,6 +155,7 @@ namespace FSO.LotView.Platform
             state.CenterTile = oldCenter; //must be set after rotation.
             bp.Cutaway = oldCutaway;
             state.RenderingThumbnail = false;
+            FSO.Common.Utils.PPXDepthEngine.SuppressVelocityTarget = false;
 
             state.ForceCamera(lastCamera);
 

@@ -137,7 +137,13 @@ namespace FSO.Common.Utils
             return VelocityTarget;
         }
 
-        public static RenderTarget2D GetVelocityTarget() => VelocityTarget;
+        // When set, GetVelocityTarget() reports "no velocity target" so every velocity-aware shader
+        // (RCObject / Vitaboy / Grass / Wall) falls back to its single-output, non-velocity technique.
+        // Used by the 3D lot-thumbnail render (WorldPlatform3D.GetLotThumb): it binds a single colour
+        // target, so writing the velocity (COLOR1) / normal (COLOR2) MRT outputs into unbound slots
+        // corrupts COLOR0 to opaque black on ps_4_0_level_9_3 -- the black thumbnail backdrop in 3D mode.
+        public static bool SuppressVelocityTarget = false;
+        public static RenderTarget2D GetVelocityTarget() => SuppressVelocityTarget ? null : VelocityTarget;
         public static RenderTarget2D GetNormalTarget() => NormalTarget;
         public static RenderTarget2D GetMBTileMax() => MBTileMax;
 
