@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: "9.0.315"
 
       - name: Publish client
         run: dotnet publish ${{ matrix.project }} -c Release -r ${{ matrix.rid }} --self-contained -o publish
@@ -124,7 +124,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: "9.0.315"
       - name: Publish server
         run: dotnet publish TSOClient/FSO.Server.Core -c Release -r ${{ matrix.rid }} --self-contained -o publish
       - name: Stamp version.txt
@@ -240,7 +240,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: "9.0.315"
       - name: Resolve this + previous version
         id: ver
         env:

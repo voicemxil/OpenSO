@@ -27,6 +27,14 @@ namespace FSO.DeltaGen
         public const string IncrementalAsset = "OpenSO-client-win-x64.incremental.zip";
         public const string ManifestAsset = "OpenSO-client-win-x64.manifest.json";
 
+        // The in-game patcher (update.exe + its assemblies) can't overwrite its own running files mid-patch
+        // — it's the process doing the patching — so it must NEVER appear in a delta. It's delivered by full
+        // installs instead. Excluding it also lets an already-installed (older) patcher apply future deltas.
+        private static readonly HashSet<string> PatcherFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "update.exe", "update.dll", "update.deps.json", "update.runtimeconfig.json", "update.dll.config", "update.pdb"
+        };
+
         public static int Main(string[] args)
         {
             if (args.Length < 4)
@@ -50,6 +58,9 @@ namespace FSO.DeltaGen
                 ZipFile.ExtractToDirectory(newZip, newDir);
 
                 var diffs = DiffGenerator.GetDiffs(Path.GetFullPath(prevDir), Path.GetFullPath(newDir));
+
+                // Drop the patcher's own files entirely — they can't be patched in-place (see PatcherFiles).
+                diffs = diffs.Where(d => !PatcherFiles.Contains(Path.GetFileName(d.Path.Replace('\\', '/')))).ToList();
 
                 // The incremental zip carries the Add + Modify files at their install-relative paths.
                 // Whole-release diffs (no stable base+addon split), so we include everything that changed —
