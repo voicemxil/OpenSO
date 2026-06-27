@@ -292,7 +292,12 @@ namespace FSO.LotView.Utils
             // sets this up around the object loop). DGRPRenderer flips between several techniques mid-draw
             // (DepthClear, Disabled, Draw) so this needs to be the value used wherever the *visible* color
             // pass goes — DepthClear / Disabled stays on their dedicated techniques (no velocity for those).
-            var drawTech = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null
+            // Guard on an actually-bound MRT (>1 target), not just an allocated velocity target: single-target
+            // passes like the lot-thumbnail render (WorldPlatform3D.GetLotThumb) bind only their own target,
+            // and writing the velocity/normal outputs into unbound slots corrupts the visible color (black bg
+            // + noise) on level_9_3. The normal scene pass always has the MRT bound, so it's unaffected.
+            var drawTech = (FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null
+                && device.GetRenderTargets().Length > 1)
                 ? RCObjectTechniques.DrawWithVelocity
                 : RCObjectTechniques.Draw;
 
