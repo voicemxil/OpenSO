@@ -75,6 +75,20 @@ jobs:
           printf '%s\n' "$VERSION" > publish/version.txt
           if [ -f "publish/OpenSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/OpenSO.app/Contents/MacOS/version.txt"; fi
 
+      - name: Bundle the in-game patcher (update.exe)
+        if: matrix.rid == 'win-x64'
+        shell: pwsh
+        run: |
+          # The client launches update.exe (FSO.Patcher, AssemblyName=update) to apply downloaded patches,
+          # but it isn't part of the client project — bundle it here. Built with the same SDK as the client
+          # in this job, so it shares the client's self-contained runtime; only the patcher-specific files
+          # need to land in the package.
+          dotnet publish TSOClient/FSO.Patcher -c Release -r win-x64 --self-contained -o patcher
+          foreach ($f in 'update.exe','update.dll','update.deps.json','update.runtimeconfig.json','update.dll.config','System.Resources.Extensions.dll') {
+            if (Test-Path "patcher/$f") { Copy-Item "patcher/$f" "publish/$f" -Force }
+          }
+          if (-not (Test-Path "publish/update.exe")) { throw "update.exe was not bundled" }
+
       - name: Package + checksum (Unix)
         if: runner.os != 'Windows'
         shell: bash
