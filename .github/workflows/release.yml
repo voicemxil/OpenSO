@@ -15,13 +15,15 @@ name: Release OpenSO
 
 on:
   push:
-    tags: [ "dev-*", "alpha-*", "beta-*" ]
+    # Semver tags (vMAJOR.MINOR.PATCH) are the current scheme; legacy dev-/alpha-/beta- kept so old
+    # tags still resolve. version.txt is stamped from the tag, so the build self-reports e.g. v0.1.0.
+    tags: [ "v[0-9]*", "dev-*", "alpha-*", "beta-*" ]
   workflow_dispatch:
     inputs:
       version:
-        description: "Release version (e.g. dev-1, beta-3). Used when run manually."
+        description: "Release version (e.g. v0.1.0). Used when run manually."
         required: false
-        default: "dev-0"
+        default: "v0.0.0"
 
 permissions:
   contents: write   # required to create the GitHub Release

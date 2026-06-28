@@ -53,10 +53,13 @@ namespace FSO.Server.Api.Core.Services
 
             var releases = await client.Repository.Release.GetAll(owner, repo);
 
-            // This branch's releases, tagged "<branch>-<N>", oldest first so last_update_id chains forward.
+            // Stable releases tagged with semver ("vMAJOR.MINOR.PATCH"), oldest first so last_update_id
+            // chains forward. Pre-releases (e.g. a future "-beta") are a separate channel and excluded.
+            // Legacy "dev-N" tags are intentionally ignored: the chain restarts at the first semver release,
+            // so a client on an old build does one full download across the scheme change, then deltas resume.
             var ordered = releases
-                .Where(r => !r.Draft && r.TagName != null && r.TagName.StartsWith(_branch + "-", StringComparison.Ordinal))
-                .Select(r => new { r, n = ParseVersion(r.TagName, _branch) })
+                .Where(r => !r.Draft && !r.Prerelease)
+                .Select(r => new { r, n = ParseSemver(r.TagName) })
                 .Where(x => x.n >= 0)
                 .OrderBy(x => x.n)
                 .Select(x => x.r)
@@ -64,7 +67,7 @@ namespace FSO.Server.Api.Core.Services
 
             if (ordered.Count == 0)
             {
-                Log($"UpdateReconciler: no '{_branch}-*' releases at {owner}/{repo}.");
+                Log($"UpdateReconciler: no semver (vX.Y.Z) releases at {owner}/{repo}.");
                 return;
             }
 
@@ -137,10 +140,19 @@ namespace FSO.Server.Api.Core.Services
             Log($"UpdateReconciler: branch '{_branch}' — {ordered.Count} releases, {created} added, {refreshed} refreshed.");
         }
 
-        private static int ParseVersion(string tag, string branch)
+        // Parses a "vMAJOR.MINOR.PATCH" tag into a sortable key (MAJOR*1_000_000 + MINOR*1_000 + PATCH),
+        // or -1 if the tag isn't plain semver (so non-semver tags like legacy "dev-N" are skipped). Minor
+        // and patch must be < 1000.
+        private static long ParseSemver(string tag)
         {
-            var s = tag.Substring(branch.Length + 1);
-            return int.TryParse(s, out var n) ? n : -1;
+            if (string.IsNullOrEmpty(tag)) return -1;
+            var s = (tag[0] == 'v' || tag[0] == 'V') ? tag.Substring(1) : tag;
+            var parts = s.Split('.');
+            if (parts.Length != 3) return -1;
+            if (!int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor) || !int.TryParse(parts[2], out var patch))
+                return -1;
+            if (major < 0 || minor < 0 || patch < 0 || minor >= 1000 || patch >= 1000) return -1;
+            return major * 1_000_000L + minor * 1_000L + patch;
         }
 
         private static string AssetUrl(Release rel, string name)
