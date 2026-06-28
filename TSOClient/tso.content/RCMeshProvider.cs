@@ -54,20 +54,13 @@ namespace FSO.Content
                 var name = obj.ChunkParent.Filename.Replace('.', '_').ToLowerInvariant() + "_" + dgrp.ChunkID + ".fsom";
                 if (ReplaceFiles.Contains(name))
                 {
-                    // Don't trust an empty replacement (broken remesh-pack .fsom with zero geometry, e.g. the
-                    // Soma Plasma TV on-state) — it would render the object as nothing. Skip it so the fallback
-                    // chain below (IFF FSOM / RC cache / freshly generated) runs and the object still appears.
-                    var replPath = Path.Combine(repldir, name);
-                    if (DGRP3DMesh.FileMeshCurrent(replPath))
+                    try
                     {
-                        try
-                        {
-                            result = new DGRP3DMesh(dgrp, replPath, GD);
-                        }
-                        catch (Exception)
-                        {
-                            result = null;
-                        }
+                        result = new DGRP3DMesh(dgrp, Path.Combine(repldir, name), GD);
+                    }
+                    catch (Exception)
+                    {
+                        result = null;
                     }
                 }
 
