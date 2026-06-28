@@ -29,6 +29,13 @@ namespace FSO.Server.Common
                         result.Name = str.Substring(0, split);
                         result.Number = str.Substring(split + 1);
                     }
+                    else
+                    {
+                        // Pure semver (e.g. "v0.1.0") has no branch-number dash — the whole string is the
+                        // version. Empty Number so the advertised/compared string stays "v0.1.0", not
+                        // "v0.1.0-0" (which would never match the client's version.txt -> update loop).
+                        result.Number = "";
+                    }
                 }
             }
 

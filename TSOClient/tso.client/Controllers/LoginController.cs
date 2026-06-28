@@ -33,7 +33,10 @@ namespace FSO.Client.Controllers
                     View.LoginDialog.Visible = false;
                     View.LoginProgress.Visible = false;
                     var controller = new UpdateController(ContinueFromUpdate);
-                    controller.DoUpdate((info.FSOBranch ?? "") + "-" + (info.FSOVersion ?? ""), info.FSOUpdateUrl ?? "");
+                    // Target version_name: "branch-number" for legacy, or the whole semver when FSOVersion
+                    // is empty (must match the fso_updates version_name so the patch chain resolves).
+                    var targetVersion = string.IsNullOrEmpty(info.FSOVersion) ? (info.FSOBranch ?? "") : (info.FSOBranch ?? "") + "-" + info.FSOVersion;
+                    controller.DoUpdate(targetVersion, info.FSOUpdateUrl ?? "");
                     break;
             }
         }

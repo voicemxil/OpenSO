@@ -143,10 +143,13 @@ namespace FSO.Client.Regulators
 
         public bool RequireUpdate(UserAuthorized auth)
         {
-            if (auth.FSOVersion == null) return false;
+            // Reconstruct the server's advertised version. Legacy builds split version.txt into branch +
+            // number ("dev-11" -> FSOBranch="dev", FSOVersion="11"); pure-semver builds carry the whole
+            // version in FSOBranch with an empty FSOVersion ("v0.1.0"). Compare the full string either way.
+            if (auth.FSOBranch == null && auth.FSOVersion == null) return false;
 
             var str = GlobalSettings.Default.ClientVersion;
-            var authstr = auth.FSOBranch + "-" + auth.FSOVersion;
+            var authstr = string.IsNullOrEmpty(auth.FSOVersion) ? (auth.FSOBranch ?? "") : auth.FSOBranch + "-" + auth.FSOVersion;
 
             return str != authstr;
 
