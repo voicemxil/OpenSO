@@ -272,13 +272,11 @@ namespace FSO.Files.RC
         }
 
         /// <summary>
-        /// Cheaply checks whether an .fsom file is safe to stream-load, by reading only its header. It must
-        /// (a) contain geometry — broken remesh-pack files can be valid-but-empty (geomCount == 0, e.g. the
-        /// Soma Plasma TV on-state), and (b) not be an outdated reconstruction — ReconstructVersion below
-        /// CURRENT_RECONSTRUCT is what LoadData rejects by throwing, which the async streaming path cannot
-        /// recover from (it NREs / renders nothing). Callers skip such files and fall back to a freshly
-        /// generated mesh. ReconstructVersion 0 = hand-authored / replacement mesh, never "outdated".
-        /// Returns false on any read/parse error too (corrupt -> don't trust).
+        /// Cheaply checks whether a cached .fsom is safe to stream-load, by reading only its header: it must
+        /// (a) contain geometry (geomCount > 0) and (b) not be an outdated reconstruction — a ReconstructVersion
+        /// below CURRENT_RECONSTRUCT is what LoadData rejects by throwing, which the async streaming path cannot
+        /// recover from (NRE / renders nothing). Callers skip such files so a fresh mesh regenerates instead.
+        /// ReconstructVersion 0 = hand-authored / replacement mesh, never "outdated". False on any read error too.
         /// </summary>
         public static bool FileMeshCurrent(string filePath)
         {
