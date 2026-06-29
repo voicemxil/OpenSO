@@ -1,7 +1,4 @@
 {
-  "features" : [
-    "refractivity"
-  ],
   "fill-specializations" : [
     {
       "value" : {
@@ -116,7 +113,7 @@
       "lighting" : "combined",
       "refractivity" : {
         "depth" : 0,
-        "enabled" : true,
+        "enabled" : false,
         "strength" : 0.5
       },
       "shadow" : {

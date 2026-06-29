@@ -90,15 +90,44 @@ jobs:
           if [ ! -d "$APP" ] || [ ! -e "$ICON" ] || ! command -v xcrun >/dev/null 2>&1; then
             echo "No .app/.icon/xcrun present — keeping legacy Icon.icns."; exit 0
           fi
+          # Icon Composer .icon needs a recent actool — select the newest Xcode on the runner.
+          NEWEST_XCODE="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$NEWEST_XCODE" ]; then sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer" || true; fi
+          echo "Using $(xcodebuild -version 2>/dev/null | head -1); actool: $(xcrun --find actool 2>/dev/null)"
+          # actool names the app icon after the .icon basename ("openso"), NOT "Icon".
+          ICON_BASE="$(basename "$ICON" .icon)"
           if xcrun actool "$ICON" --compile "$APP/Contents/Resources" \
-               --output-partial-info-plist /tmp/openso-icon.plist --app-icon Icon \
+               --output-partial-info-plist /tmp/openso-icon.plist --app-icon "$ICON_BASE" \
                --include-all-app-icons --enable-on-demand-resources NO --development-region en \
                --target-device mac --minimum-deployment-target 26.0 --platform macosx; then
-            plutil -insert CFBundleIconName -string Icon "$APP/Contents/Info.plist" 2>/dev/null \
-              || plutil -replace CFBundleIconName -string Icon "$APP/Contents/Info.plist"
-            echo "Embedded Liquid Glass icon (Assets.car)."
+            echo "--- actool partial Info.plist ---"; cat /tmp/openso-icon.plist 2>/dev/null || true
+            # Use the icon name actool actually wrote (authoritative) — a hardcoded "Icon" points at
+            # nothing, so macOS would fall back to the legacy .icns.
+            ICON_NAME="$(plutil -extract CFBundleIconName raw -o - /tmp/openso-icon.plist 2>/dev/null || true)"
+            [ -z "$ICON_NAME" ] && ICON_NAME="$ICON_BASE"
+            plutil -replace CFBundleIconName -string "$ICON_NAME" "$APP/Contents/Info.plist" 2>/dev/null \
+              || plutil -insert CFBundleIconName -string "$ICON_NAME" "$APP/Contents/Info.plist"
+            echo "Embedded Liquid Glass icon (Assets.car) as CFBundleIconName=$ICON_NAME."
           else
             echo "actool unavailable/failed — keeping legacy Icon.icns."
+          fi
+
+      - name: Ad-hoc codesign (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          # Apple Silicon refuses to run unsigned native code. The SDK ad-hoc-signs the bare apphost,
+          # but the CreateMacAppBundle copy and the bundled native dylibs aren't covered — sign them so
+          # the game launches both via the launcher (bare apphost) and when OpenSO.app is double-clicked
+          # ("can't be opened" otherwise). Ad-hoc (-s -): no Developer ID, but enough for local launch.
+          # Must run AFTER the icon step, which modifies the bundle.
+          set -uo pipefail
+          for dylib in publish/*.dylib; do [ -e "$dylib" ] && codesign --force --timestamp=none -s - "$dylib" || true; done
+          [ -e publish/OpenSO ] && codesign --force --timestamp=none -s - publish/OpenSO || true
+          if [ -d publish/OpenSO.app ]; then
+            codesign --force --deep --timestamp=none -s - publish/OpenSO.app
+            codesign --verify --deep --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
+              || echo "::warning::codesign verify failed on OpenSO.app."
           fi
 
       - name: Bundle the in-game patcher (update.exe)
