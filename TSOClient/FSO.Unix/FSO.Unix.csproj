@@ -21,17 +21,11 @@
         </EmbeddedResource>
     </ItemGroup>
 
-    <!-- macOS-only items: Info.plist and Icon.icns -->
+    <!-- macOS-only: Info.plist for the bundle. The icon is the Liquid Glass openso.icon (Assets.car). -->
     <ItemGroup Condition="$(RuntimeIdentifier.StartsWith('osx'))">
         <None Include="Info.plist">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
         </None>
-        <None Include="Icon.icns">
-            <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-        </None>
-        <EmbeddedResource Include="Icon.icns" >
-            <LogicalName>Icon.icns</LogicalName>
-        </EmbeddedResource>
     </ItemGroup>
 
     <ItemGroup>
