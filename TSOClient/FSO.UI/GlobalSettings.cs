@@ -79,7 +79,10 @@ namespace FSO.Client
             { "CityShadows", "false"},
             { "ShadowQuality", "2048"},
             { "SmoothZoom", "true"},
-            { "AntiAlias", "0"}, //legacy AA preset (0/1/2). Kept in sync as a summary for UI/icon render targets.
+            // Default a FRESH install to a sensible medium: AntiAlias=1 + MSAALevel=-1 runs the migration
+            // below (case 1 -> MSAA 4x), capped to the GPU's max by TSOGame's load-clamp (so Apple Silicon
+            // lands on 4x). Existing players have their own saved AntiAlias/MSAALevel, so they're unaffected.
+            { "AntiAlias", "1"}, //legacy AA preset (0/1/2). Kept in sync as a summary for UI/icon render targets.
             // Decoupled AA pipeline. MSAALevel (-1 = "unset", migrated from AntiAlias on first load).
             { "MSAALevel", "-1"},        //hardware MSAA samples: 0/2/4/8
             { "SuperSampling", "1"},     //legacy supersample factor: 1 (off) or 2; superseded by RenderScale, kept in sync

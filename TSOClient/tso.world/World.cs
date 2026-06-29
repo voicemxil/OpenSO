@@ -1165,9 +1165,11 @@ namespace FSO.LotView
                             && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
 
-            // FSR RCAS sharpening: a final pass over the resolved frame, enabled when a sharpen mode is
-            // selected with non-zero strength and the shader is present. null => no extra pass (no change).
-            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
+            // FSR RCAS sharpening: a final pass over the resolved frame. RCAS is part of FSR's UPSCALER and is
+            // only appropriate when upscaling (render scale < 1) — sharpening a supersampled (downscaled) image
+            // produces the unwanted "FSR on downscale" halos. Gate it to the upscale case only.
+            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null
+                           && PPXDepthEngine.SSAA < 0.999f;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
@@ -1246,7 +1248,9 @@ namespace FSO.LotView
             bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
-            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
+            // RCAS sharpen only when upscaling (FSR); never sharpen a supersampled/downscaled image.
+            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null
+                           && PPXDepthEngine.SSAA < 0.999f;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
             PPXDepthEngine.WithOpacity = false; //3D scene is opaque; no per-pixel opacity blend on resolve.
