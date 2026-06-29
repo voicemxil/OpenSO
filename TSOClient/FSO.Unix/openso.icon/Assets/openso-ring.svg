@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+  <!-- Ring layer. Sits ABOVE the background, BELOW the plumbob. Transparent elsewhere so the glass
+       material reads through. Brand teal. -->
+  <path d="M 364.605 126.569 A 168.960 168.960 0 1 1 147.395 126.569"
+        fill="none" stroke="#3FD9D0" stroke-width="36.864" stroke-linecap="round"/>
+</svg>

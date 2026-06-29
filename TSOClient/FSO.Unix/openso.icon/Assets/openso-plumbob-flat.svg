@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+  <!-- Flat plumbob — single solid green diamond, no baked facets/gradient. Recommended for Liquid Glass:
+       let Icon Composer / the OS apply the depth, specular highlight and shadow. -->
+  <polygon points="256.000,88.064 338.432,236.544 256.000,385.024 173.568,236.544" fill="#79D221"/>
+</svg>
