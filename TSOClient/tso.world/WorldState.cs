@@ -224,6 +224,12 @@ namespace FSO.LotView
             }
         }
 
+        // The raw, UN-jittered projection. Velocity-pass shaders rasterize with the jittered Projection (so
+        // TAA still gets sub-pixel samples) but must compute the motion vector from the UN-jittered current
+        // clip position — otherwise the per-frame TAA jitter leaks into the velocity buffer, which makes
+        // motion blur smear stationary pixels and feeds the jitter back into TAA's own reprojection.
+        public Matrix ProjectionUnjittered => Cameras.Projection;
+
         public bool ObjectIDMode;
         public WorldSpace WorldSpace;
         public _2DWorldBatch _2D;

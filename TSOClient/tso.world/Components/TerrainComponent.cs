@@ -519,7 +519,11 @@ namespace FSO.LotView.Components
                 savedRTs = device.GetRenderTargets();
                 savedBlend = device.BlendState;
                 FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(device, terrainVelocityRT);
-                device.BlendState = BlendState.Opaque;
+                // Independent blend: color (MRT0) keeps the terrain's normal alpha blend (so the surrounding-
+                // lots fade + brightness stay correct) while velocity (MRT1) overwrites. Forcing Opaque here
+                // broke the fade and brightened the far terrain. Falls back to the normal blend if the GPU
+                // lacks independent blend (correct color; slightly attenuated velocity at fade edges).
+                device.BlendState = FSO.Common.Utils.PPXDepthEngine.VelocityColorBlend(device, savedBlend);
                 Effect.ViewProjection = view * world.Projection;
                 // Subworld neighbour-lot rendering sets Cameras.ModelTranslation to offset the camera
                 // by the subworld's lot position. state.View (used above) already includes that. But

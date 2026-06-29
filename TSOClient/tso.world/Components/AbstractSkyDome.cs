@@ -255,6 +255,10 @@ namespace FSO.LotView.Components
                 var domeMVP = Matrix.CreateScale(5f * scale) * view * projection;
                 var savedRTs = gd.GetRenderTargets();
                 PPXDepthEngine.BindVelocityMRT(gd, velRT);
+                // Independent blend: sky color (MRT0) keeps its alpha atmospheric blend; velocity (MRT1)
+                // overwrites. A shared AlphaBlend here alpha-blended the velocity (corrupt) and the opaque
+                // workaround brightened the sky — this keeps both correct (fallback = AlphaBlend on old GPUs).
+                gd.BlendState = PPXDepthEngine.VelocityColorBlend(gd, BlendState.AlphaBlend);
                 skyVel.Parameters["MVP"]?.SetValue(domeMVP);
                 skyVel.Parameters["PrevMVP"]?.SetValue(_prevSkyMVPValid ? _prevSkyMVP : domeMVP);
                 skyVel.Parameters["Alpha"]?.SetValue(1 - (float)Math.Sqrt(wint) * 0.75f);

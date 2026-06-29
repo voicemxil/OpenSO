@@ -167,6 +167,69 @@ namespace FSO.Common.Utils
         }
         public static RenderTarget2D GetMBNeighborMax() => MBNeighborMax;
 
+        // --- Independent per-target blend for the velocity MRT --------------------------------------------
+        // When color (MRT0) and velocity (MRT1) are written together, ONE blend state normally governs both.
+        // Color needs alpha blending (the surrounding-lots fade + sky atmospheric blend), but velocity must
+        // OVERWRITE — alpha-blending it dims/corrupts it at transparent edges. The old code forced
+        // BlendState.Opaque to get clean velocity, which broke the color fade and brightened the far terrain
+        // and sky. MonoGame supports independent per-target blend on GL 4.0+ / GL_ARB_draw_buffers_blend:
+        // VelocityColorBlend builds target[0] = the requested color blend, target[1] = opaque velocity.
+        // On older GPUs (where setting IndependentBlendEnable throws) it falls back to the plain color blend
+        // (color correct; only cost is slightly attenuated velocity at transparent fade edges).
+        private static bool? _independentBlend;
+        private static readonly System.Collections.Generic.Dictionary<BlendState, BlendState> _velBlendCache
+            = new System.Collections.Generic.Dictionary<BlendState, BlendState>();
+
+        private static bool IndependentBlendSupported(GraphicsDevice gd)
+        {
+            if (_independentBlend.HasValue) return _independentBlend.Value;
+            bool ok = false;
+            try
+            {
+                const System.Reflection.BindingFlags F = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+                var caps = typeof(GraphicsDevice).GetProperty("GraphicsCapabilities", F)?.GetValue(gd);
+                var sep = caps?.GetType().GetProperty("SupportsSeparateBlendStates", F)?.GetValue(caps);
+                ok = sep is bool b && b;
+            }
+            catch { ok = false; }
+            _independentBlend = ok;
+            return ok;
+        }
+
+        public static BlendState VelocityColorBlend(GraphicsDevice gd, BlendState colorBlend)
+        {
+            if (_velBlendCache.TryGetValue(colorBlend, out var cached)) return cached;
+            BlendState result;
+            if (!IndependentBlendSupported(gd))
+            {
+                result = colorBlend; // fallback B: correct color, slightly attenuated edge velocity
+            }
+            else
+            {
+                var bs = new BlendState { IndependentBlendEnable = true };
+                bs[0].ColorSourceBlend = colorBlend.ColorSourceBlend;
+                bs[0].ColorDestinationBlend = colorBlend.ColorDestinationBlend;
+                bs[0].ColorBlendFunction = colorBlend.ColorBlendFunction;
+                bs[0].AlphaSourceBlend = colorBlend.AlphaSourceBlend;
+                bs[0].AlphaDestinationBlend = colorBlend.AlphaDestinationBlend;
+                bs[0].AlphaBlendFunction = colorBlend.AlphaBlendFunction;
+                bs[0].ColorWriteChannels = ColorWriteChannels.All;
+                for (int i = 1; i < 4; i++) // MRT1 velocity (+ MRT2 normals if bound): opaque overwrite
+                {
+                    bs[i].ColorSourceBlend = Blend.One;
+                    bs[i].ColorDestinationBlend = Blend.Zero;
+                    bs[i].ColorBlendFunction = BlendFunction.Add;
+                    bs[i].AlphaSourceBlend = Blend.One;
+                    bs[i].AlphaDestinationBlend = Blend.Zero;
+                    bs[i].AlphaBlendFunction = BlendFunction.Add;
+                    bs[i].ColorWriteChannels = ColorWriteChannels.All;
+                }
+                result = bs;
+            }
+            _velBlendCache[colorBlend] = result;
+            return result;
+        }
+
         // TAA history ping-pong. Each frame TAA reads from "prev" and writes to "curr", then SwapHistory
         // toggles roles for the next frame.
         //
