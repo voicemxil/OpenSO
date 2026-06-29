@@ -127,11 +127,13 @@ jobs:
           sign() { codesign --force --timestamp=none -s - "$1" && echo "signed: $1" || echo "::warning::sign failed: $1"; }
           for f in publish/*.dylib publish/OpenSO; do [ -e "$f" ] && sign "$f"; done
           if [ -d publish/OpenSO.app ]; then
-            # Sign the nested dylibs, then SEAL THE BUNDLE — which signs the main executable. (Signing the
-            # bundle's main executable directly is rejected by codesign: "code object is not signed at all".)
-            for f in publish/OpenSO.app/Contents/MacOS/*.dylib; do [ -e "$f" ] && sign "$f"; done
-            sign publish/OpenSO.app   # no --deep — the game Content lives in Resources now
-            codesign --verify --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
+            # Code-only bundle (game Content lives in the folder around the .app, not inside it). Use
+            # --deep: it signs the nested Mach-O (apphost + dylibs) and SEALS the managed .NET DLLs as
+            # resources. Without --deep, codesign treats a managed .dll as an unsigned "subcomponent"
+            # ("code object is not signed at all") and aborts.
+            codesign --force --deep --timestamp=none -s - publish/OpenSO.app && echo "signed OpenSO.app" \
+              || echo "::warning::sign failed: OpenSO.app"
+            codesign --verify --deep --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
               || echo "::warning::codesign verify failed on OpenSO.app."
           fi
           true  # never let this step fail the build

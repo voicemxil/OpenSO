@@ -69,7 +69,8 @@
         <Copy SourceFiles="@(BundleCode)"
               DestinationFiles="@(BundleCode->'$(PublishDir)/OpenSO.app/Contents/MacOS/%(RecursiveDir)%(Filename)%(Extension)')"
               SkipUnchangedFiles="true"/>
-        <Copy SourceFiles="Icon.icns" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/Resources"/>
+        <!-- Icon comes from the Liquid Glass openso.icon (compiled to Assets.car in CI, referenced via
+             CFBundleIconName). No legacy .icns fallback — we don't ship the old FreeSO icon. -->
         <Copy SourceFiles="Info.plist" DestinationFolder="$(PublishDir)/OpenSO.app/Contents"/>
         <Exec Command="chmod +x &quot;$(PublishDir)/OpenSO.app/Contents/MacOS/OpenSO&quot;"/>
 

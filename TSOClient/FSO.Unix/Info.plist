@@ -13,8 +13,6 @@
         <string>1.0</string>
         <key>CFBundleExecutable</key>
         <string>OpenSO</string>
-        <key>CFBundleIconFile</key>
-        <string>Icon</string>
         <key>LSApplicationCategoryType</key>
         <string>public.app-category.simulation-games</string>
         <key>LSMinimumSystemVersion</key>
