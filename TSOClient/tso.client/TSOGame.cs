@@ -129,9 +129,10 @@ namespace FSO.Client
             catch { /* best effort — absolute ContentDir still covers the core content scan */ }
         }
 
-        // macOS native-Retina backbuffer (set by ApplyMacRetina; re-asserted each frame in Draw because
-        // MonoGame reverts the backbuffer to the window's point size on resize events). 0 = inactive.
-        private int _macNativeW, _macNativeH;
+        // macOS native-Retina scale (set by ApplyMacRetina; 0 = inactive). The backbuffer is re-asserted to
+        // currentWindowPoints × _macDpi each frame in Draw, both because MonoGame reverts the backbuffer to
+        // the window's point size on resize events, and so the native render tracks window resizing.
+        private int _macDpi;
 
         private static string InstallDir()
         {
@@ -183,8 +184,7 @@ namespace FSO.Client
                 FSOEnvironment.DPIScaleFactor = dpi;
 
                 float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
-                _macNativeW = tw;
-                _macNativeH = th;
+                _macDpi = dpi;
                 GraphicsDevice.PresentationParameters.BackBufferWidth = tw;
                 GraphicsDevice.PresentationParameters.BackBufferHeight = th;
                 var draw = Utils.MacRetina.DrawableSize(Window.Handle);
@@ -500,12 +500,20 @@ namespace FSO.Client
 
         protected override void Draw(GameTime gameTime)
         {
-            // macOS native Retina: keep the backbuffer at native pixels. MonoGame reverts it to the window's
-            // point size on resize events, so re-assert before each frame binds the backbuffer.
-            if (_macNativeW > 0 && GraphicsDevice.PresentationParameters.BackBufferWidth != _macNativeW)
+            // macOS native Retina: keep the backbuffer at native pixels = currentWindowPoints × _macDpi.
+            // MonoGame reverts it to the window's point size on resize events, so re-assert before each frame
+            // binds the backbuffer; deriving from the live ClientBounds also makes it track window resizing.
+            if (_macDpi > 0)
             {
-                GraphicsDevice.PresentationParameters.BackBufferWidth = _macNativeW;
-                GraphicsDevice.PresentationParameters.BackBufferHeight = _macNativeH;
+                var cb = Window.ClientBounds;
+                int tw = Math.Max(1, cb.Width) * _macDpi;
+                int th = Math.Max(1, cb.Height) * _macDpi;
+                var pp = GraphicsDevice.PresentationParameters;
+                if (pp.BackBufferWidth != tw || pp.BackBufferHeight != th)
+                {
+                    pp.BackBufferWidth = tw;
+                    pp.BackBufferHeight = th;
+                }
             }
             base.Draw(gameTime);
 
