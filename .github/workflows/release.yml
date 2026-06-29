@@ -81,36 +81,36 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # The macOS publish builds a code-only OpenSO.app (CreateMacAppBundle) with the legacy Icon.icns.
-          # On a runner with Xcode 26+, compile the Icon Composer .icon into Assets.car and point
-          # CFBundleIconName at it, so macOS 26+ shows the Liquid Glass icon.
-          # Fully fallback-safe: any missing tool or actool failure just keeps the legacy .icns.
+          # Give the code-only OpenSO.app its Liquid Glass icon (an Assets.car referenced by
+          # CFBundleIconName). Force the newest installed Xcode (Icon Composer .icon needs Xcode 26+), then
+          # compile with actool. There is no legacy .icns fallback — if actool can't produce an Assets.car
+          # the app shows the generic placeholder, so we warn loudly rather than fail the build.
           set -uo pipefail
-          APP="publish/OpenSO.app"; ICON="TSOClient/FSO.Unix/openso.icon"
+          APP="publish/OpenSO.app"; ICON="TSOClient/FSO.Unix/openso.icon"; ICON_BASE="openso"
           if [ ! -d "$APP" ] || [ ! -e "$ICON" ] || ! command -v xcrun >/dev/null 2>&1; then
-            echo "No .app/.icon/xcrun present — keeping legacy Icon.icns."; exit 0
+            echo "::warning::missing .app/.icon/xcrun — app will show a placeholder icon."; exit 0
           fi
-          # Icon Composer .icon needs a recent actool — select the newest Xcode on the runner.
-          NEWEST_XCODE="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
-          if [ -n "$NEWEST_XCODE" ]; then sudo xcode-select -s "$NEWEST_XCODE/Contents/Developer" || true; fi
+          echo "Installed Xcodes:"; ls -d /Applications/Xcode_*.app 2>/dev/null || true
+          NEWEST="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
+          if [ -n "$NEWEST" ]; then sudo xcode-select -s "$NEWEST/Contents/Developer" || true; fi
           echo "Using $(xcodebuild -version 2>/dev/null | head -1); actool: $(xcrun --find actool 2>/dev/null)"
-          # actool names the app icon after the .icon basename ("openso"), NOT "Icon".
-          ICON_BASE="$(basename "$ICON" .icon)"
-          if xcrun actool "$ICON" --compile "$APP/Contents/Resources" \
-               --output-partial-info-plist /tmp/openso-icon.plist --app-icon "$ICON_BASE" \
-               --include-all-app-icons --enable-on-demand-resources NO --development-region en \
-               --target-device mac --minimum-deployment-target 26.0 --platform macosx; then
-            echo "--- actool partial Info.plist ---"; cat /tmp/openso-icon.plist 2>/dev/null || true
-            # Use the icon name actool actually wrote (authoritative) — a hardcoded "Icon" points at
-            # nothing, so macOS would fall back to the legacy .icns.
-            ICON_NAME="$(plutil -extract CFBundleIconName raw -o - /tmp/openso-icon.plist 2>/dev/null || true)"
-            [ -z "$ICON_NAME" ] && ICON_NAME="$ICON_BASE"
-            plutil -replace CFBundleIconName -string "$ICON_NAME" "$APP/Contents/Info.plist" 2>/dev/null \
-              || plutil -insert CFBundleIconName -string "$ICON_NAME" "$APP/Contents/Info.plist"
-            echo "Embedded Liquid Glass icon (Assets.car) as CFBundleIconName=$ICON_NAME."
+          # Compile into a temp dir so a crashed actool can't leave a partial Assets.car in the bundle.
+          TMP="$(mktemp -d)"
+          if xcrun actool "$ICON" --compile "$TMP" --output-partial-info-plist "$TMP/icon.plist" \
+               --app-icon "$ICON_BASE" --include-all-app-icons --enable-on-demand-resources NO \
+               --development-region en --target-device mac --minimum-deployment-target 26.0 --platform macosx \
+             && [ -f "$TMP/Assets.car" ]; then
+            cp "$TMP/Assets.car" "$APP/Contents/Resources/Assets.car"
+            # Use the icon name actool actually wrote (authoritative); fall back to the .icon basename.
+            NAME="$(plutil -extract CFBundleIconName raw -o - "$TMP/icon.plist" 2>/dev/null || true)"
+            [ -z "$NAME" ] && NAME="$ICON_BASE"
+            plutil -replace CFBundleIconName -string "$NAME" "$APP/Contents/Info.plist" 2>/dev/null \
+              || plutil -insert CFBundleIconName -string "$NAME" "$APP/Contents/Info.plist"
+            echo "Embedded Liquid Glass icon (Assets.car) as CFBundleIconName=$NAME."
           else
-            echo "actool unavailable/failed — keeping legacy Icon.icns."
+            echo "::warning::actool failed on the newest Xcode ($(xcodebuild -version 2>/dev/null | head -1)) — app ships a placeholder icon."
           fi
+          true
 
       - name: Ad-hoc codesign (macOS)
         if: runner.os == 'macOS'

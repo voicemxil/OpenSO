@@ -202,7 +202,11 @@ namespace FSO.Content
         private void InitBasic()
         {
             var contentFiles = new List<string>();
-            _ScanFiles("Content/", contentFiles, "Content/");
+            // Use FSOEnvironment.ContentDir (not a hardcoded relative "Content/") so this resolves correctly
+            // regardless of the working directory — on macOS the app bundle's cwd is Contents/MacOS, where
+            // there is no Content; FSO.Unix sets ContentDir to an absolute path next to the .app. The scan
+            // strips baseDir from each path, so dir and baseDir must match for the stored keys to be stable.
+            _ScanFiles(FSOEnvironment.ContentDir, contentFiles, FSOEnvironment.ContentDir);
             ContentFiles = contentFiles.ToArray();
             CustomUI.Init();
             if (!TS1)
@@ -214,7 +218,7 @@ namespace FSO.Content
                 DataDefinition = new TSODataDefinition();
                 try
                 {
-                    using (var stream = File.Open("Content/FSODataDefinition.dat", FileMode.Open, FileAccess.Read, FileShare.Read))
+                    using (var stream = File.Open(Path.Combine(FSOEnvironment.ContentDir, "FSODataDefinition.dat"), FileMode.Open, FileAccess.Read, FileShare.Read))
                     {
                         DataDefinition.Read(stream);
                     }

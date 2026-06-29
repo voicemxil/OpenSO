@@ -126,8 +126,14 @@ namespace FSO.Client
                 }
 
                 FSOEnvironment.Args = string.Join(" ", args);
-                FSOEnvironment.ContentDir = "Content/";
-                FSOEnvironment.GFXContentDir = "Content/" + (UseDX ? "DX/" : "OGL/");
+                // Keep an absolute ContentDir if one was already set (FSO.Unix resolves it next to the macOS
+                // .app, where the cwd-relative "Content/" would point inside the bundle). Otherwise default to
+                // the cwd-relative layout used on Windows/Linux where the working dir is the install dir.
+                if (!Path.IsPathRooted(FSOEnvironment.ContentDir))
+                {
+                    FSOEnvironment.ContentDir = "Content/";
+                    FSOEnvironment.GFXContentDir = "Content/" + (UseDX ? "DX/" : "OGL/");
+                }
                 FSOEnvironment.Linux = linux;
                 FSOEnvironment.DirectX = UseDX;
                 FSOEnvironment.GameThread = Thread.CurrentThread;
