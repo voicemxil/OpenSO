@@ -65,9 +65,17 @@ namespace FSO.Unix
                 Environment.Exit(1);
             }
 
+            // The content loader resolves several paths RELATIVE to the working directory — most importantly
+            // Content.InitBasic scans a hardcoded "Content/", and FSOProgram.InitWithArguments sets
+            // FSOEnvironment.ContentDir = "Content/" (relative). When OpenSO.app is double-clicked the cwd is
+            // the bundle's Contents/MacOS, so "Content/" would resolve INSIDE the bundle (where there is no
+            // Content). Point the cwd at the install dir so every relative game path resolves there instead.
+            try { Directory.SetCurrentDirectory(installDir); } catch { /* best effort */ }
+
             FSOEnvironment.ContentDir = contentDir + Path.DirectorySeparatorChar;
             FSOEnvironment.UserDir = contentDir + Path.DirectorySeparatorChar;
             FSOEnvironment.GFXContentDir = Path.Combine(contentDir, "OGL") + Path.DirectorySeparatorChar;
+            Console.WriteLine($"[OpenSO] Install directory: {installDir}");
             Console.WriteLine($"[OpenSO] Content directory: {FSOEnvironment.ContentDir}");
         }
 
