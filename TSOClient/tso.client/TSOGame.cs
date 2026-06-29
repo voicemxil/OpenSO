@@ -129,73 +129,18 @@ namespace FSO.Client
             catch { /* best effort — absolute ContentDir still covers the core content scan */ }
         }
 
-        private static string InstallDir()
-        {
-            if (!System.IO.Path.IsPathRooted(FSOEnvironment.ContentDir)) return ".";
-            return System.IO.Path.GetDirectoryName(
-                FSOEnvironment.ContentDir.TrimEnd(System.IO.Path.DirectorySeparatorChar, '/')) ?? ".";
-        }
-
         /// <summary>
-        /// macOS only: render at native Retina resolution. MonoGame DesktopGL makes its GL surface at point
-        /// resolution (no SDL_WINDOW_ALLOW_HIGHDPI), so on Retina the image is rendered small and upscaled by
-        /// the OS. Re-enable the best-resolution GL surface, then size the backbuffer to the native pixels
-        /// (via GraphicsDevice.Reset, so the on-screen window doesn't grow) and set the in-game DPI scale to
-        /// match — so the UI stays the right physical size and the render scale slider works against native.
+        /// macOS only: keep the .app's Liquid Glass Dock icon. MonoGame DesktopGL sets its own window icon
+        /// (its built-in logo, since we don't embed Icon.bmp) via SDL_SetWindowIcon, which on macOS replaces
+        /// the Dock tile — reset it back to the bundle icon. NOTE: native-Retina rendering is being developed
+        /// on the macos-hidpi-fix branch; main intentionally stays on MonoGame's default point-resolution
+        /// rendering (the display upscales it) for stability — it kept the window/input correct.
         /// </summary>
-        private void ApplyMacRetina()
+        private void RestoreMacDockIcon()
         {
             if (!OperatingSystem.IsMacOS()) return;
-            var dir = InstallDir();
-            try
-            {
-                // Keep the .app's Liquid Glass Dock icon — MonoGame sets its own window icon on creation.
-                Utils.MacRetina.RestoreBundleDockIcon();
-
-                float backing = Utils.MacRetina.MainDisplayBackingScale();
-                var win = Utils.MacRetina.WindowSize(Window.Handle);
-
-                // Suppress Window_ClientSizeChanged before EnableBestResolutionSurface nudges the window:
-                // its async resize events would otherwise revert the backbuffer to point resolution through
-                // the GraphicsDeviceManager. We drive the backbuffer manually below.
-                if (backing >= 1.1f && win.w > 0) newChange = true;
-
-                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
-                var draw = Utils.MacRetina.DrawableSize(Window.Handle);
-                var pp = GraphicsDevice.PresentationParameters;
-                Utils.MacRetina.Log(dir, $"[dpi] v={GlobalSettings.Default.ClientVersion} backing={backing:0.##} surf={surf:0.##} " +
-                    $"window={win.w}x{win.h} sdlDrawable={draw.w}x{draw.h} backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight}");
-
-                if (backing < 1.1f || win.w <= 0)
-                {
-                    Utils.MacRetina.Log(dir, "[dpi] not a Retina display — leaving MonoGame default");
-                    return;
-                }
-
-                // setWantsBestResolutionOpenGLSurface made the NSView backing native (backing×), but SDL still
-                // reports the point-size drawable, so MonoGame renders a point-size viewport into the corner
-                // of the native backing. Drive the backbuffer + viewport to native pixels DIRECTLY — not via
-                // GraphicsDevice.Reset / the GraphicsDeviceManager, which couple the window size to the
-                // backbuffer and maximize the window. Trust the CoreGraphics backing scale; SDL lies here.
-                int dpi = Math.Clamp((int)Math.Round(backing), 1, 4);
-                int tw = win.w * dpi, th = win.h * dpi;
-                FSOEnvironment.DPIScaleFactor = dpi;
-
-                // Only GraphicsDevice.Reset updates MonoGame's internal GL backbuffer viewport (setting
-                // PresentationParameters directly drew at native size but kept a point-size viewport, so the
-                // image was clipped to the bottom-left quarter of the native backing). Reset grows the SDL
-                // window to the native pixel size as a side effect — immediately shrink it back to point size.
-                // The best-resolution NSView keeps its native backing, so the backbuffer (2048) still matches
-                // the backing while the window stays its normal on-screen size. The resize handler is already
-                // suppressed (newChange), so it won't revert the backbuffer.
-                var pp2 = GraphicsDevice.PresentationParameters.Clone();
-                pp2.BackBufferWidth = tw;
-                pp2.BackBufferHeight = th;
-                GraphicsDevice.Reset(pp2);
-                Utils.MacRetina.SetWindowSize(Window.Handle, win.w, win.h);
-                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th} window->{win.w}x{win.h}");
-            }
-            catch (Exception e) { Utils.MacRetina.Log(dir, "[dpi] error: " + e.Message); }
+            try { Utils.MacRetina.RestoreBundleDockIcon(); }
+            catch { /* best effort */ }
         }
 
         protected override void Initialize()
@@ -298,7 +243,7 @@ namespace FSO.Client
             //VMContext.InitVMConfig();
             base.Initialize();
             EnsureWorkingDir(); // base.Initialize() (MonoGame/SDL) can reset the cwd to the bundle — restore it
-            ApplyMacRetina();   // macOS: render at native Retina resolution + set in-game DPI scale
+            RestoreMacDockIcon();   // macOS: keep the .app's Liquid Glass Dock icon (MonoGame overrides it)
 
             GameFacade.GameThread = Thread.CurrentThread;
 
