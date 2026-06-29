@@ -127,8 +127,10 @@ jobs:
           sign() { codesign --force --timestamp=none -s - "$1" && echo "signed: $1" || echo "::warning::sign failed: $1"; }
           for f in publish/*.dylib publish/OpenSO; do [ -e "$f" ] && sign "$f"; done
           if [ -d publish/OpenSO.app ]; then
-            for f in publish/OpenSO.app/Contents/MacOS/*.dylib publish/OpenSO.app/Contents/MacOS/OpenSO; do [ -e "$f" ] && sign "$f"; done
-            sign publish/OpenSO.app   # seal the bundle (no --deep)
+            # Sign the nested dylibs, then SEAL THE BUNDLE — which signs the main executable. (Signing the
+            # bundle's main executable directly is rejected by codesign: "code object is not signed at all".)
+            for f in publish/OpenSO.app/Contents/MacOS/*.dylib; do [ -e "$f" ] && sign "$f"; done
+            sign publish/OpenSO.app   # no --deep — the game Content lives in Resources now
             codesign --verify --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
               || echo "::warning::codesign verify failed on OpenSO.app."
           fi
