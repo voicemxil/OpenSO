@@ -129,6 +129,49 @@ namespace FSO.Client
             catch { /* best effort — absolute ContentDir still covers the core content scan */ }
         }
 
+        private static string InstallDir()
+        {
+            if (!System.IO.Path.IsPathRooted(FSOEnvironment.ContentDir)) return ".";
+            return System.IO.Path.GetDirectoryName(
+                FSOEnvironment.ContentDir.TrimEnd(System.IO.Path.DirectorySeparatorChar, '/')) ?? ".";
+        }
+
+        /// <summary>
+        /// macOS only: render at native Retina resolution. MonoGame DesktopGL makes its GL surface at point
+        /// resolution (no SDL_WINDOW_ALLOW_HIGHDPI), so on Retina the image is rendered small and upscaled by
+        /// the OS. Re-enable the best-resolution GL surface, then size the backbuffer to the native pixels
+        /// (via GraphicsDevice.Reset, so the on-screen window doesn't grow) and set the in-game DPI scale to
+        /// match — so the UI stays the right physical size and the render scale slider works against native.
+        /// </summary>
+        private void ApplyMacRetina()
+        {
+            if (!OperatingSystem.IsMacOS()) return;
+            var dir = InstallDir();
+            try
+            {
+                var before = Utils.MacRetina.DrawableSize(Window.Handle);
+                float backing = Utils.MacRetina.MainDisplayBackingScale();
+                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
+                var after = Utils.MacRetina.DrawableSize(Window.Handle);
+                var pp0 = GraphicsDevice.PresentationParameters;
+                Utils.MacRetina.Log(dir, $"[dpi] backing={backing:0.##} surf={surf:0.##} " +
+                    $"drawableBefore={before.w}x{before.h} drawableAfter={after.w}x{after.h} " +
+                    $"backbuffer={pp0.BackBufferWidth}x{pp0.BackBufferHeight}");
+
+                float scale = Math.Max(backing, surf);
+                if (scale < 1.1f) return; // not a Retina/HiDPI display
+                int dpi = Math.Clamp((int)Math.Round(scale), 1, 4);
+                FSOEnvironment.DPIScaleFactor = dpi;
+
+                var pp = GraphicsDevice.PresentationParameters.Clone();
+                pp.BackBufferWidth = pp.BackBufferWidth * dpi;
+                pp.BackBufferHeight = pp.BackBufferHeight * dpi;
+                GraphicsDevice.Reset(pp);
+                Utils.MacRetina.Log(dir, $"[dpi] applied DPIScaleFactor={dpi} backbuffer->{pp.BackBufferWidth}x{pp.BackBufferHeight}");
+            }
+            catch (Exception e) { Utils.MacRetina.Log(dir, "[dpi] error: " + e.Message); }
+        }
+
         protected override void Initialize()
         {
             EnsureWorkingDir();
@@ -229,6 +272,7 @@ namespace FSO.Client
             //VMContext.InitVMConfig();
             base.Initialize();
             EnsureWorkingDir(); // base.Initialize() (MonoGame/SDL) can reset the cwd to the bundle — restore it
+            ApplyMacRetina();   // macOS: render at native Retina resolution + set in-game DPI scale
 
             GameFacade.GameThread = Thread.CurrentThread;
 
