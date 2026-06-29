@@ -16,7 +16,14 @@
 
     <ItemGroup>
         <Content Include="fso.ico" />
-        <EmbeddedResource Include="Icon.bmp" >
+    </ItemGroup>
+
+    <!-- MonoGame DesktopGL auto-loads an embedded "Icon.bmp" and calls SDL_SetWindowIcon at window
+         creation. On macOS that overrides the .app bundle's Liquid Glass Dock icon with this bitmap, so do
+         NOT embed it for osx builds — the bundle icon (Assets.car) is authoritative there. Keep it off-macOS
+         (e.g. Linux), where it's the window icon. -->
+    <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('osx'))">
+        <EmbeddedResource Include="Icon.bmp">
             <LogicalName>Icon.bmp</LogicalName>
         </EmbeddedResource>
     </ItemGroup>
