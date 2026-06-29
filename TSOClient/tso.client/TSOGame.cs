@@ -154,17 +154,8 @@ namespace FSO.Client
 
                 float backing = Utils.MacRetina.MainDisplayBackingScale();
                 var win = Utils.MacRetina.WindowSize(Window.Handle);
-
-                // Suppress Window_ClientSizeChanged before EnableBestResolutionSurface nudges the window:
-                // its async resize events would otherwise revert the backbuffer to point resolution through
-                // the GraphicsDeviceManager. We drive the backbuffer manually below.
-                if (backing >= 1.1f && win.w > 0) newChange = true;
-
-                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
-                var draw = Utils.MacRetina.DrawableSize(Window.Handle);
-                var pp = GraphicsDevice.PresentationParameters;
-                Utils.MacRetina.Log(dir, $"[dpi] v={GlobalSettings.Default.ClientVersion} backing={backing:0.##} surf={surf:0.##} " +
-                    $"window={win.w}x{win.h} sdlDrawable={draw.w}x{draw.h} backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight}");
+                Utils.MacRetina.Log(dir, $"[dpi] v={GlobalSettings.Default.ClientVersion} backing={backing:0.##} " +
+                    $"window={win.w}x{win.h} backbuffer={GraphicsDevice.PresentationParameters.BackBufferWidth}x{GraphicsDevice.PresentationParameters.BackBufferHeight}");
 
                 if (backing < 1.1f || win.w <= 0)
                 {
@@ -172,28 +163,28 @@ namespace FSO.Client
                     return;
                 }
 
-                // setWantsBestResolutionOpenGLSurface made the NSView backing native (backing×), but SDL still
-                // reports the point-size drawable, so MonoGame renders a point-size viewport into the corner
-                // of the native backing. Drive the backbuffer + viewport to native pixels DIRECTLY — not via
-                // GraphicsDevice.Reset / the GraphicsDeviceManager, which couple the window size to the
-                // backbuffer and maximize the window. Trust the CoreGraphics backing scale; SDL lies here.
+                // Native Retina needs TWO things true at once: (a) MonoGame's internal GL backbuffer viewport
+                // at native pixels, and (b) the NSView's GL surface at native (best-resolution) pixels.
+                //  - Only GraphicsDevice.Reset moves the viewport off point-size — but Reset recreates the GL
+                //    context, which RESETS the view's wantsBestResolutionOpenGLSurface back to NO, and grows
+                //    the SDL window to the native pixel size.
+                //  - So: Reset to native, shrink the window back to point size, and only THEN re-enable the
+                //    best-resolution surface — now backing == the 2x backbuffer and the frame fills the window.
+                // Window_ClientSizeChanged is suppressed (newChange) so the window nudges can't revert us.
+                newChange = true;
                 int dpi = Math.Clamp((int)Math.Round(backing), 1, 4);
                 int tw = win.w * dpi, th = win.h * dpi;
                 FSOEnvironment.DPIScaleFactor = dpi;
 
-                // Only GraphicsDevice.Reset updates MonoGame's internal GL backbuffer viewport (setting
-                // PresentationParameters directly drew at native size but kept a point-size viewport, so the
-                // image was clipped to the bottom-left quarter of the native backing). Reset grows the SDL
-                // window to the native pixel size as a side effect — immediately shrink it back to point size.
-                // The best-resolution NSView keeps its native backing, so the backbuffer (2048) still matches
-                // the backing while the window stays its normal on-screen size. The resize handler is already
-                // suppressed (newChange), so it won't revert the backbuffer.
                 var pp2 = GraphicsDevice.PresentationParameters.Clone();
                 pp2.BackBufferWidth = tw;
                 pp2.BackBufferHeight = th;
-                GraphicsDevice.Reset(pp2);
-                Utils.MacRetina.SetWindowSize(Window.Handle, win.w, win.h);
-                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th} window->{win.w}x{win.h}");
+                GraphicsDevice.Reset(pp2);                                   // viewport -> native; wipes best-res; grows window
+                Utils.MacRetina.SetWindowSize(Window.Handle, win.w, win.h);  // window -> point size
+                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle); // surface -> native (after Reset)
+                var draw = Utils.MacRetina.DrawableSize(Window.Handle);
+                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th} window->{win.w}x{win.h} " +
+                    $"surf={surf:0.##} sdlDrawable={draw.w}x{draw.h}");
             }
             catch (Exception e) { Utils.MacRetina.Log(dir, "[dpi] error: " + e.Message); }
         }
