@@ -141,6 +141,13 @@ namespace FSO.Client.Utils
             try { SDL_GetWindowSize(sdlWindow, out int w, out int h); return (w, h); } catch { return (0, 0); }
         }
 
+        /// <summary>Set the window (point) size. Used to shrink the window back after GraphicsDevice.Reset
+        /// grows it — the best-resolution backing stays native, so the backbuffer keeps its native size.</summary>
+        public static void SetWindowSize(IntPtr sdlWindow, int w, int h)
+        {
+            try { SDL_SetWindowSize(sdlWindow, w, h); } catch { }
+        }
+
         /// <summary>Best-effort diagnostic line appended to &lt;dir&gt;/openso-dpi.log.</summary>
         public static void Log(string dir, string line)
         {

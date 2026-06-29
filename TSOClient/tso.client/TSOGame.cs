@@ -180,10 +180,20 @@ namespace FSO.Client
                 int dpi = Math.Clamp((int)Math.Round(backing), 1, 4);
                 int tw = win.w * dpi, th = win.h * dpi;
                 FSOEnvironment.DPIScaleFactor = dpi;
-                pp.BackBufferWidth = tw;
-                pp.BackBufferHeight = th;
-                GraphicsDevice.Viewport = new Viewport(0, 0, tw, th);
-                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th}");
+
+                // Only GraphicsDevice.Reset updates MonoGame's internal GL backbuffer viewport (setting
+                // PresentationParameters directly drew at native size but kept a point-size viewport, so the
+                // image was clipped to the bottom-left quarter of the native backing). Reset grows the SDL
+                // window to the native pixel size as a side effect — immediately shrink it back to point size.
+                // The best-resolution NSView keeps its native backing, so the backbuffer (2048) still matches
+                // the backing while the window stays its normal on-screen size. The resize handler is already
+                // suppressed (newChange), so it won't revert the backbuffer.
+                var pp2 = GraphicsDevice.PresentationParameters.Clone();
+                pp2.BackBufferWidth = tw;
+                pp2.BackBufferHeight = th;
+                GraphicsDevice.Reset(pp2);
+                Utils.MacRetina.SetWindowSize(Window.Handle, win.w, win.h);
+                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th} window->{win.w}x{win.h}");
             }
             catch (Exception e) { Utils.MacRetina.Log(dir, "[dpi] error: " + e.Message); }
         }
