@@ -7,5 +7,13 @@
 # use a Cloudflare Origin certificate + the tls directive instead of automatic issuance.)
 {$API_DOMAIN} {
 	encode zstd gzip
+
+	# 3D remesh pack: the launcher's ResourceCentral "3DModels" entry points at /launcher/remesh.
+	# Redirect it to our self-built loose-file pack — the latest release of voicemxil/FSO.Remeshes
+	# (a fork of riperiperi/FSO.Remeshes whose CI keeps emitting the loose `*-legacy.zip`). The
+	# launcher's DownloadService follows the redirect chain. Kept here rather than baked into the
+	# launcher so the pack source can be repointed without redistributing the launcher.
+	redir /launcher/remesh https://github.com/voicemxil/FSO.Remeshes/releases/latest/download/freeso-remeshes-legacy.zip 302
+
 	reverse_proxy freeso-server:9000
 }
