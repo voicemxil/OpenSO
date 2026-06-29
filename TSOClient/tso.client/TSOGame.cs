@@ -194,6 +194,12 @@ namespace FSO.Client
                 settings.AntiAlias = 0;
                 settings.MSAALevel = 0; //supersampling and post-process AA don't require MSAA support
             }
+            else if (settings.MSAALevel > FSOEnvironment.MaxMSAA)
+            {
+                // A saved level above what this GPU supports (e.g. 8x carried over to an Apple Silicon Mac)
+                // would render black — clamp it down to the max the hardware can resolve.
+                settings.MSAALevel = FSOEnvironment.MaxMSAA;
+            }
 
             LotView.WorldConfig.Current = new LotView.WorldConfig()
             {

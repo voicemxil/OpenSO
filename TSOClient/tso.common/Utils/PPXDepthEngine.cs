@@ -52,6 +52,10 @@ namespace FSO.Common.Utils
         public static void InitScreenTargets()
         {
             if (GD == null) return;
+            // Clamp to what the GPU can actually resolve. Selecting (or restoring) a higher count than the
+            // hardware supports — e.g. 8x on Apple Silicon, which caps at 4x — produces a black screen. The
+            // 2D supersample-fold path also forces MSAA up to 8; this catches that too.
+            if (MSAA > FSOEnvironment.MaxMSAA) MSAA = FSOEnvironment.MaxMSAA;
             if (BackbufferDepth != null) BackbufferDepth.Dispose();
             BackbufferDepth = null;
             if (Backbuffer != null) Backbuffer.Dispose();
