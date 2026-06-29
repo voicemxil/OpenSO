@@ -149,25 +149,37 @@ namespace FSO.Client
             var dir = InstallDir();
             try
             {
+                // Keep the .app's Liquid Glass Dock icon — MonoGame sets its own window icon on creation.
+                Utils.MacRetina.RestoreBundleDockIcon();
+
+                var win = Utils.MacRetina.WindowSize(Window.Handle);
                 var before = Utils.MacRetina.DrawableSize(Window.Handle);
                 float backing = Utils.MacRetina.MainDisplayBackingScale();
                 float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
                 var after = Utils.MacRetina.DrawableSize(Window.Handle);
                 var pp0 = GraphicsDevice.PresentationParameters;
-                Utils.MacRetina.Log(dir, $"[dpi] backing={backing:0.##} surf={surf:0.##} " +
+                Utils.MacRetina.Log(dir, $"[dpi] backing={backing:0.##} surf={surf:0.##} window={win.w}x{win.h} " +
                     $"drawableBefore={before.w}x{before.h} drawableAfter={after.w}x{after.h} " +
                     $"backbuffer={pp0.BackBufferWidth}x{pp0.BackBufferHeight}");
 
-                float scale = Math.Max(backing, surf);
-                if (scale < 1.1f) return; // not a Retina/HiDPI display
-                int dpi = Math.Clamp((int)Math.Round(scale), 1, 4);
+                // Only switch to native if the GL surface ACTUALLY became hi-res (drawable grew vs the
+                // window). Guarding on the real drawable — not the display's backing scale — means that when
+                // the surface stays point-resolution we leave the window/backbuffer untouched instead of
+                // enlarging the backbuffer past the drawable, which previously maximized the window.
+                if (win.w <= 0 || after.w < win.w * 1.5)
+                {
+                    Utils.MacRetina.Log(dir, "[dpi] native surface not granted — leaving MonoGame default (window unchanged)");
+                    return;
+                }
+
+                int dpi = Math.Clamp((int)Math.Round((double)after.w / win.w), 1, 4);
                 FSOEnvironment.DPIScaleFactor = dpi;
 
                 var pp = GraphicsDevice.PresentationParameters.Clone();
-                pp.BackBufferWidth = pp.BackBufferWidth * dpi;
-                pp.BackBufferHeight = pp.BackBufferHeight * dpi;
+                pp.BackBufferWidth = after.w;
+                pp.BackBufferHeight = after.h;
                 GraphicsDevice.Reset(pp);
-                Utils.MacRetina.Log(dir, $"[dpi] applied DPIScaleFactor={dpi} backbuffer->{pp.BackBufferWidth}x{pp.BackBufferHeight}");
+                Utils.MacRetina.Log(dir, $"[dpi] applied native DPIScaleFactor={dpi} backbuffer->{after.w}x{after.h}");
             }
             catch (Exception e) { Utils.MacRetina.Log(dir, "[dpi] error: " + e.Message); }
         }

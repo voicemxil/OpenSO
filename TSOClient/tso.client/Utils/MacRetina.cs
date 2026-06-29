@@ -32,13 +32,19 @@ namespace FSO.Client.Utils
         private static extern void SDL_GL_GetDrawableSize(IntPtr window, out int w, out int h);
         [DllImport(SDL, CallingConvention = CallingConvention.Cdecl)]
         private static extern void SDL_GetWindowSize(IntPtr window, out int w, out int h);
+        [DllImport(SDL, CallingConvention = CallingConvention.Cdecl)]
+        private static extern void SDL_SetWindowSize(IntPtr window, int w, int h);
 
         [DllImport(OBJC, EntryPoint = "sel_registerName")]
         private static extern IntPtr sel(string name);
+        [DllImport(OBJC, EntryPoint = "objc_getClass")]
+        private static extern IntPtr objc_getClass(string name);
         [DllImport(OBJC, EntryPoint = "objc_msgSend")]
         private static extern IntPtr msgSend(IntPtr receiver, IntPtr selector);
         [DllImport(OBJC, EntryPoint = "objc_msgSend")]
         private static extern void msgSend_bool(IntPtr receiver, IntPtr selector, byte value);
+        [DllImport(OBJC, EntryPoint = "objc_msgSend")]
+        private static extern void msgSend_ptr(IntPtr receiver, IntPtr selector, IntPtr arg);
 
         [DllImport(CG)] private static extern uint CGMainDisplayID();
         [DllImport(CG)] private static extern IntPtr CGDisplayCopyDisplayMode(uint display);
@@ -87,19 +93,48 @@ namespace FSO.Client.Utils
                 SDL_GetVersion(out info.version);
                 if (SDL_GetWindowWMInfo(sdlWindow, ref info) == 0 || info.window == IntPtr.Zero) return 1f;
                 var contentView = msgSend(info.window, sel("contentView"));
-                if (contentView != IntPtr.Zero)
-                    msgSend_bool(contentView, sel("setWantsBestResolutionOpenGLSurface:"), 1);
+                if (contentView == IntPtr.Zero) return 1f;
+                msgSend_bool(contentView, sel("setWantsBestResolutionOpenGLSurface:"), 1);
+                // Setting the flag doesn't resize a live GL surface. Nudge the window size by 1px and back to
+                // make SDL/Cocoa recreate the drawable at the now-native backing scale; restore the size so
+                // the window doesn't visibly change.
+                SDL_GetWindowSize(sdlWindow, out int ww, out int wh);
+                if (ww > 1 && wh > 1)
+                {
+                    SDL_SetWindowSize(sdlWindow, ww, wh - 1);
+                    SDL_SetWindowSize(sdlWindow, ww, wh);
+                }
                 SDL_GL_GetDrawableSize(sdlWindow, out int dw, out _);
-                SDL_GetWindowSize(sdlWindow, out int ww, out _);
                 return (ww > 0) ? (float)dw / ww : 1f;
             }
             catch { return 1f; }
+        }
+
+        /// <summary>Restore the .app bundle's Dock icon (Liquid Glass). MonoGame DesktopGL sets its own
+        /// window icon (an embedded Icon.bmp, or its built-in logo when none is embedded) via
+        /// SDL_SetWindowIcon, which on macOS replaces the Dock tile — setting the app icon image to nil
+        /// reverts the Dock to the bundle icon (CFBundleIconName / Assets.car).</summary>
+        public static void RestoreBundleDockIcon()
+        {
+            try
+            {
+                var nsapp = msgSend(objc_getClass("NSApplication"), sel("sharedApplication"));
+                if (nsapp != IntPtr.Zero)
+                    msgSend_ptr(nsapp, sel("setApplicationIconImage:"), IntPtr.Zero);
+            }
+            catch { }
         }
 
         /// <summary>Drawable (pixel) size of the GL surface — for diagnostics.</summary>
         public static (int w, int h) DrawableSize(IntPtr sdlWindow)
         {
             try { SDL_GL_GetDrawableSize(sdlWindow, out int w, out int h); return (w, h); } catch { return (0, 0); }
+        }
+
+        /// <summary>Window (point) size.</summary>
+        public static (int w, int h) WindowSize(IntPtr sdlWindow)
+        {
+            try { SDL_GetWindowSize(sdlWindow, out int w, out int h); return (w, h); } catch { return (0, 0); }
         }
 
         /// <summary>Best-effort diagnostic line appended to &lt;dir&gt;/openso-dpi.log.</summary>
