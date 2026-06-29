@@ -77,22 +77,30 @@ jobs:
           printf '%s\n' "$VERSION" > publish/version.txt
           if [ -f "publish/OpenSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/OpenSO.app/Contents/MacOS/version.txt"; fi
 
+      # Force the latest Xcode installed on the runner (Icon Composer .icon files need Xcode 26+).
+      # NOTE: this selects the newest INSTALLED Xcode — runners can't download a new one without Apple-ID
+      # secrets. If the image's newest Xcode still has the broken .icon actool, the deterministic fixes are
+      # an Apple-ID-authenticated `xcodes install`, or committing a prebuilt Assets.car.
+      - name: Force latest Xcode (macOS)
+        if: runner.os == 'macOS'
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+
       - name: Liquid Glass icon (macOS 26+)
         if: runner.os == 'macOS'
         shell: bash
         run: |
           # Give the code-only OpenSO.app its Liquid Glass icon (an Assets.car referenced by
-          # CFBundleIconName). Force the newest installed Xcode (Icon Composer .icon needs Xcode 26+), then
-          # compile with actool. There is no legacy .icns fallback — if actool can't produce an Assets.car
-          # the app shows the generic placeholder, so we warn loudly rather than fail the build.
+          # CFBundleIconName), using the Xcode selected by the Force-latest-Xcode step. There is no legacy
+          # .icns fallback — if actool can't produce an Assets.car the app shows the generic placeholder, so
+          # we warn loudly rather than fail the build.
           set -uo pipefail
           APP="publish/OpenSO.app"; ICON="TSOClient/FSO.Unix/openso.icon"; ICON_BASE="openso"
           if [ ! -d "$APP" ] || [ ! -e "$ICON" ] || ! command -v xcrun >/dev/null 2>&1; then
             echo "::warning::missing .app/.icon/xcrun — app will show a placeholder icon."; exit 0
           fi
           echo "Installed Xcodes:"; ls -d /Applications/Xcode_*.app 2>/dev/null || true
-          NEWEST="$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)"
-          if [ -n "$NEWEST" ]; then sudo xcode-select -s "$NEWEST/Contents/Developer" || true; fi
           echo "Using $(xcodebuild -version 2>/dev/null | head -1); actool: $(xcrun --find actool 2>/dev/null)"
           # Compile into a temp dir so a crashed actool can't leave a partial Assets.car in the bundle.
           TMP="$(mktemp -d)"
