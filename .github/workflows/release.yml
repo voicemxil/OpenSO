@@ -78,12 +78,12 @@ jobs:
           if [ -f "publish/OpenSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/OpenSO.app/Contents/MacOS/version.txt"; fi
 
       - name: Liquid Glass icon (macOS 26+)
-        if: matrix.rid == 'osx-arm64'
+        if: runner.os == 'macOS'
         shell: bash
         run: |
-          # The osx-arm64 publish builds OpenSO.app (CreateMacAppBundle target) with the legacy
-          # Icon.icns. On a runner with Xcode 26+, also compile the Icon Composer .icon into
-          # Assets.car and point CFBundleIconName at it, so macOS 26+ shows the Liquid Glass icon.
+          # The macOS publish builds a code-only OpenSO.app (CreateMacAppBundle) with the legacy Icon.icns.
+          # On a runner with Xcode 26+, compile the Icon Composer .icon into Assets.car and point
+          # CFBundleIconName at it, so macOS 26+ shows the Liquid Glass icon.
           # Fully fallback-safe: any missing tool or actool failure just keeps the legacy .icns.
           set -uo pipefail
           APP="publish/OpenSO.app"; ICON="TSOClient/FSO.Unix/openso.icon"

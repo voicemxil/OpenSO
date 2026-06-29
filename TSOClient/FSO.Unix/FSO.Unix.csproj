@@ -50,37 +50,30 @@
     <!-- Override SDK target to prevent it from deleting native dylibs on repeated publishes -->
     <Target Name="_IncrementalCleanPublishDirectory" />
 
-    <Target Name="CreateMacAppBundle" AfterTargets="Publish" Condition=" '$(RuntimeIdentifier)' == 'osx-arm64' ">
+    <Target Name="CreateMacAppBundle" AfterTargets="Publish" Condition=" '$(RuntimeIdentifier)' == 'osx-arm64' or '$(RuntimeIdentifier)' == 'osx-x64' ">
         <RemoveDir Directories="$(PublishDir)/OpenSO.app"/>
-        <Exec Command="sleep 2"/>
+        <Exec Command="sleep 1"/>
         <MakeDir Directories="$(PublishDir)/OpenSO.app/Contents/MacOS"/>
         <MakeDir Directories="$(PublishDir)/OpenSO.app/Contents/Resources"/>
 
-        <!-- A self-contained .NET app bundle must carry the WHOLE publish output (apphost + managed DLLs +
-             native dylibs + runtimeconfig/deps) next to the executable in Contents/MacOS — copying only the
-             apphost + a few dylibs produced a bundle missing the .NET runtime that could never launch.
-             The game Content goes in Contents/Resources (data, not code) instead of MacOS, because the
-             Content/*.dir folders under MacOS make codesign abort ("bundle format unrecognized"). -->
+        <!-- CODE-ONLY bundle: the apphost + .NET runtime + managed DLLs go in Contents/MacOS. The game
+             Content (and all mutable data — MeshReplace, MeshCache, saves, downloaded patches) deliberately
+             stays in the folder AROUND the .app. This keeps the bundle immutable so codesign can seal it
+             (the Content/*.dir folders were what broke signing) and so updates + the remesh pack never
+             touch the signature. The game resolves Content from the .app's parent dir (see FSO.Unix/Program).
+             We then delete the now-duplicated bare runtime from the publish root, leaving OpenSO.app + Content. -->
         <ItemGroup>
-            <BundlePayload Include="$(PublishDir)/**/*"
-                           Exclude="$(PublishDir)/OpenSO.app/**;$(PublishDir)/Content/**" />
-            <BundleContent Include="$(PublishDir)/Content/**" />
+            <BundleCode Include="$(PublishDir)/**/*"
+                        Exclude="$(PublishDir)/OpenSO.app/**;$(PublishDir)/Content/**" />
         </ItemGroup>
-        <Copy SourceFiles="@(BundlePayload)"
-              DestinationFiles="@(BundlePayload->'$(PublishDir)/OpenSO.app/Contents/MacOS/%(RecursiveDir)%(Filename)%(Extension)')"
+        <Copy SourceFiles="@(BundleCode)"
+              DestinationFiles="@(BundleCode->'$(PublishDir)/OpenSO.app/Contents/MacOS/%(RecursiveDir)%(Filename)%(Extension)')"
               SkipUnchangedFiles="true"/>
-        <Copy SourceFiles="@(BundleContent)"
-              DestinationFiles="@(BundleContent->'$(PublishDir)/OpenSO.app/Contents/Resources/Content/%(RecursiveDir)%(Filename)%(Extension)')"
-              SkipUnchangedFiles="true"/>
-
-        <!-- The game looks for Content next to the executable (MacOS/Content); point that at the real
-             copy in Resources/Content so the data lives in the codesign-friendly location. -->
-        <Exec Command="ln -s ../Resources/Content &quot;$(PublishDir)/OpenSO.app/Contents/MacOS/Content&quot;"/>
-
         <Copy SourceFiles="Icon.icns" DestinationFolder="$(PublishDir)/OpenSO.app/Contents/Resources"/>
         <Copy SourceFiles="Info.plist" DestinationFolder="$(PublishDir)/OpenSO.app/Contents"/>
-
         <Exec Command="chmod +x &quot;$(PublishDir)/OpenSO.app/Contents/MacOS/OpenSO&quot;"/>
+
+        <Delete Files="@(BundleCode)" />
     </Target>
 
 </Project>

@@ -19,6 +19,7 @@ namespace FSO.Unix
         public static void Main(string[] args)
         {
             InitUnix();
+            ResolveContentPaths();
 
             var mgAssembly = typeof(Microsoft.Xna.Framework.Game).Assembly;
             var platform = mgAssembly.GetType("MonoGame.Framework.Utilities.PlatformInfo");
@@ -34,6 +35,40 @@ namespace FSO.Unix
             }
 
             Environment.Exit(0);
+        }
+
+        /// <summary>
+        /// Resolve the game content directory from the executable's location so it's found whether OpenSO
+        /// is launched by the launcher or by double-clicking OpenSO.app (the working directory differs).
+        /// On macOS we ship a CODE-ONLY OpenSO.app; the game data + mutable content (MeshReplace, MeshCache,
+        /// saves) live in the folder AROUND the .app, so codesign can seal the bundle and updates/remesh
+        /// never touch it. Shows a readable error and exits if the content can't be found.
+        /// </summary>
+        private static void ResolveContentPaths()
+        {
+            var baseDir = AppContext.BaseDirectory; // dir holding the running apphost + managed DLLs
+
+            // Inside an .app bundle, the install dir is the folder that CONTAINS OpenSO.app.
+            var inBundle = Path.Combine("OpenSO.app", "Contents", "MacOS") + Path.DirectorySeparatorChar;
+            int idx = baseDir.IndexOf(inBundle, StringComparison.Ordinal);
+            string installDir = idx >= 0
+                ? baseDir.Substring(0, idx).TrimEnd(Path.DirectorySeparatorChar)
+                : baseDir.TrimEnd(Path.DirectorySeparatorChar);
+
+            var contentDir = Path.Combine(installDir, "Content");
+            if (!Directory.Exists(contentDir))
+            {
+                ShowDialog(
+                    "OpenSO couldn't find its game content.\n\nExpected it here:\n" + contentDir +
+                    "\n\nInstall or repair the game through the OpenSO launcher, then try again.",
+                    "Game content not found");
+                Environment.Exit(1);
+            }
+
+            FSOEnvironment.ContentDir = contentDir + Path.DirectorySeparatorChar;
+            FSOEnvironment.UserDir = contentDir + Path.DirectorySeparatorChar;
+            FSOEnvironment.GFXContentDir = Path.Combine(contentDir, "OGL") + Path.DirectorySeparatorChar;
+            Console.WriteLine($"[OpenSO] Content directory: {FSOEnvironment.ContentDir}");
         }
 
         public static void InitUnix()
