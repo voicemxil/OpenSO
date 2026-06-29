@@ -65,12 +65,13 @@ namespace FSO.Client.UI.Panels
         private bool InternalChange;
 
         // --- Anti-aliasing / resolution controls (merged in from the former separate dialog) ---
-        private UICombobox AACombo, TAACombo, VelocityDebugCombo, MotionBlurCombo, BloomCombo, AOCombo;
-        private object[] _aaObjs, _taaObjs, _velDebugObjs, _mblurObjs, _bloomObjs, _aoObjs;
+        private UICombobox AACombo, TAACombo, MotionBlurCombo, BloomCombo, AOCombo;
+        private object[] _aaObjs, _taaObjs, _mblurObjs, _bloomObjs, _aoObjs;
         private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
         private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
         private const float RENDER_SCALE_MIN = 0.5f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
+        private const int MBLUR_DEBUG = 99; // Motion-blur dropdown sentinel for the velocity-buffer debug view
 
         // Unified anti-aliasing modes: mutually-exclusive (MSAA, PostAA) combinations — MSAA and SMAA are
         // never enabled together. The dropdown value is the index into this table. MSAA tiers above the GPU's
@@ -88,7 +89,7 @@ namespace FSO.Client.UI.Panels
 
         public UIGraphicsOptionsDialog() : base(UIDialogStyle.OK, true)
         {
-            SetSize(920, 672); // widened + taller to host the anti-aliasing / resolution column on the right
+            SetSize(920, 540); // widened for the anti-aliasing / resolution column on the right (compacted)
             var script = this.RenderScript("graphicspanel.uis");
 
             UIEffectsLabel.Caption = GameFacade.Strings.GetString("f103", "2");
@@ -492,30 +493,35 @@ namespace FSO.Client.UI.Panels
 
             // Three groups, top-to-bottom: Anti-aliasing, Resolution, Effects. Rows are added BOTTOM-to-TOP
             // so each combo's drop-down list renders over the rows beneath it. Group headers are plain labels.
-            // Ambient occlusion rows stay hidden (AO path disabled in World.cs, AOEnabled=false).
+            // Ambient occlusion rows stay hidden (AO path disabled in World.cs, AOEnabled=false). Velocity
+            // debug is folded into the Motion-blur dropdown (no separate row).
 
             // --- Effects (bottom of the column) ---
-            AddBloomIntensityRow("Bloom intensity", 438);
-            AddBloomThresholdRow("Bloom threshold", 404);
-            BloomCombo = AddRow("Bloom", 370,
+            AddMotionBlurRow("Motion blur strength", 358);
+            MotionBlurCombo = AddRow("Motion blur (3D)", 326,
+                new[] { "Off", "On", "Debug (velocity)" }, new[] { 0, 2, MBLUR_DEBUG }, out _mblurObjs,  // 2 = per-pixel 3D
+                v =>
+                {
+                    var s = GlobalSettings.Default;
+                    s.VelocityDebug = (v == MBLUR_DEBUG);
+                    s.MotionBlur = (v == 2) ? 2 : 0;
+                    ApplyAndRefresh(true);
+                });
+            AddBloomIntensityRow("Bloom intensity", 292);
+            AddBloomThresholdRow("Bloom threshold", 260);
+            BloomCombo = AddRow("Bloom", 226,
                 new[] { "Off", "On" }, new[] { 0, 1 }, out _bloomObjs,
                 v => { GlobalSettings.Default.Bloom = v == 1; ApplyAndRefresh(true); });
-            AddMotionBlurRow("Motion blur strength", 336);
-            MotionBlurCombo = AddRow("Motion blur (3D)", 302,
-                new[] { "Off", "On" }, new[] { 0, 2 }, out _mblurObjs,  // 2 = per-pixel 3D
-                v => { GlobalSettings.Default.MotionBlur = v; ApplyAndRefresh(true); });
-            VelocityDebugCombo = AddRow("Velocity debug (3D)", 268,
-                new[] { "Off", "On" }, new[] { 0, 1 }, out _velDebugObjs,
-                v => { GlobalSettings.Default.VelocityDebug = v == 1; ApplyAndRefresh(); });
-            AddGroupHeader("Effects", 240);
+            AddGroupHeader("Effects", 200);
 
             // --- Resolution ---
-            AddSharpenRow("Upscale sharpening (FSR)", 206); // only affects render scale < 1 (upscaling)
-            AddRenderScaleRow("Render scale", 172);
-            AddGroupHeader("Resolution", 144);
+            AddSharpenRow("Sharpening", 168); // FSR RCAS; only affects render scale < 1 (upscaling)
+            SharpenLabel.Tooltip = "FSR RCAS sharpening. Only applies when render scale is below 1 (upscaling).";
+            AddRenderScaleRow("Render scale", 136);
+            AddGroupHeader("Resolution", 110);
 
             // --- Anti-aliasing (top of the column; added last so its drop-down overlays everything) ---
-            TAACombo = AddRow("Temporal AA (3D)", 110,
+            TAACombo = AddRow("Temporal AA (3D)", 78,
                 new[] { "Off", "On" }, new[] { 0, 1 }, out _taaObjs,
                 v => { GlobalSettings.Default.TAA = v == 1; ApplyAndRefresh(); });
             // One unified AA selector: mutually-exclusive MSAA / FXAA / SMAA, MSAA tiers capped to the GPU max
@@ -525,8 +531,8 @@ namespace FSO.Client.UI.Panels
             for (int i = 0; i < AAModes.Length; i++)
                 if (AAModes[i].msaa == 0 || (msaa && AAModes[i].msaa <= FSOEnvironment.MaxMSAA))
                 { aaNames.Add(AAModes[i].label); aaValues.Add(i); }
-            AACombo = AddRow("Anti-aliasing", 76, aaNames.ToArray(), aaValues.ToArray(), out _aaObjs, OnAAMode);
-            AddGroupHeader("Anti-aliasing", 48);
+            AACombo = AddRow("Anti-aliasing", 46, aaNames.ToArray(), aaValues.ToArray(), out _aaObjs, OnAAMode);
+            AddGroupHeader("Anti-aliasing", 20);
 
             RefreshSelections();
         }
@@ -870,8 +876,7 @@ namespace FSO.Client.UI.Panels
             SelectValue(AACombo, _aaObjs, CurrentAAIndex());
             SetRenderScaleSlider(s.RenderScale);
             SelectValue(TAACombo, _taaObjs, s.TAA ? 1 : 0);
-            SelectValue(VelocityDebugCombo, _velDebugObjs, s.VelocityDebug ? 1 : 0);
-            SelectValue(MotionBlurCombo, _mblurObjs, (s.MotionBlur == 2) ? 2 : 0);
+            SelectValue(MotionBlurCombo, _mblurObjs, s.VelocityDebug ? MBLUR_DEBUG : ((s.MotionBlur == 2) ? 2 : 0));
             SetMotionBlurSlider(s.MotionBlurAmount);
             SelectValue(BloomCombo, _bloomObjs, s.Bloom ? 1 : 0);
             SetBloomSliders(s.BloomThreshold, s.BloomIntensity);
