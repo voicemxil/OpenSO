@@ -129,6 +129,10 @@ namespace FSO.Client
             catch { /* best effort — absolute ContentDir still covers the core content scan */ }
         }
 
+        // macOS native-Retina backbuffer (set by ApplyMacRetina; re-asserted each frame in Draw because
+        // MonoGame reverts the backbuffer to the window's point size on resize events). 0 = inactive.
+        private int _macNativeW, _macNativeH;
+
         private static string InstallDir()
         {
             if (!System.IO.Path.IsPathRooted(FSOEnvironment.ContentDir)) return ".";
@@ -163,27 +167,28 @@ namespace FSO.Client
                     return;
                 }
 
-                // Native Retina needs TWO things true at once: (a) MonoGame's internal GL backbuffer viewport
-                // at native pixels, and (b) the NSView's GL surface at native (best-resolution) pixels.
-                //  - Only GraphicsDevice.Reset moves the viewport off point-size — but Reset recreates the GL
-                //    context, which RESETS the view's wantsBestResolutionOpenGLSurface back to NO, and grows
-                //    the SDL window to the native pixel size.
-                //  - So: Reset to native, shrink the window back to point size, and only THEN re-enable the
-                //    best-resolution surface — now backing == the 2x backbuffer and the frame fills the window.
-                // Window_ClientSizeChanged is suppressed (newChange) so the window nudges can't revert us.
+                // Native Retina needs TWO things true at once: (a) the NSView's GL surface at native
+                // (best-resolution) pixels, and (b) MonoGame's backbuffer viewport at native pixels.
+                //  - (a) setWantsBestResolutionOpenGLSurface makes the backing native. Do NOT use
+                //    GraphicsDevice.Reset to set the backbuffer — Reset recreates the GL context, which clears
+                //    that flag and couples the backbuffer to the window size (maximizing it).
+                //  - (b) MonoGame reads PresentationParameters.BackBufferWidth LIVE when it binds the
+                //    backbuffer (ApplyRenderTargets), so just set it to native pixels. BUT MonoGame reverts the
+                //    backbuffer to the window's point size on every SDL resize event (the surface enable nudges
+                //    the window), so we re-assert it each frame at the top of Draw (see _macNativeW).
+                // Window_ClientSizeChanged is suppressed (newChange) too.
                 newChange = true;
                 int dpi = Math.Clamp((int)Math.Round(backing), 1, 4);
                 int tw = win.w * dpi, th = win.h * dpi;
                 FSOEnvironment.DPIScaleFactor = dpi;
 
-                var pp2 = GraphicsDevice.PresentationParameters.Clone();
-                pp2.BackBufferWidth = tw;
-                pp2.BackBufferHeight = th;
-                GraphicsDevice.Reset(pp2);                                   // viewport -> native; wipes best-res; grows window
-                Utils.MacRetina.SetWindowSize(Window.Handle, win.w, win.h);  // window -> point size
-                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle); // surface -> native (after Reset)
+                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
+                _macNativeW = tw;
+                _macNativeH = th;
+                GraphicsDevice.PresentationParameters.BackBufferWidth = tw;
+                GraphicsDevice.PresentationParameters.BackBufferHeight = th;
                 var draw = Utils.MacRetina.DrawableSize(Window.Handle);
-                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th} window->{win.w}x{win.h} " +
+                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th} " +
                     $"surf={surf:0.##} sdlDrawable={draw.w}x{draw.h}");
             }
             catch (Exception e) { Utils.MacRetina.Log(dir, "[dpi] error: " + e.Message); }
@@ -495,6 +500,13 @@ namespace FSO.Client
 
         protected override void Draw(GameTime gameTime)
         {
+            // macOS native Retina: keep the backbuffer at native pixels. MonoGame reverts it to the window's
+            // point size on resize events, so re-assert before each frame binds the backbuffer.
+            if (_macNativeW > 0 && GraphicsDevice.PresentationParameters.BackBufferWidth != _macNativeW)
+            {
+                GraphicsDevice.PresentationParameters.BackBufferWidth = _macNativeW;
+                GraphicsDevice.PresentationParameters.BackBufferHeight = _macNativeH;
+            }
             base.Draw(gameTime);
 
             if (_frameTimer == null) { _frameTimer = System.Diagnostics.Stopwatch.StartNew(); return; }
