@@ -48,11 +48,13 @@ jobs:
             project: TSOClient/FSO.Unix
             rid: linux-x64
             asset: OpenSO-client-linux-x64
-          - os: macos-latest
+          # macos-26 (Tahoe) ships Xcode 26.6, whose actool compiles the Icon Composer .icon — macos-latest
+          # still maps to an older image whose newest Xcode (26.3) crashes on .icon files.
+          - os: macos-26
             project: TSOClient/FSO.Unix
             rid: osx-x64
             asset: OpenSO-client-osx-x64
-          - os: macos-latest
+          - os: macos-26
             project: TSOClient/FSO.Unix
             rid: osx-arm64
             asset: OpenSO-client-osx-arm64
