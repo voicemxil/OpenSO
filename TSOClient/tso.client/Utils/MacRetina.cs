@@ -20,7 +20,11 @@ namespace FSO.Client.Utils
     /// </summary>
     internal static class MacRetina
     {
-        private const string SDL = "SDL2";
+        // MonoGame DesktopGL ships SDL as "libSDL2-2.0.0.dylib" (the SDL2 ABI soname) next to the apphost.
+        // .NET's DllImport name resolution for "SDL2" never tries that versioned filename, so the calls
+        // threw DllNotFoundException (swallowed -> 0x0). Bind the exact name; macOS-guarded so it's never
+        // resolved on Linux/Windows.
+        private const string SDL = "libSDL2-2.0.0.dylib";
         private const string OBJC = "/usr/lib/libobjc.dylib";
         private const string CG = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
 
