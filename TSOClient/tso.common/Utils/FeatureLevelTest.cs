@@ -48,7 +48,6 @@ namespace FSO.Common.Utils
             // and take the highest level that comes back red-ish as the cap. Exposed as FSOEnvironment.MaxMSAA
             // so the settings menu only offers supported tiers and the renderer clamps to it.
             int maxMSAA = 0;
-            string msaaLog = "[msaa] ";
             foreach (var samples in new[] { 8, 4, 2 })
             {
                 try
@@ -62,38 +61,21 @@ namespace FSO.Common.Utils
                             var px = new Color[tex.Width * tex.Height];
                             tex.GetData(px);
                             gd.SetRenderTarget(null);
-                            bool ok = px[0].R > 100 && px[0].G < 100 && px[0].B < 100;
-                            msaaLog += $"{samples}x(mc{msaaTarg.MultiSampleCount} px{px[0].R},{px[0].G},{px[0].B} {(ok ? "OK" : "BAD")}) ";
-                            if (ok) { maxMSAA = samples; break; }
+                            // Red-ish (not black/garbage) = this level actually renders+resolves. 8x on Apple
+                            // Silicon GL creates a target but renders black, so it's correctly rejected here.
+                            if (px[0].R > 100 && px[0].G < 100 && px[0].B < 100) { maxMSAA = samples; break; }
                         }
                     }
                 }
-                catch (Exception e)
+                catch
                 {
                     try { gd.SetRenderTarget(null); } catch { }
-                    msaaLog += $"{samples}x(EXC:{e.GetType().Name}) ";
                 }
             }
             FSOEnvironment.MaxMSAA = maxMSAA;
             FSOEnvironment.MSAASupport = maxMSAA >= 2;
-            WriteMsaaLog(msaaLog + $"=> MaxMSAA={maxMSAA}");
 
             return true;
-        }
-
-        // Diagnostic: append the per-level MSAA probe result next to the install dir, so the supported tiers
-        // can be confirmed on a given GPU. Best-effort; safe to remove once detection is settled.
-        private static void WriteMsaaLog(string line)
-        {
-            try
-            {
-                var cd = FSOEnvironment.ContentDir;
-                string dir = System.IO.Path.IsPathRooted(cd)
-                    ? (System.IO.Path.GetDirectoryName(cd.TrimEnd(System.IO.Path.DirectorySeparatorChar, '/')) ?? ".")
-                    : ".";
-                System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "openso-msaa.log"), line + "\n");
-            }
-            catch { }
         }
     }
 }
