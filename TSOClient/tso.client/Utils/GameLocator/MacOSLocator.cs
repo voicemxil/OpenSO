@@ -16,7 +16,11 @@ namespace FSO.Client.Utils.GameLocator
             string fsoDir = idx >= 0
                 ? baseDir.Substring(0, idx).TrimEnd(Path.DirectorySeparatorChar)   // .app's parent = the FSO dir
                 : baseDir.TrimEnd(Path.DirectorySeparatorChar);
-            var sibling = Path.GetFullPath(Path.Combine(fsoDir, "..", "The Sims Online", "TSOClient"));
+            // Return WITH a trailing separator (like the fallbacks below). Content._ScanFiles strips this
+            // BasePath off each scanned file by length; without the trailing slash the keys keep a leading
+            // "/", and Path.Combine(BasePath, "/uigraphics/...") then treats them as rooted and resolves at
+            // the filesystem root (FAR3 "Could not open the specified archive - /uigraphics/.../*.dat").
+            var sibling = Path.GetFullPath(Path.Combine(fsoDir, "..", "The Sims Online", "TSOClient")) + Path.DirectorySeparatorChar;
             if (File.Exists(Path.Combine(sibling, "tuning.dat"))) return sibling;
 
             // Legacy cwd-relative layout (FreeSO put TSO next to the working dir).
