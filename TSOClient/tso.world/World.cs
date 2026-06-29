@@ -1165,11 +1165,11 @@ namespace FSO.LotView
                             && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
 
-            // FSR RCAS sharpening: a final pass over the resolved frame. RCAS is part of FSR's UPSCALER and is
-            // only appropriate when upscaling (render scale < 1) — sharpening a supersampled (downscaled) image
-            // produces the unwanted "FSR on downscale" halos. Gate it to the upscale case only.
-            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null
-                           && PPXDepthEngine.SSAA < 0.999f;
+            // FSR RCAS sharpening: a final, user-controlled pass over the resolved frame, available at ANY
+            // render scale (native, supersampled/downscaled, or upscaled). Note this is separate from the
+            // downscale RESOLVE — supersampling resolves with the box/tent (SSAAFunc), never FSR — so RCAS
+            // here is just optional sharpening, not "FSR downscaling".
+            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
@@ -1248,9 +1248,9 @@ namespace FSO.LotView
             bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
-            // RCAS sharpen only when upscaling (FSR); never sharpen a supersampled/downscaled image.
-            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null
-                           && PPXDepthEngine.SSAA < 0.999f;
+            // RCAS sharpen — user-controlled, available at any render scale (the downscale resolve uses the
+            // box/tent, not FSR, so this is just optional sharpening).
+            bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
             PPXDepthEngine.WithOpacity = false; //3D scene is opaque; no per-pixel opacity blend on resolve.

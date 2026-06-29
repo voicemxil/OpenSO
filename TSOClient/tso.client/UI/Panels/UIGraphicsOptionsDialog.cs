@@ -515,8 +515,8 @@ namespace FSO.Client.UI.Panels
             AddGroupHeader("Effects", 200);
 
             // --- Resolution ---
-            AddSharpenRow("Sharpening", 168); // FSR RCAS; only affects render scale < 1 (upscaling)
-            SharpenLabel.Tooltip = "FSR RCAS sharpening. Only applies when render scale is below 1 (upscaling).";
+            AddSharpenRow("Sharpening", 168); // FSR RCAS post-pass; applies at any render scale
+            SharpenLabel.Tooltip = "FSR RCAS sharpening — applies at any render scale.";
             AddRenderScaleRow("Render scale", 136);
             AddGroupHeader("Resolution", 110);
 
