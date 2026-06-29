@@ -80,12 +80,11 @@ namespace FSO.UI.Model
                 handlers.requestCallback += Request;
                 Events = handlers;
 
-                // TODO(OpenSO rebrand): "378352963468525569" is upstream FreeSO's Discord application ID.
-                // Rich Presence shows the app's NAME ("FreeSO") and art assets (e.g. "sunrise_crater" largeImageKey)
-                // from Discord's side, so they stay "FreeSO" until we register an OpenSO Discord application
-                // (https://discord.com/developers/applications), re-upload the rich-presence art assets under the
-                // same keys, and swap this ID for the OpenSO one. No further code change is needed here.
-                DiscordRpc.Initialize("378352963468525569", ref handlers, true, null);
+                // OpenSO's Discord application ID. Rich Presence shows the app's NAME ("OpenSO") and art assets
+                // (e.g. "sunrise_crater" largeImageKey, "cat_*" lot-category icons) from Discord's side; those are
+                // uploaded under matching keys at https://discord.com/developers/applications. (Upstream FreeSO's
+                // ID was "378352963468525569".)
+                DiscordRpc.Initialize("1521238813899358238", ref handlers, true, null);
             } catch (Exception)
             {
                 Active = false;
