@@ -36,6 +36,10 @@ namespace FSO.Common
         public static bool TexCompress = true;
         public static bool TexCompressSupport = true;
         public static bool MSAASupport = true;
+        // Highest hardware MSAA sample count the GPU can actually render+resolve (set by FeatureLevelTest).
+        // e.g. Apple Silicon caps at 4. The settings menu only offers tiers up to this and the renderer clamps
+        // to it, so a higher selection (or a saved 8x) can't produce a black screen.
+        public static int MaxMSAA = 8;
 
         public static string Args = "";
     }

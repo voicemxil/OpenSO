@@ -525,9 +525,15 @@ namespace FSO.Client.UI.Panels
 
             AddRenderScaleRow("Render scale", 126);
 
+            // Only offer the MSAA tiers the GPU can actually resolve (FSOEnvironment.MaxMSAA). Apple Silicon
+            // caps at 4x — offering 8x there renders a black screen.
+            var msaaLabels = new System.Collections.Generic.List<string> { "Off" };
+            var msaaValues = new System.Collections.Generic.List<int> { 0 };
+            foreach (var lvl in new[] { 2, 4, 8 })
+                if (lvl <= FSOEnvironment.MaxMSAA) { msaaLabels.Add(lvl + "×"); msaaValues.Add(lvl); }
             MSAACombo = AddRow("Hardware MSAA", 88,
-                msaa ? new[] { "Off", "2×", "4×", "8×" } : new[] { "Off (unsupported)" },
-                msaa ? new[] { 0, 2, 4, 8 } : new[] { 0 }, out _msaaObjs,
+                msaa ? msaaLabels.ToArray() : new[] { "Off (unsupported)" },
+                msaa ? msaaValues.ToArray() : new[] { 0 }, out _msaaObjs,
                 v => { GlobalSettings.Default.MSAALevel = v; ApplyAndRefresh(); });
 
             PresetCombo = AddRow("Quality preset", 46,
