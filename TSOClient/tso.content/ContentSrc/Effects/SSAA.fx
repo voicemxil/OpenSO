@@ -1,12 +1,26 @@
-//A shader for SSAA style downscaling. Currently uses box filer.
+// SSAA-style downscaling resolves for the supersampled (render scale > 1) backbuffer.
+//  - DrawSSAA4: the exact 4-sample 2x2 box. Optimal for integer 2x supersampling (each output pixel is the
+//    average of its 4 source pixels). Averaged in gamma space to match brightness with "supersampling off".
+//  - DrawSSAAFootprint: a footprint-aware separable tent for NON-integer ratios (e.g. 1.5x). The fixed 2x2
+//    box only ever samples a 2x2 source region regardless of ratio, so it under-covers at non-integer scales;
+//    this widens the kernel to the actual SSAAScale x SSAAScale footprint using LINEAR taps.
+// SSAADownsample.Draw picks the technique from the live render scale.
 
-float2 SSAASize;
+float2 SSAASize;   // 1 / source dimensions (source texel size in UV)
+float SSAAScale;   // source/dest supersample ratio (>= 1); each output pixel covers SSAAScale source texels/axis
 
 texture tex : Diffuse;
 sampler texSampler = sampler_state {
 	texture = <tex>;
 	AddressU = CLAMP; AddressV = CLAMP; AddressW = CLAMP;
 	MIPFILTER = POINT; MINFILTER = POINT; MAGFILTER = POINT;
+};
+
+// Linear variant for the footprint filter (each tap averages a 2x2 source quad in gamma space).
+sampler texLinear = sampler_state {
+	texture = <tex>;
+	AddressU = CLAMP; AddressV = CLAMP; AddressW = CLAMP;
+	MIPFILTER = LINEAR; MINFILTER = LINEAR; MAGFILTER = LINEAR;
 };
 
 struct VertexShaderInput
@@ -31,25 +45,10 @@ VertexShaderOutput VertexShaderFunction(VertexShaderInput input)
     return output;
 }
 
-//coeffs from http://chilliant.blogspot.com/2012/08/srgb-approximations-for-hlsl.html.
-float4 LinearToSRGB(float4 col) {
-	float3 s1 = sqrt(col.rgb);
-	float3 s2 = sqrt(s1);
-	float3 s3 = sqrt(s2);
-	col.rgb = 0.662002687 * s1 + 0.684122060 * s2 - 0.323583601 * s3 - 0.0225411470 * col.rgb;
-	return col;
-}
-
-float4 SRGBToLinear(float4 col) {
-	col.rgb = col.rgb * (col.rgb * (col.rgb * 0.305306011 + 0.682171111) + 0.012522878);
-	return col;
-}
-
 float4 SSAASample4(float2 uv) {
-	// Average directly in gamma (sRGB-encoded) space. The previous version round-tripped through the
-	// approximate sRGB<->linear helpers above, which aren't exact inverses, so it shifted even flat
-	// regions slightly darker. The engine composites in gamma space and the non-supersampled resolve is
-	// a plain blit, so a gamma-space box average keeps brightness identical to "supersampling off".
+	// Exact 2x2 box. Average directly in gamma (sRGB-encoded) space — the engine composites in gamma space
+	// and the non-supersampled resolve is a plain blit, so a gamma-space box keeps brightness identical to
+	// "supersampling off".
 	float4 result = float4(0, 0, 0, 0);
 	uv += SSAASize / 2;
 	result += tex2D(texSampler, uv);
@@ -59,9 +58,26 @@ float4 SSAASample4(float2 uv) {
 	return result / 4;
 }
 
+float4 SSAASampleFootprint(float2 uv) {
+	// Separable tent (triangle) over the output pixel's SSAAScale x SSAAScale source footprint. Taps at
+	// -1,0,+1 of a half-footprint step span +/- SSAAScale/2; tent weights {0.25, 0.5, 0.25} per axis (sum 1).
+	float2 stp = SSAASize * (SSAAScale * 0.5);
+	float w[3] = { 0.25, 0.5, 0.25 };
+	float4 sum = float4(0, 0, 0, 0);
+	[unroll] for (int y = -1; y <= 1; y++)
+		[unroll] for (int x = -1; x <= 1; x++)
+			sum += (w[x + 1] * w[y + 1]) * tex2D(texLinear, uv + float2(x, y) * stp);
+	return sum;
+}
+
 float4 PixelShaderFunction(VertexShaderOutput input) : COLOR0
 {
     return SSAASample4(input.Coord);
+}
+
+float4 PixelShaderFootprint(VertexShaderOutput input) : COLOR0
+{
+    return SSAASampleFootprint(input.Coord);
 }
 
 technique DrawSSAA4
@@ -74,6 +90,21 @@ technique DrawSSAA4
 #else
         VertexShader = compile vs_3_0 VertexShaderFunction();
         PixelShader = compile ps_3_0 PixelShaderFunction();
+#endif;
+
+    }
+}
+
+technique DrawSSAAFootprint
+{
+    pass MainPass
+    {
+#if SM4
+        VertexShader = compile vs_4_0_level_9_1 VertexShaderFunction();
+        PixelShader = compile ps_4_0_level_9_1 PixelShaderFootprint();
+#else
+        VertexShader = compile vs_3_0 VertexShaderFunction();
+        PixelShader = compile ps_3_0 PixelShaderFootprint();
 #endif;
 
     }

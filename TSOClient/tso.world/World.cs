@@ -1165,8 +1165,10 @@ namespace FSO.LotView
                             && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
 
-            // FSR RCAS sharpening: a final pass over the resolved frame, enabled when a sharpen mode is
-            // selected with non-zero strength and the shader is present. null => no extra pass (no change).
+            // FSR RCAS sharpening: a final, user-controlled pass over the resolved frame, available at ANY
+            // render scale (native, supersampled/downscaled, or upscaled). Note this is separate from the
+            // downscale RESOLVE — supersampling resolves with the box/tent (SSAAFunc), never FSR — so RCAS
+            // here is just optional sharpening, not "FSR downscaling".
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
@@ -1246,6 +1248,8 @@ namespace FSO.LotView
             bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
+            // RCAS sharpen — user-controlled, available at any render scale (the downscale resolve uses the
+            // box/tent, not FSR, so this is just optional sharpening).
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 

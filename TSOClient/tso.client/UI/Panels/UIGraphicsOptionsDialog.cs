@@ -65,33 +65,41 @@ namespace FSO.Client.UI.Panels
         private bool InternalChange;
 
         // --- Anti-aliasing / resolution controls (merged in from the former separate dialog) ---
-        private UICombobox PresetCombo, MSAACombo, PostAACombo, TAACombo, VelocityDebugCombo, MotionBlurCombo, BloomCombo, AOCombo;
-        private object[] _presetObjs, _msaaObjs, _postObjs, _taaObjs, _velDebugObjs, _mblurObjs, _bloomObjs, _aoObjs;
+        private UICombobox AACombo, TAACombo, MotionBlurCombo, BloomCombo, AOCombo;
+        private object[] _aaObjs, _taaObjs, _mblurObjs, _bloomObjs, _aoObjs;
         private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
         private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
         private const float RENDER_SCALE_MIN = 0.5f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
-        private const int PRESET_CUSTOM = 99;
-        // preset -> { MSAA, SuperSampling, PostAA, Sharpen }
-        private static readonly int[][] Presets =
+        private const int MBLUR_DEBUG = 99; // Motion-blur dropdown sentinel for the velocity-buffer debug view
+
+        // Unified anti-aliasing modes: mutually-exclusive (MSAA, PostAA) combinations — MSAA and SMAA are
+        // never enabled together. The dropdown value is the index into this table. MSAA tiers above the GPU's
+        // FSOEnvironment.MaxMSAA are filtered out when the dropdown is built (so 8× is hidden on Apple Silicon).
+        // PostAA: 0=none, 1=FXAA, 3=SMAA (high). (PostAA 2 "SMAA Low" was dropped — it hit the same shader.)
+        private static readonly (string label, int msaa, int postAA)[] AAModes =
         {
-            new[] { 0, 1, 0, 0 }, // Off
-            new[] { 0, 1, 1, 0 }, // FXAA (fast)
-            new[] { 2, 1, 0, 0 }, // MSAA 2x
-            new[] { 4, 1, 0, 0 }, // MSAA 4x
-            new[] { 4, 2, 0, 0 }, // MSAA 4x + Supersample 2x
-            new[] { 4, 2, 2, 1 }, // Ultra: MSAA 4x + SS 2x + SMAA + sharpen
+            ("Off",     0, 0),
+            ("FXAA",    0, 1),
+            ("SMAA",    0, 3),
+            ("MSAA 2×", 2, 0),
+            ("MSAA 4×", 4, 0),
+            ("MSAA 8×", 8, 0),
         };
 
         public UIGraphicsOptionsDialog() : base(UIDialogStyle.OK, true)
         {
-            SetSize(920, 672); // widened + taller to host the anti-aliasing / resolution column on the right
+            SetSize(920, 540); // widened for the anti-aliasing / resolution column on the right (compacted)
             var script = this.RenderScript("graphicspanel.uis");
 
             UIEffectsLabel.Caption = GameFacade.Strings.GetString("f103", "2");
             UIEffectsLabel.Alignment = TextAlignment.Middle;
-            CharacterDetailLabel.Caption = GameFacade.Strings.GetString("f103", "4");
+            // The "Character Detail" tier actually drives ShadowQuality (the shadow-map resolution,
+            // 512/1024/2048 — see ChangeShadowDetail), not character mesh detail. Relabel it accordingly.
+            CharacterDetailLabel.Caption = "Shadow Detail";
+            CharacterDetailLabel.Tooltip = "Shadow map resolution (Low 512 / Med 1024 / High 2048).";
             TerrainDetailLabel.Caption = GameFacade.Strings.GetString("f103", "1");
+            TerrainDetailLabel.Tooltip = "How many surrounding lots are drawn around the current lot.";
             ShadowsLabel.Caption = GameFacade.Strings.GetString("f103", "6");
             LightingLabel.Caption = GameFacade.Strings.GetString("f103", "20");
 
@@ -483,62 +491,48 @@ namespace FSO.Client.UI.Panels
         {
             var msaa = FSOEnvironment.MSAASupport;
 
-            var style = TextStyle.DefaultTitle.Clone();
-            style.Size = 12;
-            var header = new UILabel()
-            {
-                CaptionStyle = style,
-                Caption = "Anti-Aliasing & Resolution",
-                Position = new Vector2(AAX + 25, 24)
-            };
-            Add(header);
+            // Three groups, top-to-bottom: Anti-aliasing, Resolution, Effects. Rows are added BOTTOM-to-TOP
+            // so each combo's drop-down list renders over the rows beneath it. Group headers are plain labels.
+            // Ambient occlusion rows stay hidden (AO path disabled in World.cs, AOEnabled=false). Velocity
+            // debug is folded into the Motion-blur dropdown (no separate row).
 
-            // Added bottom-to-top so each combo's drop-down renders over the rows beneath it.
-            // Ambient occlusion (combo + AO radius/intensity rows) is HIDDEN for now — the AO path is
-            // disabled in World.cs (AOEnabled=false). Restore these three rows when re-enabling.
-
-            AddBloomIntensityRow("Bloom intensity", 468);
-            AddBloomThresholdRow("Bloom threshold", 430);
-            BloomCombo = AddRow("Bloom", 392,
+            // --- Effects (bottom of the column) ---
+            AddMotionBlurRow("Motion blur strength", 358);
+            MotionBlurCombo = AddRow("Motion blur (3D)", 326,
+                new[] { "Off", "On", "Debug (velocity)" }, new[] { 0, 2, MBLUR_DEBUG }, out _mblurObjs,  // 2 = per-pixel 3D
+                v =>
+                {
+                    var s = GlobalSettings.Default;
+                    s.VelocityDebug = (v == MBLUR_DEBUG);
+                    s.MotionBlur = (v == 2) ? 2 : 0;
+                    ApplyAndRefresh(true);
+                });
+            AddBloomIntensityRow("Bloom intensity", 292);
+            AddBloomThresholdRow("Bloom threshold", 260);
+            BloomCombo = AddRow("Bloom", 226,
                 new[] { "Off", "On" }, new[] { 0, 1 }, out _bloomObjs,
                 v => { GlobalSettings.Default.Bloom = v == 1; ApplyAndRefresh(true); });
+            AddGroupHeader("Effects", 200);
 
-            AddMotionBlurRow("Motion blur strength", 354);
+            // --- Resolution ---
+            AddSharpenRow("Sharpening", 168); // FSR RCAS post-pass; applies at any render scale
+            SharpenLabel.Tooltip = "FSR RCAS sharpening — applies at any render scale.";
+            AddRenderScaleRow("Render scale", 136);
+            AddGroupHeader("Resolution", 110);
 
-            MotionBlurCombo = AddRow("Motion blur (3D)", 316,
-                new[] { "Off", "On" }, new[] { 0, 2 }, out _mblurObjs,  // 2 = per-pixel 3D
-                v => { GlobalSettings.Default.MotionBlur = v; ApplyAndRefresh(true); });
-
-            VelocityDebugCombo = AddRow("Velocity debug (3D)", 278,
-                new[] { "Off", "On" }, new[] { 0, 1 }, out _velDebugObjs,
-                v => { GlobalSettings.Default.VelocityDebug = v == 1; ApplyAndRefresh(); });
-
-            AddSharpenRow("Sharpening (FSR)", 240);
-
-            TAACombo = AddRow("Temporal AA (3D)", 202,
+            // --- Anti-aliasing (top of the column; added last so its drop-down overlays everything) ---
+            TAACombo = AddRow("Temporal AA (3D)", 78,
                 new[] { "Off", "On" }, new[] { 0, 1 }, out _taaObjs,
                 v => { GlobalSettings.Default.TAA = v == 1; ApplyAndRefresh(); });
-
-            PostAACombo = AddRow("Post-process AA", 164,
-                new[] { "Off", "FXAA", "SMAA Low", "SMAA High" }, new[] { 0, 1, 2, 3 }, out _postObjs,
-                v => { GlobalSettings.Default.PostAA = v; ApplyAndRefresh(); });
-
-            AddRenderScaleRow("Render scale", 126);
-
-            // Only offer the MSAA tiers the GPU can actually resolve (FSOEnvironment.MaxMSAA). Apple Silicon
-            // caps at 4x — offering 8x there renders a black screen.
-            var msaaLabels = new System.Collections.Generic.List<string> { "Off" };
-            var msaaValues = new System.Collections.Generic.List<int> { 0 };
-            foreach (var lvl in new[] { 2, 4, 8 })
-                if (lvl <= FSOEnvironment.MaxMSAA) { msaaLabels.Add(lvl + "×"); msaaValues.Add(lvl); }
-            MSAACombo = AddRow("Hardware MSAA", 88,
-                msaa ? msaaLabels.ToArray() : new[] { "Off (unsupported)" },
-                msaa ? msaaValues.ToArray() : new[] { 0 }, out _msaaObjs,
-                v => { GlobalSettings.Default.MSAALevel = v; ApplyAndRefresh(); });
-
-            PresetCombo = AddRow("Quality preset", 46,
-                new[] { "Off", "FXAA (fast)", "MSAA 2×", "MSAA 4×", "MSAA 4× + Supersample 2×", "Ultra (SMAA + sharpen)", "Custom" },
-                new[] { 0, 1, 2, 3, 4, 5, PRESET_CUSTOM }, out _presetObjs, OnPreset);
+            // One unified AA selector: mutually-exclusive MSAA / FXAA / SMAA, MSAA tiers capped to the GPU max
+            // (so 8× is hidden on Apple Silicon). Value = index into AAModes; OnAAMode sets MSAALevel + PostAA.
+            var aaNames = new System.Collections.Generic.List<string>();
+            var aaValues = new System.Collections.Generic.List<int>();
+            for (int i = 0; i < AAModes.Length; i++)
+                if (AAModes[i].msaa == 0 || (msaa && AAModes[i].msaa <= FSOEnvironment.MaxMSAA))
+                { aaNames.Add(AAModes[i].label); aaValues.Add(i); }
+            AACombo = AddRow("Anti-aliasing", 46, aaNames.ToArray(), aaValues.ToArray(), out _aaObjs, OnAAMode);
+            AddGroupHeader("Anti-aliasing", 20);
 
             RefreshSelections();
         }
@@ -798,25 +792,36 @@ namespace FSO.Client.UI.Panels
             if (objs.Length > 0) combo.SelectedItem = objs[0];
         }
 
-        private void OnPreset(int preset)
+        private void OnAAMode(int index)
         {
-            if (preset == PRESET_CUSTOM) return;
+            if (index < 0 || index >= AAModes.Length) return;
             var s = GlobalSettings.Default;
-            var p = Presets[preset];
-            s.MSAALevel = p[0]; s.SuperSampling = p[1]; s.RenderScale = p[1]; s.PostAA = p[2];
-            s.Sharpen = p[3]; s.SharpenAmount = (p[3] > 0) ? 0.5f : 0f;
+            s.MSAALevel = AAModes[index].msaa;
+            s.PostAA = AAModes[index].postAA;
             ApplyAndRefresh();
         }
 
-        private int MatchPreset(GlobalSettings s)
+        // Map the current (MSAALevel, PostAA) settings back to an AAModes index for the dropdown. Exact match
+        // first; otherwise prefer the hardware MSAA tier if one is set, else the post-AA method, else Off.
+        private int CurrentAAIndex()
         {
-            for (int i = 0; i < Presets.Length; i++)
-            {
-                var p = Presets[i];
-                if (s.MSAALevel == p[0] && s.RenderScale == p[1] && s.PostAA == p[2] && s.Sharpen == p[3])
-                    return i;
-            }
-            return PRESET_CUSTOM;
+            var s = GlobalSettings.Default;
+            for (int i = 0; i < AAModes.Length; i++)
+                if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == s.PostAA) return i;
+            if (s.MSAALevel > 0)
+                for (int i = 0; i < AAModes.Length; i++)
+                    if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == 0) return i;
+            if (s.PostAA > 0)
+                for (int i = 0; i < AAModes.Length; i++)
+                    if (AAModes[i].msaa == 0 && AAModes[i].postAA != 0) return i;
+            return 0; // Off
+        }
+
+        private void AddGroupHeader(string caption, int y)
+        {
+            var style = TextStyle.DefaultTitle.Clone();
+            style.Size = 11;
+            DynamicOverlay.Add(new UILabel() { CaptionStyle = style, Caption = caption, Position = new Vector2(AAX + 25, y) });
         }
 
         private void ApplyAndRefresh(bool light = false)
@@ -868,18 +873,15 @@ namespace FSO.Client.UI.Panels
         {
             var s = GlobalSettings.Default;
             InternalChange = true;
-            SelectValue(MSAACombo, _msaaObjs, s.MSAALevel);
+            SelectValue(AACombo, _aaObjs, CurrentAAIndex());
             SetRenderScaleSlider(s.RenderScale);
-            SelectValue(PostAACombo, _postObjs, s.PostAA);
             SelectValue(TAACombo, _taaObjs, s.TAA ? 1 : 0);
-            SelectValue(VelocityDebugCombo, _velDebugObjs, s.VelocityDebug ? 1 : 0);
-            SelectValue(MotionBlurCombo, _mblurObjs, (s.MotionBlur == 2) ? 2 : 0);
+            SelectValue(MotionBlurCombo, _mblurObjs, s.VelocityDebug ? MBLUR_DEBUG : ((s.MotionBlur == 2) ? 2 : 0));
             SetMotionBlurSlider(s.MotionBlurAmount);
             SelectValue(BloomCombo, _bloomObjs, s.Bloom ? 1 : 0);
             SetBloomSliders(s.BloomThreshold, s.BloomIntensity);
             // AO combo + sliders hidden (AO path disabled); nothing to refresh.
             SetSharpenSlider(s.SharpenAmount);
-            SelectValue(PresetCombo, _presetObjs, MatchPreset(s));
             InternalChange = false;
         }
 
