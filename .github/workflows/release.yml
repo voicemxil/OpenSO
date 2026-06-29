@@ -116,19 +116,23 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          # Apple Silicon refuses to run unsigned native code. The SDK ad-hoc-signs the bare apphost,
-          # but the CreateMacAppBundle copy and the bundled native dylibs aren't covered — sign them so
-          # the game launches both via the launcher (bare apphost) and when OpenSO.app is double-clicked
-          # ("can't be opened" otherwise). Ad-hoc (-s -): no Developer ID, but enough for local launch.
+          # Apple Silicon refuses to run unsigned native code. The SDK ad-hoc-signs the bare apphost, but
+          # the CreateMacAppBundle copy and the bundled native dylibs aren't covered — sign them so the
+          # game launches both via the launcher (bare apphost) and when OpenSO.app is double-clicked
+          # ("can't be opened" otherwise). NOTE: do NOT use --deep on the .app — it recurses into the
+          # game's Content/*.dir folders and aborts ("bundle format unrecognized"). Sign the Mach-O code
+          # explicitly, then seal the bundle. Best-effort: a signing hiccup must never block the release.
           # Must run AFTER the icon step, which modifies the bundle.
           set -uo pipefail
-          for dylib in publish/*.dylib; do [ -e "$dylib" ] && codesign --force --timestamp=none -s - "$dylib" || true; done
-          [ -e publish/OpenSO ] && codesign --force --timestamp=none -s - publish/OpenSO || true
+          sign() { codesign --force --timestamp=none -s - "$1" && echo "signed: $1" || echo "::warning::sign failed: $1"; }
+          for f in publish/*.dylib publish/OpenSO; do [ -e "$f" ] && sign "$f"; done
           if [ -d publish/OpenSO.app ]; then
-            codesign --force --deep --timestamp=none -s - publish/OpenSO.app
-            codesign --verify --deep --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
+            for f in publish/OpenSO.app/Contents/MacOS/*.dylib publish/OpenSO.app/Contents/MacOS/OpenSO; do [ -e "$f" ] && sign "$f"; done
+            sign publish/OpenSO.app   # seal the bundle (no --deep)
+            codesign --verify --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
               || echo "::warning::codesign verify failed on OpenSO.app."
           fi
+          true  # never let this step fail the build
 
       - name: Bundle the in-game patcher (update.exe)
         if: matrix.rid == 'win-x64'
