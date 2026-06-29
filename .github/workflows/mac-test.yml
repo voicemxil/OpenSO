@@ -1,0 +1,86 @@
+name: mac-test-build
+
+# Lean macOS-only test build for verifying a fix WITHOUT cutting a release or version tag. Produces a
+# signed OpenSO.app with the Liquid Glass icon, uploaded as a downloadable artifact. The graphics settings
+# (where MSAA support shows) are reachable from the title screen before login, so no matching server needed.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ fix/msaa-detection ]
+    paths:
+      - 'TSOClient/**'
+      - '.github/workflows/mac-test.yml'
+
+jobs:
+  mac-test:
+    runs-on: macos-26   # Xcode 26.6 — actool can compile the Icon Composer .icon
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.315"
+
+      - name: Publish macOS client
+        run: dotnet publish TSOClient/FSO.Unix -c Release -r osx-arm64 --self-contained -o publish
+
+      - name: Stamp version.txt
+        shell: bash
+        run: |
+          VERSION="msaatest-${GITHUB_SHA:0:7}"
+          echo "Stamping version: $VERSION"
+          printf '%s\n' "$VERSION" > publish/version.txt
+          if [ -f "publish/OpenSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/OpenSO.app/Contents/MacOS/version.txt"; fi
+
+      - name: Force latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest
+
+      - name: Liquid Glass icon
+        shell: bash
+        run: |
+          set -uo pipefail
+          APP="publish/OpenSO.app"; ICON="TSOClient/FSO.Unix/openso.icon"; ICON_BASE="openso"
+          if [ ! -d "$APP" ] || [ ! -e "$ICON" ] || ! command -v xcrun >/dev/null 2>&1; then
+            echo "::warning::missing .app/.icon/xcrun — app will show a placeholder icon."; exit 0
+          fi
+          echo "Using $(xcodebuild -version 2>/dev/null | head -1)"
+          TMP="$(mktemp -d)"
+          if xcrun actool "$ICON" --compile "$TMP" --output-partial-info-plist "$TMP/icon.plist" \
+               --app-icon "$ICON_BASE" --include-all-app-icons --enable-on-demand-resources NO \
+               --development-region en --target-device mac --minimum-deployment-target 26.0 --platform macosx \
+             && [ -f "$TMP/Assets.car" ]; then
+            cp "$TMP/Assets.car" "$APP/Contents/Resources/Assets.car"
+            NAME="$(plutil -extract CFBundleIconName raw -o - "$TMP/icon.plist" 2>/dev/null || true)"
+            [ -z "$NAME" ] && NAME="$ICON_BASE"
+            plutil -replace CFBundleIconName -string "$NAME" "$APP/Contents/Info.plist" 2>/dev/null \
+              || plutil -insert CFBundleIconName -string "$NAME" "$APP/Contents/Info.plist"
+            echo "Embedded Liquid Glass icon (Assets.car) as CFBundleIconName=$NAME."
+          else
+            echo "::warning::actool failed on $(xcodebuild -version 2>/dev/null | head -1) — placeholder icon."
+          fi
+          true
+
+      - name: Ad-hoc codesign
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in publish/*.dylib publish/OpenSO; do [ -e "$f" ] && codesign --force --timestamp=none -s - "$f" || true; done
+          if [ -d publish/OpenSO.app ]; then
+            codesign --force --deep --timestamp=none -s - publish/OpenSO.app && echo "signed OpenSO.app" \
+              || echo "::warning::sign failed: OpenSO.app"
+            codesign --verify --deep --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
+              || echo "::warning::codesign verify failed."
+          fi
+          true
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          ( cd publish && zip -r "../dist/OpenSO-client-osx-arm64-msaatest.zip" . )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSO-client-osx-arm64-msaatest
+          path: dist/*
