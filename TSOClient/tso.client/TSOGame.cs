@@ -152,34 +152,38 @@ namespace FSO.Client
                 // Keep the .app's Liquid Glass Dock icon — MonoGame sets its own window icon on creation.
                 Utils.MacRetina.RestoreBundleDockIcon();
 
-                var win = Utils.MacRetina.WindowSize(Window.Handle);
-                var before = Utils.MacRetina.DrawableSize(Window.Handle);
                 float backing = Utils.MacRetina.MainDisplayBackingScale();
-                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
-                var after = Utils.MacRetina.DrawableSize(Window.Handle);
-                var pp0 = GraphicsDevice.PresentationParameters;
-                Utils.MacRetina.Log(dir, $"[dpi] backing={backing:0.##} surf={surf:0.##} window={win.w}x{win.h} " +
-                    $"drawableBefore={before.w}x{before.h} drawableAfter={after.w}x{after.h} " +
-                    $"backbuffer={pp0.BackBufferWidth}x{pp0.BackBufferHeight}");
+                var win = Utils.MacRetina.WindowSize(Window.Handle);
 
-                // Only switch to native if the GL surface ACTUALLY became hi-res (drawable grew vs the
-                // window). Guarding on the real drawable — not the display's backing scale — means that when
-                // the surface stays point-resolution we leave the window/backbuffer untouched instead of
-                // enlarging the backbuffer past the drawable, which previously maximized the window.
-                if (win.w <= 0 || after.w < win.w * 1.5)
+                // Suppress Window_ClientSizeChanged before EnableBestResolutionSurface nudges the window:
+                // its async resize events would otherwise revert the backbuffer to point resolution through
+                // the GraphicsDeviceManager. We drive the backbuffer manually below.
+                if (backing >= 1.1f && win.w > 0) newChange = true;
+
+                float surf = Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
+                var draw = Utils.MacRetina.DrawableSize(Window.Handle);
+                var pp = GraphicsDevice.PresentationParameters;
+                Utils.MacRetina.Log(dir, $"[dpi] v={GlobalSettings.Default.ClientVersion} backing={backing:0.##} surf={surf:0.##} " +
+                    $"window={win.w}x{win.h} sdlDrawable={draw.w}x{draw.h} backbuffer={pp.BackBufferWidth}x{pp.BackBufferHeight}");
+
+                if (backing < 1.1f || win.w <= 0)
                 {
-                    Utils.MacRetina.Log(dir, "[dpi] native surface not granted — leaving MonoGame default (window unchanged)");
+                    Utils.MacRetina.Log(dir, "[dpi] not a Retina display — leaving MonoGame default");
                     return;
                 }
 
-                int dpi = Math.Clamp((int)Math.Round((double)after.w / win.w), 1, 4);
+                // setWantsBestResolutionOpenGLSurface made the NSView backing native (backing×), but SDL still
+                // reports the point-size drawable, so MonoGame renders a point-size viewport into the corner
+                // of the native backing. Drive the backbuffer + viewport to native pixels DIRECTLY — not via
+                // GraphicsDevice.Reset / the GraphicsDeviceManager, which couple the window size to the
+                // backbuffer and maximize the window. Trust the CoreGraphics backing scale; SDL lies here.
+                int dpi = Math.Clamp((int)Math.Round(backing), 1, 4);
+                int tw = win.w * dpi, th = win.h * dpi;
                 FSOEnvironment.DPIScaleFactor = dpi;
-
-                var pp = GraphicsDevice.PresentationParameters.Clone();
-                pp.BackBufferWidth = after.w;
-                pp.BackBufferHeight = after.h;
-                GraphicsDevice.Reset(pp);
-                Utils.MacRetina.Log(dir, $"[dpi] applied native DPIScaleFactor={dpi} backbuffer->{after.w}x{after.h}");
+                pp.BackBufferWidth = tw;
+                pp.BackBufferHeight = th;
+                GraphicsDevice.Viewport = new Viewport(0, 0, tw, th);
+                Utils.MacRetina.Log(dir, $"[dpi] applied native dpi={dpi} backbuffer={tw}x{th}");
             }
             catch (Exception e) { Utils.MacRetina.Log(dir, "[dpi] error: " + e.Message); }
         }
