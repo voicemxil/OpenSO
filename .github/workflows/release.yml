@@ -268,13 +268,17 @@ jobs:
         run: |
           if [ "${{ github.ref_type }}" = "tag" ]; then VER="${GITHUB_REF_NAME}"; else VER="${{ github.event.inputs.version }}"; fi
           echo "version=$VER" >> "$GITHUB_OUTPUT"
-          # Previous release in the same channel: <branch>-<N-1> (dev/alpha/beta). Skip if it doesn't exist
-          # (first release in the channel -> baseline, full zip only, no delta).
-          BRANCH="${VER%-*}"; NUM="${VER##*-}"; PREV="$BRANCH-$((NUM-1))"
-          if gh release view "$PREV" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
-            echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          # Previous STABLE semver release, found by version-sort (the immediately-lower vX.Y.Z). Matches the
+          # reconciler's chain order. Empty => baseline / first release => full zip only, no delta.
+          # (The old "<branch>-<N-1>" math broke on dotted semver: $((NUM-1)) on "v0.1.3" yields no prev,
+          # so the delta step was skipped for every semver release.)
+          PREV=$(gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName -q '.[].tagName' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V \
+            | awk -v cur="$VER" '$0==cur{print prev; exit} {prev=$0}')
+          if [ -n "$PREV" ] && gh release view "$PREV" -R "$GITHUB_REPOSITORY" --json tagName >/dev/null 2>&1; then
+            echo "prev=$PREV" >> "$GITHUB_OUTPUT"; echo "Delta base: $PREV -> $VER"
           else
-            echo "prev=" >> "$GITHUB_OUTPUT"; echo "No previous release $PREV — baseline, skipping delta."
+            echo "prev=" >> "$GITHUB_OUTPUT"; echo "No previous semver release before $VER — baseline, skipping delta."
           fi
       - name: Generate + attach delta
         if: steps.ver.outputs.prev != ''

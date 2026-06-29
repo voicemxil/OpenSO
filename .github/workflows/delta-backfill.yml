@@ -1,0 +1,46 @@
+name: Backfill client delta
+
+# Regenerate + attach the incremental (delta) client zip for an already-published release, without
+# rebuilding it. Use to fill in deltas that were skipped (e.g. by the pre-semver "prev" bug). After it runs,
+# restart the UserApi so UpdateReconciler picks up the new incremental asset (sets fso_updates.incremental_zip).
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release to (re)generate the delta for, e.g. v0.1.3"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  delta:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.315"
+
+      - name: Resolve previous semver release
+        id: ver
+        run: |
+          VER="${{ github.event.inputs.version }}"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          PREV=$(gh release list -R "$GITHUB_REPOSITORY" --limit 200 --json tagName -q '.[].tagName' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V \
+            | awk -v cur="$VER" '$0==cur{print prev; exit} {prev=$0}')
+          echo "prev=$PREV" >> "$GITHUB_OUTPUT"
+          if [ -n "$PREV" ]; then echo "Delta base: $PREV -> $VER"; else echo "No predecessor for $VER — nothing to backfill."; fi
+
+      - name: Generate + attach delta
+        if: steps.ver.outputs.prev != ''
+        run: |
+          gh release download "${{ steps.ver.outputs.prev }}"    -R "$GITHUB_REPOSITORY" -p OpenSO-client-win-x64.zip -O prev.zip
+          gh release download "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" -p OpenSO-client-win-x64.zip -O curr.zip
+          dotnet run --project TSOClient/FSO.DeltaGen -c Release -- prev.zip curr.zip "${{ steps.ver.outputs.version }}" out
+          gh release upload "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" \
+            out/OpenSO-client-win-x64.incremental.zip out/OpenSO-client-win-x64.manifest.json --clobber
