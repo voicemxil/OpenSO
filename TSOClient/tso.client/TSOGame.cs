@@ -108,8 +108,31 @@ namespace FSO.Client
         /// related content.  Calling base.Initialize will enumerate through any components
         /// and initialize them as well.
         /// </summary>
+        /// <summary>
+        /// The macOS .app sets the process working directory to the bundle's Contents/MacOS, but the game
+        /// loads many assets through paths relative to the working dir (e.g. "Content/UI/hints/...", EOD
+        /// textures, splash screens). Point the cwd at the install dir — the folder holding the real Content
+        /// next to the .app — so those relative loads resolve. FSO.Unix sets an absolute ContentDir; on
+        /// Windows/Linux ContentDir is relative and the cwd is already the install dir, so this is a no-op.
+        /// Called both before and after base.Initialize() because MonoGame can reset the cwd during init.
+        /// </summary>
+        private static void EnsureWorkingDir()
+        {
+            if (!System.IO.Path.IsPathRooted(FSOEnvironment.ContentDir)) return;
+            try
+            {
+                var installDir = System.IO.Path.GetDirectoryName(
+                    FSOEnvironment.ContentDir.TrimEnd(System.IO.Path.DirectorySeparatorChar, '/'));
+                if (installDir != null && System.IO.Directory.Exists(installDir))
+                    System.IO.Directory.SetCurrentDirectory(installDir);
+            }
+            catch { /* best effort — absolute ContentDir still covers the core content scan */ }
+        }
+
         protected override void Initialize()
         {
+            EnsureWorkingDir();
+
             var kernel = new StandardKernel(
                 new RegulatorsModule(),
                 new NetworkModule(),
@@ -205,6 +228,7 @@ namespace FSO.Client
             FSO.SimAntics.VM.TestBinding = "Value";
             //VMContext.InitVMConfig();
             base.Initialize();
+            EnsureWorkingDir(); // base.Initialize() (MonoGame/SDL) can reset the cwd to the bundle — restore it
 
             GameFacade.GameThread = Thread.CurrentThread;
 
