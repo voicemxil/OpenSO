@@ -848,13 +848,19 @@ namespace FSO.Client.UI.Framework
 
         private void DPISwitch(ref Texture2D texture, ref Vector2 scale, ref Rectangle? rect)
         {
+            // Guard nulls: callers (e.g. UIListBox drawing a selected row with no selection texture) can pass
+            // a null texture, and the DPI source-rect path below needs a non-null rect. Either would throw.
+            if (texture == null) return;
             if (texture.Tag is Texture2D)
             {
                 var tex2 = (Texture2D)texture.Tag;
                 scale *= new Vector2(texture.Width / (float)tex2.Width, texture.Height / (float)tex2.Height);
 
-                var rscale = 2;
-                rect = new Rectangle(rect.Value.X * rscale, rect.Value.Y * rscale, rect.Value.Width * rscale, rect.Value.Height * rscale);
+                if (rect.HasValue)
+                {
+                    var rscale = 2;
+                    rect = new Rectangle(rect.Value.X * rscale, rect.Value.Y * rscale, rect.Value.Width * rscale, rect.Value.Height * rscale);
+                }
 
                 texture = tex2;
             }
@@ -924,6 +930,7 @@ namespace FSO.Client.UI.Framework
         /// <param name="blend"></param>
         public void DrawLocalTexture(SpriteBatch batch, Texture2D texture, Nullable<Rectangle> from, Vector2 to, Vector2 scale, Color blend)
         {
+            if (texture == null) return; // nothing to draw (e.g. a list box with no selection texture)
             //if (!m_IsInvalidated)
             //{
             DPISwitch(ref texture, ref scale, ref from);
