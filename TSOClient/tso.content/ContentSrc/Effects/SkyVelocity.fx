@@ -38,11 +38,15 @@ VSOut SkyVS(VSIn input)
     return o;
 }
 
+// Current-frame TAA jitter (NDC). MVP is jittered (TAA sampling); subtract the jitter from the current NDC
+// so velocity is jitter-free. PrevMVP is supplied UN-jittered by AbstractSkyDome.
+float2 JitterNDC;
+
 float2 ComputeVelocity(float4 curr, float4 prev)
 {
     float cw = max(curr.w, 1e-4);
     float pw = max(prev.w, 1e-4);
-    float2 c = curr.xy / cw;
+    float2 c = curr.xy / cw - JitterNDC;
     float2 p = prev.xy / pw;
     return clamp((c - p) * float2(0.5, -0.5), -0.05, 0.05);
 }

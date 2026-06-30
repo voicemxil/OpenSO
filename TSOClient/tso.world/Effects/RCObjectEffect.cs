@@ -17,6 +17,7 @@ namespace FSO.LotView.Effects
         // null-safe so the existing RCObject.xnb still loads while the shader extension is staged.
         private EffectParameter pPreviousWorld;
         private EffectParameter pPreviousViewProjection;
+        private EffectParameter pJitterNDC;
 
         private EffectParameter pObjectID;
         private EffectParameter pUVScale;
@@ -49,6 +50,11 @@ namespace FSO.LotView.Effects
         public Matrix PreviousViewProjection
         {
             set { if (pPreviousViewProjection != null) pPreviousViewProjection.SetValue(value); }
+        }
+        // Current-frame TAA jitter (NDC) so the velocity pass can subtract it (jitter-free motion vectors).
+        public Vector2 JitterNDC
+        {
+            set { if (pJitterNDC != null) pJitterNDC.SetValue(value); }
         }
 
         public float ObjectID
@@ -129,6 +135,7 @@ namespace FSO.LotView.Effects
             pViewProjection = Parameters["ViewProjection"];
             pPreviousWorld = Parameters["PreviousWorld"];                     //null if shader not yet extended
             pPreviousViewProjection = Parameters["PreviousViewProjection"];  //null if shader not yet extended
+            pJitterNDC = Parameters["JitterNDC"];                            //null if shader not yet extended
 
             pObjectID = Parameters["ObjectID"];
             pUVScale = Parameters["UVScale"];

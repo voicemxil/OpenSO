@@ -253,6 +253,13 @@ namespace FSO.LotView.Components
             if (velRT != null && skyVel != null)
             {
                 var domeMVP = Matrix.CreateScale(5f * scale) * view * projection;
+                // Un-jittered MVP for velocity: undo the projection's TAA jitter (Projection getter does
+                // M31 -= jitter.X / M32 -= jitter.Y). MVP stays jittered for rasterization (TAA sampling);
+                // the shader subtracts JitterNDC from the current NDC and uses this UN-jittered MVP as prev,
+                // so velocity = unjittered_curr - unjittered_prev (jitter-free).
+                var jitter = PPXDepthEngine.TAAJitterNDC;
+                var projUnjit = projection; projUnjit.M31 += jitter.X; projUnjit.M32 += jitter.Y;
+                var domeMVPUnjit = Matrix.CreateScale(5f * scale) * view * projUnjit;
                 var savedRTs = gd.GetRenderTargets();
                 PPXDepthEngine.BindVelocityMRT(gd, velRT);
                 // Independent blend: sky color (MRT0) keeps its alpha atmospheric blend; velocity (MRT1)
@@ -260,7 +267,8 @@ namespace FSO.LotView.Components
                 // workaround brightened the sky — this keeps both correct (fallback = AlphaBlend on old GPUs).
                 gd.BlendState = PPXDepthEngine.VelocityColorBlend(gd, BlendState.AlphaBlend);
                 skyVel.Parameters["MVP"]?.SetValue(domeMVP);
-                skyVel.Parameters["PrevMVP"]?.SetValue(_prevSkyMVPValid ? _prevSkyMVP : domeMVP);
+                skyVel.Parameters["PrevMVP"]?.SetValue(_prevSkyMVPValid ? _prevSkyMVP : domeMVPUnjit);
+                skyVel.Parameters["JitterNDC"]?.SetValue(jitter);
                 skyVel.Parameters["Alpha"]?.SetValue(1 - (float)Math.Sqrt(wint) * 0.75f);
                 skyVel.Parameters["Exposure"]?.SetValue(SkyExposure);
                 skyVel.Parameters["SkyTex"]?.SetValue(GradTex);
@@ -273,7 +281,7 @@ namespace FSO.LotView.Components
                     gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, PrimCount);
                 }
                 gd.SetRenderTargets(savedRTs); // unbind MRT — sun/moon below use BasicEffect (no velocity)
-                _prevSkyMVP = domeMVP;
+                _prevSkyMVP = domeMVPUnjit; // cache UN-jittered for next frame's prev
                 _prevSkyMVPValid = true;
             }
             else

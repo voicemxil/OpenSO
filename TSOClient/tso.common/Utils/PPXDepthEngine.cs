@@ -24,6 +24,9 @@ namespace FSO.Common.Utils
         private static SpriteBatch SB;
         public static float SSAA = 1f; //render scale: >1 supersample (downsample resolve), <1 upscale, 1 native
         public static int MSAA = 0;
+        // Current frame's TAA sub-pixel jitter (NDC), published by World.PreDraw. Lets velocity-pass draws
+        // that lack a WorldState (the sky dome) un-jitter their motion vectors. Zero when TAA is off.
+        public static Vector2 TAAJitterNDC = Vector2.Zero;
 
         // Bloom mip chain (half, quarter, ... of viewport res). HalfVector4 so blurred highlights don't
         // clip while accumulating. Allocated in InitScreenTargets, used by BloomPass.

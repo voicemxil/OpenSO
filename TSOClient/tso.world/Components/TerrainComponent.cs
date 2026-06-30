@@ -525,6 +525,7 @@ namespace FSO.LotView.Components
                 // lacks independent blend (correct color; slightly attenuated velocity at fade edges).
                 device.BlendState = FSO.Common.Utils.PPXDepthEngine.VelocityColorBlend(device, savedBlend);
                 Effect.ViewProjection = view * world.Projection;
+                Effect.JitterNDC = world.TAAJitter; // un-jitter the velocity pass
                 // Subworld neighbour-lot rendering sets Cameras.ModelTranslation to offset the camera
                 // by the subworld's lot position. state.View (used above) already includes that. But
                 // state.PreviousViewProjection was captured at frame start without it, so the delta of

@@ -328,6 +328,7 @@ namespace FSO.LotView.RC
                 savedRTs = gd.GetRenderTargets();
                 FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velocityRT);
                 effect.ViewProjection = state.ViewProjection;
+                effect.JitterNDC = state.TAAJitter; // un-jitter the velocity pass
                 // For subworld neighbour-lot rendering, Cameras.ModelTranslation offsets the camera;
                 // state.ViewProjection already includes it but state.PreviousViewProjection doesn't.
                 // Apply the same translation so velocity for static subworld walls is ~zero rather than

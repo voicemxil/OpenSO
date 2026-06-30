@@ -290,11 +290,17 @@ VertexOutV vsRCV(VertexIn v)
 // (in front of camera), so guard with a positive floor — earlier sign(w) variant left w==0 unprotected
 // because sign(0)==0, which produced NaN velocity and smeared the world. Clamp the final value at +/-0.05
 // UV/frame (5% screen) — enough range for fast camera moves without smearing the whole frame.
+// Current-frame TAA sub-pixel jitter (NDC), matching WorldState.Projection's M31/M32 offset. The current
+// clip pos is rasterized JITTERED (so TAA samples sub-pixels), but velocity must use the UN-jittered NDC:
+// NDC_jittered = NDC_unjittered + JitterNDC, so subtract it. PreviousViewProjection is already un-jittered.
+// Leaving the jitter in velocity made motion blur smear stationary pixels and fed jitter back into TAA.
+float2 JitterNDC;
+
 float2 ComputeVelocity(float4 curr, float4 prev)
 {
 	float currW = max(curr.w, 1e-4);
 	float prevW = max(prev.w, 1e-4);
-	float2 currNDC = curr.xy / currW;
+	float2 currNDC = curr.xy / currW - JitterNDC;
 	float2 prevNDC = prev.xy / prevW;
 	float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
 	return clamp(v, -0.05, 0.05);

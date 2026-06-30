@@ -171,6 +171,7 @@ namespace FSO.LotView
             var effect = WorldContent.RCObject;
             gd.BlendState = BlendState.NonPremultiplied;
             effect.ViewProjection = state.ViewProjection;
+            effect.JitterNDC = state.TAAJitter; // un-jitter the velocity pass (0 when TAA off)
             // Subworld ModelTranslation fix — see TerrainComponent.Draw / WallComponentRC.Draw.
             var prevVP = state.PreviousViewProjection;
             if (state.Cameras.ModelTranslation.HasValue)
