@@ -709,17 +709,17 @@ namespace FSO.LotView
                 // the standard pixel->NDC conversion, NOT a doubling of the jitter amount).
                 var ndcJitter = new Vector2(2f * jpxX / w, 2f * jpxY / h);
                 State.TAAJitter = ndcJitter;
-                // The velocity buffer is built from the jittered projection, so it carries the per-frame
-                // jitter delta. Hand that delta (in the velocity buffer's UV units — same *(0.5,-0.5)
-                // mapping ComputeVelocity uses) to the resolve so it can cancel it during reprojection.
-                var prev = _PrevTAAJitterNDC;
-                FSO.LotView.Utils.TAAResolve.JitterDeltaUV =
-                    new Vector2((ndcJitter.X - prev.X) * 0.5f, (ndcJitter.Y - prev.Y) * -0.5f);
+                // Publish for the sky dome (no WorldState there). The velocity pass now subtracts this jitter
+                // itself (JitterNDC uniform), so the velocity buffer is jitter-free — TAA reprojection no
+                // longer needs the JitterDelta cancellation (leaving it would double-correct), so zero it.
+                FSO.Common.Utils.PPXDepthEngine.TAAJitterNDC = ndcJitter;
+                FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
                 _PrevTAAJitterNDC = ndcJitter;
             }
             else
             {
                 State.TAAJitter = Vector2.Zero;
+                FSO.Common.Utils.PPXDepthEngine.TAAJitterNDC = Vector2.Zero;
                 FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
                 _PrevTAAJitterNDC = Vector2.Zero;
             }
@@ -1304,16 +1304,18 @@ namespace FSO.LotView
 
             if (config.AdvancedLighting)
             {
-                State.AmbientLight?.Dispose();
-                State.AmbientLight = null;
-                Light?.Dispose();
-                Light = null;
+                // Idempotent: ChangedWorldConfig runs on EVERY graphics-settings change (even ones unrelated
+                // to lighting, e.g. render scale or bloom), not just when AdvancedLighting actually toggles.
+                // Only (re)create the lightmap on an actual off->on transition - unconditionally disposing it
+                // here made walls/objects lighting flicker off and rebuild on every settings tweak.
                 if (Light == null)
                 {
+                    State.AmbientLight?.Dispose();
+                    State.AmbientLight = null;
                     Light = new LMapBatch(gd, 16);
                     if (Blueprint != null)
                     {
-                        Light?.Init(Blueprint);
+                        Light.Init(Blueprint);
                         Blueprint.Changes.SetFlag(BlueprintGlobalChanges.ROOM_CHANGED);
                         Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
                     }
@@ -1321,12 +1323,15 @@ namespace FSO.LotView
                 }
             } else
             {
-                Light?.Dispose();
-                Light = null;
-                State.Light = null;
+                if (Light != null)
+                {
+                    Light.Dispose();
+                    Light = null;
+                    State.Light = null;
+                    if (Blueprint != null) Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
+                }
                 if (State.AmbientLight == null)
                     State.AmbientLight = new Texture2D(gd, 256, 256);
-                if (Blueprint != null) Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
             }
 
             if (Blueprint != null && !FSOEnvironment.Enable3D)

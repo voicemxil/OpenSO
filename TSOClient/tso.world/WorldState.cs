@@ -129,6 +129,11 @@ namespace FSO.LotView
         // Consumed by motion-vector / TAA paths for per-pixel screen-space velocity computation.
         public Matrix PreviousViewProjection;
         private bool _PrevVPValid;
+        // Previous frame's UN-jittered view-projection. PreviousViewProjection (used only for motion-vector
+        // velocity) must be jitter-free, otherwise last frame's TAA jitter shows up as motion in the velocity
+        // buffer. ViewProjection itself stays jittered for rasterization; the velocity shaders subtract the
+        // current jitter (JitterNDC) from the current NDC, so with an un-jittered previous VP the motion is clean.
+        private Matrix _PrevVPUnjit;
         // TAA sub-pixel jitter (NDC units). Set by World.PreDraw from a Halton(2,3) sequence; applied to
         // Projection.M31/M32 so the rendered frame is shifted by a fraction of a pixel each frame. TAA's
         // history blend then accumulates ~16 jittered samples per pixel → smooth temporal anti-aliasing.
@@ -170,13 +175,17 @@ namespace FSO.LotView
             var view = View;
             // Projection getter already applies TAA jitter when active — newVP inherits it via the multiply.
             var newVP = view * Projection;
+            var newVPUnjit = view * ProjectionUnjittered; // jitter-free, for the velocity pass's previous VP
             // Only capture the prior VP on the FIRST PrepareCulling call each frame (gated by
             // _PrevVPCapturedThisFrame, which World.PreDraw resets). Otherwise the multiple PrepareCulling
             // calls per frame snap PreviousViewProjection to this frame's VP and motion-vector velocity
             // collapses to zero.
             if (!_PrevVPCapturedThisFrame)
             {
-                PreviousViewProjection = _PrevVPValid ? ViewProjection : newVP;
+                // Previous frame's UN-jittered VP (not last frame's jittered ViewProjection), so the velocity
+                // buffer doesn't carry last frame's jitter as motion.
+                PreviousViewProjection = _PrevVPValid ? _PrevVPUnjit : newVPUnjit;
+                _PrevVPUnjit = newVPUnjit;
                 _PrevVPValid = true;
                 _PrevVPCapturedThisFrame = true;
             }
@@ -223,6 +232,12 @@ namespace FSO.LotView
                 return p;
             }
         }
+
+        // The raw, UN-jittered projection. Velocity-pass shaders rasterize with the jittered Projection (so
+        // TAA still gets sub-pixel samples) but must compute the motion vector from the UN-jittered current
+        // clip position — otherwise the per-frame TAA jitter leaks into the velocity buffer, which makes
+        // motion blur smear stationary pixels and feeds the jitter back into TAA's own reprojection.
+        public Matrix ProjectionUnjittered => Cameras.Projection;
 
         public bool ObjectIDMode;
         public WorldSpace WorldSpace;

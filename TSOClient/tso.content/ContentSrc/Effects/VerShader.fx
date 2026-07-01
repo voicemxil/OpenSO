@@ -36,8 +36,10 @@ struct VertexToShad
 float4x4 BaseMatrix;
 float4x4 MV;
 float4x4 LightMatrix;
-// Previous-frame BaseMatrix (mvp) for city-backdrop velocity output. Set by Terrain.DrawSurrounding;
+// Previous-frame BaseMatrix (mvp) for city-backdrop velocity output. Set by Terrain.Draw / DrawSurrounding;
 // the backdrop is static in world so velocity is purely camera-induced (BaseMatrix vs PrevBaseMatrix).
+// UN-jittered (unlike BaseMatrix) -- PixShader's CityComputeVel subtracts JitterNDC from currClip instead,
+// so the velocity buffer stays jitter-free rather than carrying last frame's TAA jitter as motion.
 float4x4 PrevBaseMatrix;
 
 float4 GetPositionFromLight(float4 position)

@@ -16,6 +16,7 @@ namespace FSO.LotView.Effects
         private EffectParameter pWorld;
         private EffectParameter pViewProjection;
         private EffectParameter pPreviousViewProjection;
+        private EffectParameter pJitterNDC;
         private EffectParameter pPreviousWorld;
 
         private EffectParameter pScreenSize;
@@ -102,6 +103,11 @@ namespace FSO.LotView.Effects
             {
                 pPreviousViewProjection?.SetValue(value);
             }
+        }
+        // Current-frame TAA jitter (NDC) so the velocity pass can subtract it (jitter-free motion vectors).
+        public Vector2 JitterNDC
+        {
+            set { pJitterNDC?.SetValue(value); }
         }
         public Matrix PreviousWorld
         {
@@ -437,6 +443,7 @@ namespace FSO.LotView.Effects
             pWorld = Parameters["World"];
             pViewProjection = Parameters["ViewProjection"];
             pPreviousViewProjection = Parameters["PreviousViewProjection"];
+            pJitterNDC = Parameters["JitterNDC"];
             pPreviousWorld = Parameters["PreviousWorld"];
 
             pScreenSize = Parameters["ScreenSize"];

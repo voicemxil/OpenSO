@@ -833,11 +833,15 @@ GrassPSVTXv GrassVSv(GrassVTX input)
     return output;
 }
 
+// Current-frame TAA sub-pixel jitter (NDC). The current clip pos is rasterized jittered (TAA sampling) but
+// velocity must use the UN-jittered NDC: NDC_jittered = NDC_unjittered + JitterNDC, so subtract it.
+float2 JitterNDC;
+
 float2 ComputeGrassVelocity(float4 curr, float4 prev)
 {
     float currW = max(curr.w, 1e-4);
     float prevW = max(prev.w, 1e-4);
-    float2 currNDC = curr.xy / currW;
+    float2 currNDC = curr.xy / currW - JitterNDC;
     float2 prevNDC = prev.xy / prevW;
     float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
     return clamp(v, -0.05, 0.05);
