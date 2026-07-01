@@ -13,10 +13,11 @@
 # the Linux/macOS client builds as an artifact.
 #
 # Excludes:
-#   *iOS*.fx        — iOS-only variants. They're not used by the desktop clients and don't compile on the
-#                     current toolchain (error X5426, "too complex for ps_2_0"); their stale committed .xnb
-#                     are left as-is. TODO: confirm desktop never loads them and drop them from the desktop
-#                     content entirely.
+#   *iOS*.fx        — iOS-only variants (GLVer==2 path, iOS/Android only; desktop's WorldContent.EffectSuffix
+#                     is "" so it always loads the non-iOS effects — confirmed, they're never loaded on
+#                     desktop). Their .fx SOURCE stays for the iOS target (TSOClientContentiOS.mgcb) but they
+#                     don't compile for the desktop profile (X5426), so this glob-based build must skip them.
+#                     Their dead desktop .xnb + desktop .mgcb entries have been removed.
 #   LightingCommon.fx — an #include, not a standalone effect (no technique); never in the .mgcb build lists.
 set -euo pipefail
 
