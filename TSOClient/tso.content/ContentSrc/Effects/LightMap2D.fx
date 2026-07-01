@@ -24,6 +24,16 @@ float LightHeight;
 float2 ShadowPowers;
 float2 SSAASize;
 
+// 0 or 1. When 1, the SSAA outdoor pass ALSO folds in the object/floor blob shadows from floorShadowMap
+// (ObjShadowTarg). The SSAA pass reads only shadowSampler.rg (OutsideShadowTarg) - at the "+Objs" tier the
+// object shadows live there (Draw3DObjShadows writes them into OutsideShadowTarg.g), but at "+Walls" the
+// flat blob object shadows are drawn into the SEPARATE ObjShadowTarg (floorShadowMap), which this pass
+// otherwise never samples - so the blob under objects/sims vanished at +Walls. Gated (rather than always
+// max'd in) so +Objs is untouched: at +Objs ObjShadowTarg isn't freshly written for the outdoor sun pass,
+// so reading it there could pull in stale shadows. Set to 1 only for the +Walls (Shadow3D && !UltraLighting)
+// tier by the C# caller.
+float FloorShadowExtra = 0;
+
 bool IsOutdoors;
 
 texture roomMap : Diffuse;
@@ -194,6 +204,9 @@ float4 PixelShaderFunctionOutdoorsSSAA(VertexShaderOutput input) : COLOR0{
 	float light = 1;
 
 	float2 shadow = SSAASample(uv);
+	// +Walls tier: fold in the flat blob object shadows from floorShadowMap (ObjShadowTarg), which
+	// SSAASample (shadowSampler only) doesn't cover. No-op when FloorShadowExtra==0 (+Objs / FSO).
+	shadow.y = max(shadow.y, FloorShadowExtra * tex2D(floorShadowSampler, uv).g);
 	shadow *= ShadowPowers;
 
 	float floorLight = light - light*max(shadow.x, shadow.y);
@@ -348,8 +361,11 @@ technique Draw2D
 		AlphaBlendEnable = TRUE; DestBlend = ONE; SrcBlend = ONE; BlendOp = Add; ZEnable = FALSE;
 
 #if SM4
+		// level_9_3 (not _9_1): the extra floorShadowMap tap for the +Walls blob-shadow fold-in pushes this
+		// just past ps_2_0's 64-instruction limit. _9_3 raises the budget; MainPassBlur below already uses
+		// it, and the device requires HiDef for the advanced-lighting path anyway.
 		VertexShader = compile vs_4_0_level_9_1 VertexShaderFunction();
-		PixelShader = compile ps_4_0_level_9_1 PixelShaderFunctionOutdoorsSSAA();
+		PixelShader = compile ps_4_0_level_9_3 PixelShaderFunctionOutdoorsSSAA();
 #else
 		VertexShader = compile vs_3_0 VertexShaderFunction();
 		PixelShader = compile ps_3_0 PixelShaderFunctionOutdoorsSSAA();

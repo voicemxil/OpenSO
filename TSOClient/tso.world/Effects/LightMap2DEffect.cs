@@ -33,6 +33,7 @@ namespace FSO.LotView.Effects
 
         private EffectParameter pShadowPowers;
         private EffectParameter pSSAASize;
+        private EffectParameter pFloorShadowExtra;
 
         private EffectParameter pIsOutdoors;
 
@@ -199,6 +200,18 @@ namespace FSO.LotView.Effects
             }
         }
 
+        /// <summary>
+        /// 0 or 1. When 1, the SSAA outdoor pass folds in blob object shadows from floorShadowMap - used at
+        /// the +Walls tier so flat object/sim shadows survive the fancy wall-shadow path. See LightMap2D.fx.
+        /// </summary>
+        public float FloorShadowExtra
+        {
+            set
+            {
+                pFloorShadowExtra?.SetValue(value);
+            }
+        }
+
         public bool IsOutdoors
         {
             set
@@ -277,6 +290,7 @@ namespace FSO.LotView.Effects
 
             pShadowPowers = Parameters["ShadowPowers"];
             pSSAASize = Parameters["SSAASize"];
+            pFloorShadowExtra = Parameters["FloorShadowExtra"];
 
             pIsOutdoors = Parameters["IsOutdoors"];
 

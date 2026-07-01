@@ -380,12 +380,14 @@ namespace FSO.LotView.Components
             var config = WorldConfig.Current;
             if (config.AdvancedLighting && config.Complex)
             {
-                // Idempotent - see World.ChangedWorldConfig: only (re)create on an actual off->on transition,
-                // otherwise every unrelated settings change re-disposes and rebuilds the lightmap.
-                if (Light == null)
+                // Recreate on an off->on transition OR an actual lighting-tier change - see
+                // World.ChangedWorldConfig for the full rationale (full rebuild is upstream's proven way to
+                // make a tier change take effect cleanly; incremental invalidation alone proved fragile).
+                if (Light == null || config.LightingMode != _lastLightingMode)
                 {
                     State.AmbientLight?.Dispose();
                     State.AmbientLight = null;
+                    Light?.Dispose();
                     Light = new LMapBatch(gd, 6);
                     if (Blueprint != null)
                     {
@@ -405,17 +407,7 @@ namespace FSO.LotView.Components
                     State.Light = null;
                 }
             }
-
-            // Shadow3D ("+Walls") / UltraLighting ("+Objs") toggles - see World.ChangedWorldConfig for why
-            // this needs explicit tracking (no null-check side-effect to detect either from in 3D mode).
-            if (Light != null && Blueprint != null &&
-                (config.Shadow3D != _lastShadow3D || config.UltraLighting != _lastUltraLighting))
-            {
-                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.ROOM_CHANGED);
-                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
-            }
-            _lastShadow3D = config.Shadow3D;
-            _lastUltraLighting = config.UltraLighting;
+            _lastLightingMode = config.LightingMode;
 
             if (Blueprint != null && !FSOEnvironment.Enable3D)
             {

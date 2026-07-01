@@ -69,16 +69,17 @@ namespace FSO.LotView
 
         protected LMapBatch Light;
         protected Blueprint Blueprint;
-        // Tracks the last-applied UltraLighting ("+Objs") / Shadow3D ("+Walls") state so ChangedWorldConfig
-        // can detect a toggle and force a redraw. AdvancedLighting has a side-effect to compare against
-        // (Light null<->non-null); in 3D mode, Shadow3D and UltraLighting do NOT - the Blueprint.WCRC
-        // null-check equivalent for Shadow3D only applies in the 2D-only block below (`!Enable3D`), and both
-        // settings only change what an ALREADY-drawn room's lightmap looks like (DrawWallShadows'/
-        // DrawObjShadows' internal branches) rather than creating/destroying anything. Without this explicit
-        // tracking, toggling either does nothing until some unrelated room edit invalidates that room's
-        // cached lightmap - which is exactly what looked like "the setting has no effect" for both tiers.
-        protected bool _lastUltraLighting;
-        protected bool _lastShadow3D;
+        // Tracks the last-applied LightingMode so ChangedWorldConfig can detect a tier change (e.g. +Walls
+        // -> +Objs) and force a lightmap redraw. Upstream (SegerEnd/FreeSO dotnet9) gets this "for free" by
+        // unconditionally disposing+recreating Light on every settings-apply while AdvancedLighting is on -
+        // that implicit full-rebuild is what makes any lighting-relevant setting "just work" there. Our fork
+        // made that idempotent (only recreate Light on an actual off->on transition, to stop it flickering
+        // on every UNRELATED settings change - e.g. render scale, bloom), which is worth keeping, but it
+        // silently dropped upstream's "any change picks up new settings" behavior for settings that only
+        // affect what an ALREADY-drawn room's lightmap looks like (UltraLighting's DrawObjShadows branch,
+        // currently the only such setting - Shadow3D was tried and reverted, see LMapBatch.DrawWallShadows).
+        // Tracking the single int instead of one bool per derived tier covers any future tier the same way.
+        protected int _lastLightingMode = -1;
 
         public event Action OnFullZoomOut;
 
@@ -1300,14 +1301,20 @@ namespace FSO.LotView
 
             if (config.AdvancedLighting)
             {
-                // Idempotent: ChangedWorldConfig runs on EVERY graphics-settings change (even ones unrelated
-                // to lighting, e.g. render scale or bloom), not just when AdvancedLighting actually toggles.
-                // Only (re)create the lightmap on an actual off->on transition - unconditionally disposing it
-                // here made walls/objects lighting flicker off and rebuild on every settings tweak.
-                if (Light == null)
+                // Recreate the lightmap on an off->on transition (Light == null) OR an actual lighting-tier
+                // change (LightingMode: FSO/+Walls/+Objs). This mirrors upstream's blunt "recreate Light on
+                // every ChangedWorldConfig" - the behaviour that makes tier changes reliably take effect
+                // there - but scoped to only the cases that matter, so unrelated settings tweaks (render
+                // scale, bloom, ...) don't flicker the lightmap. Merely keeping the old Light and flagging
+                // ROOM_CHANGED proved fragile: it relied on reproducing every side effect of a full rebuild
+                // through the dirty-room pipeline and kept missing cases (a lower tier's shadow
+                // contributions surviving into a higher tier and vice-versa). A one-frame rebuild on a
+                // deliberate slider move is imperceptible - upstream did it on every settings change.
+                if (Light == null || config.LightingMode != _lastLightingMode)
                 {
                     State.AmbientLight?.Dispose();
                     State.AmbientLight = null;
+                    Light?.Dispose();
                     Light = new LMapBatch(gd, 16);
                     if (Blueprint != null)
                     {
@@ -1329,23 +1336,7 @@ namespace FSO.LotView
                 if (State.AmbientLight == null)
                     State.AmbientLight = new Texture2D(gd, 256, 256);
             }
-
-            // Shadow3D ("+Walls") / UltraLighting ("+Objs") toggles: neither has an existing side-effect
-            // (null-check) to detect a change from in 3D mode, and both only affect what an ALREADY-rendered
-            // room's lightmap looks like (LMapBatch.DrawWallShadows'/DrawObjShadows' internal branches)
-            // rather than creating/destroying anything - so without forcing a redraw here, every room's
-            // lightmap stays cached at whatever value was active when it was last drawn, and toggling the
-            // slider between FSO/+Walls/+Objs shows no visible change until some unrelated edit happens to
-            // invalidate that room. (The Blueprint.WCRC-based Shadow3D check further below is a SEPARATE,
-            // 2D-only concern - creating/disposing the WCRC component itself - not this lightmap redraw.)
-            if (Light != null && Blueprint != null &&
-                (config.Shadow3D != _lastShadow3D || config.UltraLighting != _lastUltraLighting))
-            {
-                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.ROOM_CHANGED);
-                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
-            }
-            _lastShadow3D = config.Shadow3D;
-            _lastUltraLighting = config.UltraLighting;
+            _lastLightingMode = config.LightingMode;
 
             if (Blueprint != null && !FSOEnvironment.Enable3D)
             {
