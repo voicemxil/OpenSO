@@ -1304,16 +1304,18 @@ namespace FSO.LotView
 
             if (config.AdvancedLighting)
             {
-                State.AmbientLight?.Dispose();
-                State.AmbientLight = null;
-                Light?.Dispose();
-                Light = null;
+                // Idempotent: ChangedWorldConfig runs on EVERY graphics-settings change (even ones unrelated
+                // to lighting, e.g. render scale or bloom), not just when AdvancedLighting actually toggles.
+                // Only (re)create the lightmap on an actual off->on transition - unconditionally disposing it
+                // here made walls/objects lighting flicker off and rebuild on every settings tweak.
                 if (Light == null)
                 {
+                    State.AmbientLight?.Dispose();
+                    State.AmbientLight = null;
                     Light = new LMapBatch(gd, 16);
                     if (Blueprint != null)
                     {
-                        Light?.Init(Blueprint);
+                        Light.Init(Blueprint);
                         Blueprint.Changes.SetFlag(BlueprintGlobalChanges.ROOM_CHANGED);
                         Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
                     }
@@ -1321,12 +1323,15 @@ namespace FSO.LotView
                 }
             } else
             {
-                Light?.Dispose();
-                Light = null;
-                State.Light = null;
+                if (Light != null)
+                {
+                    Light.Dispose();
+                    Light = null;
+                    State.Light = null;
+                    if (Blueprint != null) Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
+                }
                 if (State.AmbientLight == null)
                     State.AmbientLight = new Texture2D(gd, 256, 256);
-                if (Blueprint != null) Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
             }
 
             if (Blueprint != null && !FSOEnvironment.Enable3D)

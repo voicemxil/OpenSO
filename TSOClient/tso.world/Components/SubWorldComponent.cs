@@ -380,16 +380,16 @@ namespace FSO.LotView.Components
             var config = WorldConfig.Current;
             if (config.AdvancedLighting && config.Complex)
             {
-                State.AmbientLight?.Dispose();
-                State.AmbientLight = null;
-                Light?.Dispose();
-                Light = null;
+                // Idempotent - see World.ChangedWorldConfig: only (re)create on an actual off->on transition,
+                // otherwise every unrelated settings change re-disposes and rebuilds the lightmap.
                 if (Light == null)
                 {
+                    State.AmbientLight?.Dispose();
+                    State.AmbientLight = null;
                     Light = new LMapBatch(gd, 6);
                     if (Blueprint != null)
                     {
-                        Light?.Init(Blueprint);
+                        Light.Init(Blueprint);
                         Blueprint.Changes.SetFlag(BlueprintGlobalChanges.ROOM_CHANGED);
                         Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
                     }
@@ -398,9 +398,12 @@ namespace FSO.LotView.Components
             }
             else
             {
-                Light?.Dispose();
-                Light = null;
-                State.Light = null;
+                if (Light != null)
+                {
+                    Light.Dispose();
+                    Light = null;
+                    State.Light = null;
+                }
             }
 
             if (Blueprint != null && !FSOEnvironment.Enable3D)
