@@ -149,18 +149,8 @@ namespace FSO.Client.Rendering.City
         // doesn't reproject one frame against the other context's matrix and flash a giant velocity).
         private Matrix m_PrevMainMov;
         private bool m_PrevMainValid;
-        // TAA sub-pixel jitter state for the city map (mirrors World's per-frame Halton jitter).
+        // TAA sub-pixel jitter state for the city map (mirrors World's per-frame R2 jitter).
         private int m_TAAFrameIndex;
-
-        // Halton(b) radical inverse - well-distributed sub-pixel sample sequence for TAA jitter (copy of
-        // World.HaltonValue; the city renderer has no World/State to borrow it from).
-        private static float HaltonValue(int i, int b)
-        {
-            float result = 0f, f = 1f / b;
-            int idx = i;
-            while (idx > 0) { result += f * (idx % b); idx /= b; f /= b; }
-            return result;
-        }
         private int[][] m_SurTileOffs = new int[][] 
         {
             new int[] {0, -1},
@@ -1527,20 +1517,21 @@ namespace FSO.Client.Rendering.City
             Matrix ProjectionMatrix = Camera.Projection;
             Matrix ProjectionUnjit = ProjectionMatrix; // snapshot before the jitter mutation below
 
-            // TAA sub-pixel jitter (Stage 2b): when TAA is active, offset the projection by a Halton(2,3)
-            // fraction of a pixel each frame (NDC translation via M31/M32 - the city camera is perspective).
-            // CityComputeVel (PixShader.fx) subtracts JitterNDC from currClip itself, and PrevBaseMatrix is
-            // supplied UN-jittered below, so the velocity buffer is jitter-free -> TAAResolve's JitterDelta
-            // reprojection cancellation would double-correct here, so it stays zeroed. Mirrors World.PreDraw.
+            // TAA sub-pixel jitter (Stage 2b): when TAA is active, offset the projection by an R2 low-
+            // discrepancy fraction of a pixel each frame (NDC translation via M31/M32 - the city camera is
+            // perspective). CityComputeVel (PixShader.fx) subtracts JitterNDC from currClip itself, and
+            // PrevBaseMatrix is supplied UN-jittered below, so the velocity buffer is jitter-free ->
+            // TAAResolve's JitterDelta reprojection cancellation would double-correct here, so it stays
+            // zeroed. Mirrors World.PreDraw.
             bool cityTAA = usePPX && FSO.Common.Utils.PPXDepthEngine.TAAFunc != null
                            && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
             Vector2 ndcJitter = Vector2.Zero;
             if (cityTAA)
             {
                 const float JITTER_PIXELS = 0.5f;
-                int ji = (m_TAAFrameIndex++ & 0xF) + 1; // 1..16
-                float hx = HaltonValue(ji, 2) - 0.5f;
-                float hy = HaltonValue(ji, 3) - 0.5f;
+                var r2 = FSO.Common.Utils.R2Jitter.Sample(m_TAAFrameIndex++);
+                float hx = r2.X;
+                float hy = r2.Y;
                 var jbb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
                 int jw = jbb?.Width ?? m_GraphicsDevice.Viewport.Width;
                 int jh = jbb?.Height ?? m_GraphicsDevice.Viewport.Height;

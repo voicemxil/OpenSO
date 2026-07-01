@@ -14,8 +14,18 @@
 //      the velocity buffer, which is computed from the jittered projection).
 //   3. Catmull-Rom (bicubic) history fetch — preserves detail across reprojection.
 //   4. YCoCg variance AABB clip (mean +/- gamma*stddev), soft line-clip toward the neighbourhood centre.
-//   5. Luminance-feedback + motion-adaptive blend (deep accumulation when stable, responsive on change).
-//   6. Anti-flicker inverse-luma weighting on the final blend.
+//   5. Depth-based disocclusion rejection: the dilated current depth is packed into the history buffer's
+//      unused alpha channel every frame. Next frame, comparing that stored depth against the new dilated
+//      depth at the same reprojected texel catches "history came from a surface that isn't there anymore"
+//      directly, instead of inferring it from a colour-luma mismatch. This is what lets the variance box
+//      above stay tighter (less blur baseline) without reintroducing ghosting on disocclusion.
+//   6. Luminance-feedback + motion-adaptive blend (deep accumulation when stable, responsive on change).
+//   7. Anti-flicker inverse-luma weighting on the final blend.
+//
+// NOTE: a dual-rate (fast+slow accumulator) history variant of this shader was tried and reverted — it
+// introduced visible ghosting (the slow accumulator's disocclusion-only reset wasn't tight enough in
+// practice). If revisiting that idea, the reset heuristic needs to be more conservative than "depth
+// disocclusion only" before it's safe to mix into the display.
 
 float2 InvScreenSize;
 float  BlendFactor;     // 0..1, stable-area current weight. shader widens it on change/motion.
@@ -134,12 +144,12 @@ float4 TAA_PS(VSOut input) : COLOR0
     [unroll] for (int dy = -1; dy <= 1; dy++)
     [unroll] for (int dx = -1; dx <= 1; dx++)
     {
-        float2 o = float2(dx, dy) * InvScreenSize;
-        float3 c = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv + o, 0, 0)).rgb);
+        float2 ofs = float2(dx, dy) * InvScreenSize;
+        float3 c = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv + ofs, 0, 0)).rgb);
         m1 += c;
         m2 += c * c;
 
-        float4 v = tex2Dlod(velocitySampler, float4(uv + o, 0, 0));
+        float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
         // "No velocity written" is pushed to a sentinel BEYOND the valid [0,1] depth range (2.0) so that a
         // genuinely-far valid pixel (perspective depth packs near 1.0) always wins the nearest-depth
         // tiebreak over an unwritten neighbour — otherwise far objects would be marked non-reprojectable
@@ -152,8 +162,10 @@ float4 TAA_PS(VSOut input) : COLOR0
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
     // Clamp width in stddevs. Tighter rejects ghosting harder; too tight rejects valid jittered history on
     // high-frequency content (grass/foliage) every frame, so it never accumulates and the raw jitter shows
-    // through. 1.5 is a looser box that lets foliage resolve while still bounding ghosting.
-    const float GAMMA = 1.5;
+    // through. Depth-based disocclusion rejection (below) now catches the hard ghosting cases directly, so
+    // this box was tightened from 1.5 -> 1.3: still loose enough for foliage to resolve, but clamps stray
+    // history harder on thin/high-frequency edges (railings, wires) for less residual blur.
+    const float GAMMA = 1.3;
     float3 cmin = m1 - GAMMA * sigma;
     float3 cmax = m1 + GAMMA * sigma;
 
@@ -165,14 +177,26 @@ float4 TAA_PS(VSOut input) : COLOR0
 
     // Bicubic (Catmull-Rom) history fetch — preserves detail across reprojection. Then clip to the
     // YCoCg neighborhood AABB to reject ghosting / disocclusion.
+    float4 historySample = tex2Dlod(historySampler, float4(histUV, 0, 0));
     float3 history = RGB_to_YCoCg(SampleHistoryBicubic(histUV));
     history = ClipAABB(cmin, cmax, history);
+
+    // Depth-based disocclusion rejection. historySample.a holds the DILATED depth that was visible at this
+    // texel when it was written last frame (packed below, in place of the unused alpha channel). Comparing
+    // it against this frame's dilated depth at the same location catches "history came from a surface
+    // that's no longer there" directly (e.g. a foreground object moved away and revealed the background
+    // behind it) instead of only inferring it from a colour/luma mismatch. Relative comparison since depth
+    // is stored as normalized linear (0=near..1=far): the same absolute delta means less at far range.
+    float historyDepth = historySample.a;
+    float depthDelta = abs(historyDepth - closestDepth) / max(max(historyDepth, closestDepth), 0.05);
+    float depthReject = saturate(depthDelta * 4.0 - 0.5);
 
     // Luminance feedback (Inside/Playdead): stable pixels (history matches current luma) keep deep
     // accumulation; pixels that changed drop toward more-current so edges/disocclusions stay responsive.
     float lumaC = curr.x;       // Y in YCoCg
     float lumaH = history.x;
     float diff = saturate(abs(lumaC - lumaH) / max(0.2, max(lumaC, lumaH)));
+    diff = max(diff, depthReject);
     float historyWeight = lerp(1.0 - BlendFactor, 0.6, diff);
 
     // Motion-adaptive: more current when moving fast (less lag/ghosting under motion).
@@ -188,7 +212,10 @@ float4 TAA_PS(VSOut input) : COLOR0
     float3 blended = (curr * wc + history * wh) / max(wc + wh, 1e-5);
 
     float3 outYCoCg = (valid && reprojectable) ? blended : curr;
-    return float4(YCoCg_to_RGB(outYCoCg), 1.0);
+    // Pack this pixel's dilated depth into alpha so NEXT frame's resolve can do the disocclusion compare
+    // above. Only meaningful for opaque-blit display (BlendState.Opaque ignores alpha), so this is safe to
+    // repurpose here — the alpha channel was otherwise always 1.0 and unused.
+    return float4(YCoCg_to_RGB(outYCoCg), closestDepth);
 }
 
 technique TAA

@@ -18,7 +18,8 @@ namespace FSO.LotView.Utils
     public static class TAAResolve
     {
         // Stable-area current-frame weight. Lower = deeper accumulation (more effective samples = sharper
-        // supersampling) but more lag. 0.06 ≈ ~16-frame accumulation, matching the Halton(2,3) period.
+        // supersampling) but more lag. 0.06 ≈ ~16-frame EMA time constant (the jitter sequence itself is
+        // now R2 - non-periodic, so this is just an accumulation-speed knob, not tied to a sample period).
         // The shader widens this toward more-current on luminance changes (feedback) and on motion.
         private const float BLEND_FACTOR = 0.06f;
 
