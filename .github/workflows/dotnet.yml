@@ -12,9 +12,32 @@ on:
     branches: [ "main" ]
 
 jobs:
+  # Compile the effect shaders fresh from source on Windows (the only OS where MonoGame's effect compiler
+  # works — it needs Wine on linux/osx). Produces both Content/DX (Windows client) and Content/OGL (DesktopGL
+  # clients); the per-platform build-client jobs download the matching set so no client ships a stale .xnb.
+  compile-shaders:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 9.0.x
+      - name: Compile desktop shaders (DX + OGL)
+        shell: bash
+        run: bash .github/scripts/compile-shaders.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shaders-dx
+          path: TSOClient/tso.content/Content/DX/Effects/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shaders-ogl
+          path: TSOClient/tso.content/Content/OGL/Effects/
+
   # Client: Windows = FSO.IDE (its output contains the full OpenSO.exe client); the other platforms =
   # FSO.Unix. All four are the supported client targets.
   build-client:
+    needs: [ compile-shaders ]
     strategy:
       fail-fast: false
       matrix:
@@ -29,6 +52,13 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 9.0.x
+      # Overlay the freshly-compiled shaders (from the compile-shaders job) over the committed .xnb so the
+      # published client carries shaders built from current source. DX for the Windows client, OGL otherwise.
+      - name: Use freshly-compiled shaders
+        uses: actions/download-artifact@v4
+        with:
+          name: shaders-${{ matrix.rid == 'win-x64' && 'dx' || 'ogl' }}
+          path: TSOClient/tso.content/Content/${{ matrix.rid == 'win-x64' && 'DX' || 'OGL' }}/Effects
       - name: Publish client
         run: dotnet publish ${{ matrix.project }} -c Release -r ${{ matrix.rid }} --self-contained -o Artifacts/Client
       - uses: actions/upload-artifact@v4

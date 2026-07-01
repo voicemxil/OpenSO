@@ -30,12 +30,35 @@ permissions:
   packages: write   # required to push the server image to GHCR
 
 jobs:
+  # ---- Compile effect shaders fresh from source on Windows (the only OS where MonoGame's effect compiler
+  #      runs — it needs Wine on linux/osx). Produces Content/DX + Content/OGL; the client jobs download the
+  #      matching set so no shipped client carries a stale .xnb (see .github/scripts/compile-shaders.sh).
+  compile-shaders:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.315"
+      - name: Compile desktop shaders (DX + OGL)
+        shell: bash
+        run: bash .github/scripts/compile-shaders.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shaders-dx
+          path: TSOClient/tso.content/Content/DX/Effects/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shaders-ogl
+          path: TSOClient/tso.content/Content/OGL/Effects/
+
   # ---- Client builds. The Windows client is FSO.IDE (net9.0-windows) — the same project the
   #      original "Build FreeSO" CI published; it references FSO.Windows so its output folder
   #      contains the full client (OpenSO.exe) plus the IDE/JIT tooling. The cross-platform client
   #      is FSO.Unix (net9.0), which also produces OpenSO.exe. The launcher downloads the asset whose
   #      name contains "client" and runs OpenSO.exe.
   build-client:
+    needs: [ compile-shaders ]
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +87,14 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "9.0.315"
+
+      # Overlay the freshly-compiled shaders (from the compile-shaders job) over the committed .xnb so the
+      # packaged client can't ship a stale shader. DX for the Windows client, OGL for linux/osx.
+      - name: Use freshly-compiled shaders
+        uses: actions/download-artifact@v4
+        with:
+          name: shaders-${{ matrix.rid == 'win-x64' && 'dx' || 'ogl' }}
+          path: TSOClient/tso.content/Content/${{ matrix.rid == 'win-x64' && 'DX' || 'OGL' }}/Effects
 
       - name: Publish client
         run: dotnet publish ${{ matrix.project }} -c Release -r ${{ matrix.rid }} --self-contained -o publish
