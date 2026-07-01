@@ -406,6 +406,17 @@ namespace FSO.LotView.Components
                 }
             }
 
+            // Shadow3D ("+Walls") / UltraLighting ("+Objs") toggles - see World.ChangedWorldConfig for why
+            // this needs explicit tracking (no null-check side-effect to detect either from in 3D mode).
+            if (Light != null && Blueprint != null &&
+                (config.Shadow3D != _lastShadow3D || config.UltraLighting != _lastUltraLighting))
+            {
+                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.ROOM_CHANGED);
+                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
+            }
+            _lastShadow3D = config.Shadow3D;
+            _lastUltraLighting = config.UltraLighting;
+
             if (Blueprint != null && !FSOEnvironment.Enable3D)
             {
                 var shad3D = (Blueprint.WCRC != null);

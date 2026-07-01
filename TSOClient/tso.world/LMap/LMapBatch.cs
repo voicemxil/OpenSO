@@ -812,7 +812,13 @@ namespace FSO.LotView.LMap
 
         public void DrawWallShadows(List<Vector2[]> walls, LightData pointLight)
         {
-            if (pointLight.LightType == LightType.OUTDOORS && WallComp != null)
+            // Shadow3D ("+Walls" tier) gate. WallComp (Blueprint.WCRC) itself always exists in 3D mode -
+            // it's the actual wall geometry cache, not an optional add-on - so this can't be implemented by
+            // toggling WallComp's existence (that was the old 2D-mode approach and doesn't apply here; see
+            // World.ChangedWorldConfig's Shadow3D block, which is intentionally skipped in 3D mode). Mirrors
+            // the UltraLighting ("+Objs") gate on Draw3DObjShadows a few lines below - same tier structure,
+            // wall shadows vs. object shadows.
+            if (pointLight.LightType == LightType.OUTDOORS && WallComp != null && WorldConfig.Current.Shadow3D)
             {
                 CreateOutsideIfMissing();
                 LightEffect.shadowMap = OutsideShadowTarg;

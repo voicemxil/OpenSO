@@ -69,6 +69,16 @@ namespace FSO.LotView
 
         protected LMapBatch Light;
         protected Blueprint Blueprint;
+        // Tracks the last-applied UltraLighting ("+Objs") / Shadow3D ("+Walls") state so ChangedWorldConfig
+        // can detect a toggle and force a redraw. AdvancedLighting has a side-effect to compare against
+        // (Light null<->non-null); in 3D mode, Shadow3D and UltraLighting do NOT - the Blueprint.WCRC
+        // null-check equivalent for Shadow3D only applies in the 2D-only block below (`!Enable3D`), and both
+        // settings only change what an ALREADY-drawn room's lightmap looks like (DrawWallShadows'/
+        // DrawObjShadows' internal branches) rather than creating/destroying anything. Without this explicit
+        // tracking, toggling either does nothing until some unrelated room edit invalidates that room's
+        // cached lightmap - which is exactly what looked like "the setting has no effect" for both tiers.
+        protected bool _lastUltraLighting;
+        protected bool _lastShadow3D;
 
         public event Action OnFullZoomOut;
 
@@ -132,22 +142,6 @@ namespace FSO.LotView
 
         // Previous frame's NDC jitter, for computing the per-frame jitter delta handed to the TAA resolve.
         private Vector2 _PrevTAAJitterNDC;
-
-        // Halton sequence — base-N radical-inverse of integer i. Halton(2,3) gives well-distributed 2D
-        // samples without clustering, which is exactly what TAA needs for sub-pixel jittering.
-        private static float HaltonValue(int i, int b)
-        {
-            float result = 0f;
-            float f = 1f / b;
-            int idx = i;
-            while (idx > 0)
-            {
-                result += f * (idx % b);
-                idx /= b;
-                f /= b;
-            }
-            return result;
-        }
 
         public virtual void InitDefaultGraphicsMode()
         {
@@ -681,7 +675,7 @@ namespace FSO.LotView
             // Marks "first PrepareCulling call this frame can update PreviousViewProjection". Without this,
             // the 5+ PrepareCulling calls per frame each overwrite PreviousViewProjection -> velocity = 0.
             State.BeginFrameForVelocity();
-            // Compute TAA sub-pixel jitter from a Halton(2,3) sequence ONLY when TAA is fully operational
+            // Compute TAA sub-pixel jitter from an R2 low-discrepancy sequence ONLY when TAA is fully operational
             // (setting on + 3D + history buffers + shader present). Gating it this way means jitter only
             // runs when TAA's accumulation is actually present to resolve it (a half-enabled jitter without
             // accumulation reads as constant shake — the "way too strong" the user saw before the gate).
@@ -695,9 +689,11 @@ namespace FSO.LotView
                 && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
             if (taaJitterReady)
             {
-                int i = (State.TAAFrameIndex++ & 0xF) + 1; // 1..16, Halton starts at sample 1
-                float hx = HaltonValue(i, 2) - 0.5f; // [-0.5, +0.5)
-                float hy = HaltonValue(i, 3) - 0.5f;
+                // R2 (plastic-number) low-discrepancy sequence: free-running index, no period to wrap -
+                // see FSO.Common.Utils.R2Jitter for why this replaced Halton(2,3).
+                var r2 = FSO.Common.Utils.R2Jitter.Sample(State.TAAFrameIndex++);
+                float hx = r2.X; // [-0.5, +0.5)
+                float hy = r2.Y;
                 var bb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
                 int w = bb?.Width ?? device.Viewport.Width;
                 int h = bb?.Height ?? device.Viewport.Height;
@@ -1334,12 +1330,35 @@ namespace FSO.LotView
                     State.AmbientLight = new Texture2D(gd, 256, 256);
             }
 
+            // Shadow3D ("+Walls") / UltraLighting ("+Objs") toggles: neither has an existing side-effect
+            // (null-check) to detect a change from in 3D mode, and both only affect what an ALREADY-rendered
+            // room's lightmap looks like (LMapBatch.DrawWallShadows'/DrawObjShadows' internal branches)
+            // rather than creating/destroying anything - so without forcing a redraw here, every room's
+            // lightmap stays cached at whatever value was active when it was last drawn, and toggling the
+            // slider between FSO/+Walls/+Objs shows no visible change until some unrelated edit happens to
+            // invalidate that room. (The Blueprint.WCRC-based Shadow3D check further below is a SEPARATE,
+            // 2D-only concern - creating/disposing the WCRC component itself - not this lightmap redraw.)
+            if (Light != null && Blueprint != null &&
+                (config.Shadow3D != _lastShadow3D || config.UltraLighting != _lastUltraLighting))
+            {
+                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.ROOM_CHANGED);
+                Blueprint.Changes.SetFlag(BlueprintGlobalChanges.OUTDOORS_LIGHTING_CHANGED);
+            }
+            _lastShadow3D = config.Shadow3D;
+            _lastUltraLighting = config.UltraLighting;
+
             if (Blueprint != null && !FSOEnvironment.Enable3D)
             {
+                // Mirrors SubWorldComponent.ChangedWorldConfig's (correct) version of this same check. This
+                // had regressed to an unconditional "create once, never revisit" (shad3D compared against a
+                // literal `true`, and the create-branch's condition replaced with `true`) - so toggling the
+                // Advanced Lighting slider between Off/FSO/+Walls/+Objs never rebuilt or tore down WCRC after
+                // its first creation, leaving wall lighting stuck at whatever level was active when the lot
+                // was first loaded regardless of later slider changes.
                 var shad3D = (Blueprint.WCRC != null);
-                if (true != shad3D)
+                if (config.Shadow3D != shad3D)
                 {
-                    if (true) //config.AdvancedLighting && config.Shadow3D)
+                    if (Light != null && config.Shadow3D)
                     {
                         Blueprint.WCRC = new RC.WallComponentRC();
                         Blueprint.WCRC.blueprint = Blueprint;
