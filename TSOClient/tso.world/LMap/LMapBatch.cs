@@ -948,12 +948,23 @@ namespace FSO.LotView.LMap
                     GD.BlendState = blend;
                 }
             }
+            else if (pointLight.LightType == LightType.OUTDOORS)
+            {
+                // FSO tier (Shadow3D off -> WallComp null): the sun casts NO wall shadows. The flat 2D
+                // approximation the generic branch below would draw (technique 2) only became reachable in
+                // 3D once WallComp was gated on Shadow3D, and reads as a half-baked shadow - "+Walls" is the
+                // tier that adds real (3D) wall shadows. Clear the shadow target so the outdoor light is
+                // unshadowed by walls (object blob shadows still apply via the floor-shadow map).
+                GD.SetRenderTarget(ShadowTarg);
+                GD.ScissorRectangle = DrawRect;
+                GD.Clear(Color.Black);
+            }
             else
             {
                 GD.SetRenderTarget(ShadowTarg);
                 var geom = ShadowGeo.GenerateWallShadows(walls, pointLight);
                 GD.BlendState = AddBlendRed;
-                DrawShadows(geom, (pointLight.LightType == LightType.OUTDOORS) ? 2 : 0, pointLight);
+                DrawShadows(geom, 0, pointLight);
             }
         }
 
