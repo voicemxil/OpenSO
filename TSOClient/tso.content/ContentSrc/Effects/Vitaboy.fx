@@ -441,9 +441,9 @@ technique HeadObject
 }
 
 // ---------------------------------------------------------------------------- DrawWithVelocity
-// Velocity-writing technique. MUST stay LAST in the file so WorldEntities.DrawAvatars' literal index 0..6
-// selections still point at the original techniques. Body-translation velocity only — reuses current bone
-// matrices for both current and previous positions, so a sim walking shows blur but arm animation doesn't.
+// Velocity-writing techniques. MUST stay LAST in the file, in this order (DrawWithVelocity then
+// DrawWithVelocityDirection), so WorldEntities.DrawAvatars' literal Techniques[7]/[8] selections keep
+// pointing at these two and the original techniques keep their 0..6 indices.
 struct VitaVertexOutV
 {
     float4 position : SV_Position0;
@@ -522,6 +522,40 @@ technique DrawWithVelocity
 #else
         VertexShader = compile vs_3_0 vsVitaboyV();
         PixelShader = compile ps_3_0 psVitaboyV();
+#endif;
+    }
+}
+
+// psVitaboyV always shades via lightProcess() (non-directional, ambient/omni-only - matches psVitaboyAdv).
+// When Directional Lighting is on, the non-velocity path picks psVitaboyDir (lightProcessDirection, actual
+// N.L against a sampled light direction) instead - see WorldEntities.DrawAvatars' `advDir`/`pass` selection.
+// The velocity path had no equivalent, so turning on TAA/motion-blur (which forces DrawWithVelocity) silently
+// dropped directional shading back to the flat/ambient model - visible as the light appearing to come from
+// the wrong direction. This mirrors psVitaboyV but with lightProcessDirection, so the velocity path can
+// respect the same setting.
+PSOutputV psVitaboyDirV(VitaVertexOutV v)
+{
+    PSOutputV o;
+    float depth = v.screenPos.z / v.screenPos.w;
+#if SIMPLE
+    if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
+#endif
+    float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirection(v.modelPos, normalize(v.normal)) * AmbientLight);
+    o.color = color;
+    o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
+    o.normal = float4(normalize(v.normal), 1);
+    return o;
+}
+technique DrawWithVelocityDirection
+{
+    pass Pass1
+    {
+#if SM4
+        VertexShader = compile vs_4_0 vsVitaboyV();
+        PixelShader = compile ps_4_0 psVitaboyDirV();
+#else
+        VertexShader = compile vs_3_0 vsVitaboyV();
+        PixelShader = compile ps_3_0 psVitaboyDirV();
 #endif;
     }
 }

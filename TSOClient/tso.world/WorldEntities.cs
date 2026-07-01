@@ -114,7 +114,11 @@ namespace FSO.LotView
             if (useVelocity)
             {
                 FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velocityRT);
-                effect.CurrentTechnique = effect.Techniques[7]; //DrawWithVelocity, last technique in Vitaboy.fx
+                // Respect Directional Lighting here too - DrawWithVelocity (non-directional lightProcess)
+                // used to be hardcoded regardless of `advDir`, so enabling TAA/motion-blur (which forces the
+                // velocity technique) silently dropped avatars back to flat/ambient shading even with
+                // Directional Lighting on, which read as the light direction itself changing.
+                effect.CurrentTechnique = effect.Techniques[advDir ? 8 : 7]; //DrawWithVelocityDirection / DrawWithVelocity, last two techniques in Vitaboy.fx
                 effect.Parameters["ViewProjection"]?.SetValue(state.View * state.Projection);
                 // Subworld ModelTranslation fix: state.View already has the translation, but
                 // PreviousViewProjection was captured pre-translation -> apply same translation here.
