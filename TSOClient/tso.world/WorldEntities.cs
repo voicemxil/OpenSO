@@ -53,6 +53,7 @@ namespace FSO.LotView
             var effect = WorldContent.RCObject;
             gd.BlendState = BlendState.NonPremultiplied;
             effect.ViewProjection = state.ViewProjection;
+            effect.JitterNDC = state.TAAJitter; // un-jitter the velocity pass (0 when TAA off)
             // Subworld ModelTranslation fix: in 3D, SubDraw sets Cameras.ModelTranslation so state.View
             // (and the ViewProjection re-derived by the PrepareCulling above) include the subworld offset,
             // but PreviousViewProjection was captured at frame start without it. Apply the same translation
@@ -121,6 +122,7 @@ namespace FSO.LotView
                 if (state.Cameras.ModelTranslation.HasValue)
                     prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
                 effect.Parameters["PreviousViewProjection"]?.SetValue(prevVP);
+                effect.Parameters["JitterNDC"]?.SetValue(state.TAAJitter); // un-jitter the velocity pass
             }
             else
             {

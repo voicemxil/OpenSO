@@ -325,11 +325,16 @@ struct ObjVertexOutV
 };
 struct CityPSOutV { float4 color : COLOR0; float4 velocity : COLOR1; float4 normal : COLOR2; };
 
+// Current-frame TAA jitter (NDC), matching the jitter baked into BaseMatrix (and so into currClip). Subtracted
+// so velocity is jitter-free; PrevBaseMatrix (used for prevClip) is supplied UN-jittered by the C# caller
+// (Terrain.Draw / Terrain.DrawSurrounding).
+float2 JitterNDC;
+
 float2 CityComputeVel(float4 curr, float4 prev)
 {
 	float cw = max(curr.w, 1e-4);
 	float pw = max(prev.w, 1e-4);
-	float2 c = curr.xy / cw;
+	float2 c = curr.xy / cw - JitterNDC;
 	float2 p = prev.xy / pw;
 	return clamp((c - p) * float2(0.5, -0.5), -0.05, 0.05);
 }

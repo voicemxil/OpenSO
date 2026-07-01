@@ -481,11 +481,16 @@ VitaVertexOutV vsVitaboyV(VitaVertexIn v)
     result.prevClip = mul(prevWPos, PreviousViewProjection);
     return result;
 }
+// Current-frame TAA jitter (NDC), matching the jitter baked into ViewProjection (and so into currClip).
+// Subtracted so velocity is jitter-free; PreviousViewProjection (used for prevClip) is supplied UN-jittered
+// by the C# caller (WorldEntities.DrawAvatars), same convention as RCObject.fx / GrassShader.fx.
+float2 JitterNDC;
+
 float2 ComputeVitaboyVelocity(float4 curr, float4 prev)
 {
     float currW = max(curr.w, 1e-4);
     float prevW = max(prev.w, 1e-4);
-    float2 currNDC = curr.xy / currW;
+    float2 currNDC = curr.xy / currW - JitterNDC;
     float2 prevNDC = prev.xy / prevW;
     float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
     return clamp(v, -0.05, 0.05);

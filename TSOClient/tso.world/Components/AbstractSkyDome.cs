@@ -208,6 +208,10 @@ namespace FSO.LotView.Components
         private Matrix _prevSkyMVP;
         private bool _prevSkyMVPValid;
 
+        // `projection` MUST be the UN-jittered camera projection (SkyDomeComponent passes the raw camera's
+        // .Projection; Terrain.DrawSky passes ProjectionUnjit) - this method applies TAA jitter itself via
+        // PPXDepthEngine.TAAJitterNDC so both callers get identical, correct jitter/velocity handling instead
+        // of each caller having to guess whether its projection is already jittered.
         public void Draw(GraphicsDevice gd, Color outsideColor, Matrix view, Matrix projection, float time, WeatherController weather, Vector3 sunVector, float scale)
         {
             var ocolor = outsideColor.ToVector4();
@@ -238,7 +242,13 @@ namespace FSO.LotView.Components
             var scaleVec = Vector3.TransformNormal(new Vector3(1, 0, 0), view);
             view = Matrix.CreateScale(1 / scaleVec.Length()) * view;
             effect.View = view;
-            effect.Projection = projection;// (state.Camera as WorldCamera3D)?.BaseProjection() ?? state.Camera.Projection;
+            // Apply TAA jitter here (the incoming `projection` is UN-jittered - see the contract note above
+            // the method signature) so the dome samples different sub-pixel positions each frame like the
+            // rest of the jittered geometry, matching WorldState.Projection's own M31/M32 convention.
+            var jitter = PPXDepthEngine.TAAJitterNDC;
+            var projJit = projection;
+            if (jitter.X != 0 || jitter.Y != 0) { projJit.M31 -= jitter.X; projJit.M32 -= jitter.Y; }
+            effect.Projection = projJit;// (state.Camera as WorldCamera3D)?.BaseProjection() ?? state.Camera.Projection;
             effect.World = Matrix.CreateScale(5f * scale);
             gd.DepthStencilState = DepthStencilState.None;
             gd.RasterizerState = RasterizerState.CullNone;
@@ -252,14 +262,12 @@ namespace FSO.LotView.Components
             var skyVel = WorldContent.SkyVelocity;
             if (velRT != null && skyVel != null)
             {
-                var domeMVP = Matrix.CreateScale(5f * scale) * view * projection;
-                // Un-jittered MVP for velocity: undo the projection's TAA jitter (Projection getter does
-                // M31 -= jitter.X / M32 -= jitter.Y). MVP stays jittered for rasterization (TAA sampling);
-                // the shader subtracts JitterNDC from the current NDC and uses this UN-jittered MVP as prev,
-                // so velocity = unjittered_curr - unjittered_prev (jitter-free).
-                var jitter = PPXDepthEngine.TAAJitterNDC;
-                var projUnjit = projection; projUnjit.M31 += jitter.X; projUnjit.M32 += jitter.Y;
-                var domeMVPUnjit = Matrix.CreateScale(5f * scale) * view * projUnjit;
+                var domeMVP = Matrix.CreateScale(5f * scale) * view * projJit;
+                // Un-jittered MVP for velocity: MVP stays jittered for rasterization (TAA sampling); the
+                // shader subtracts JitterNDC from the current NDC and uses this UN-jittered MVP as prev, so
+                // velocity = unjittered_curr - unjittered_prev (jitter-free). `projection` (the parameter) is
+                // already UN-jittered, so no further correction is needed here.
+                var domeMVPUnjit = Matrix.CreateScale(5f * scale) * view * projection;
                 var savedRTs = gd.GetRenderTargets();
                 PPXDepthEngine.BindVelocityMRT(gd, velRT);
                 // Independent blend: sky color (MRT0) keeps its alpha atmospheric blend; velocity (MRT1)

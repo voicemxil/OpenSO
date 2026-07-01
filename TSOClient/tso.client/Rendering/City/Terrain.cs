@@ -139,8 +139,10 @@ namespace FSO.Client.Rendering.City
         // SpriteBatch overlays (tile-border grid) scale their batch transform by this so they land correctly
         // in the supersampled target after the downsample resolve.
         public float PPXSpriteScale { get; private set; } = 1f;
-        // Previous-frame surroundings mvp (BaseMatrix) for city-backdrop velocity output. Tracked across
-        // frames so the velocity shaders can reproject (the backdrop is static; only the camera moves).
+        // Previous-frame UN-jittered surroundings mvp (BaseMatrix) for city-backdrop velocity output. Tracked
+        // across frames so the velocity shaders can reproject (the backdrop is static; only the camera moves).
+        // UN-jittered so the velocity buffer doesn't carry last frame's TAA jitter as motion (PixShader's
+        // CityComputeVel un-jitters currClip itself via JitterNDC).
         private Matrix m_PrevMovMatrix;
         private bool m_PrevMovValid;
         // Same, but for the full city-MAP Draw (separate from DrawSurrounding's so a city<->lot transition
@@ -149,7 +151,6 @@ namespace FSO.Client.Rendering.City
         private bool m_PrevMainValid;
         // TAA sub-pixel jitter state for the city map (mirrors World's per-frame Halton jitter).
         private int m_TAAFrameIndex;
-        private Vector2 m_PrevTAAJitterNDC;
 
         // Halton(b) radical inverse - well-distributed sub-pixel sample sequence for TAA jitter (copy of
         // World.HaltonValue; the city renderer has no World/State to borrow it from).
@@ -1524,13 +1525,16 @@ namespace FSO.Client.Rendering.City
             if ((Camera is CityCamera3D && m_Zoomed == TerrainZoomMode.Lot) || (Camera is CityCamera2D && m_LotZoomProgress == 1f)) return;
 
             Matrix ProjectionMatrix = Camera.Projection;
+            Matrix ProjectionUnjit = ProjectionMatrix; // snapshot before the jitter mutation below
 
             // TAA sub-pixel jitter (Stage 2b): when TAA is active, offset the projection by a Halton(2,3)
             // fraction of a pixel each frame (NDC translation via M31/M32 - the city camera is perspective).
-            // The velocity buffer is built from this jittered projection, so it carries the per-frame jitter;
-            // TAAResolve cancels it via JitterDelta during the history reproject. Mirrors World.PreDraw.
+            // CityComputeVel (PixShader.fx) subtracts JitterNDC from currClip itself, and PrevBaseMatrix is
+            // supplied UN-jittered below, so the velocity buffer is jitter-free -> TAAResolve's JitterDelta
+            // reprojection cancellation would double-correct here, so it stays zeroed. Mirrors World.PreDraw.
             bool cityTAA = usePPX && FSO.Common.Utils.PPXDepthEngine.TAAFunc != null
                            && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
+            Vector2 ndcJitter = Vector2.Zero;
             if (cityTAA)
             {
                 const float JITTER_PIXELS = 0.5f;
@@ -1540,18 +1544,11 @@ namespace FSO.Client.Rendering.City
                 var jbb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
                 int jw = jbb?.Width ?? m_GraphicsDevice.Viewport.Width;
                 int jh = jbb?.Height ?? m_GraphicsDevice.Viewport.Height;
-                var ndcJitter = new Vector2(2f * (hx * 2f * JITTER_PIXELS) / jw, 2f * (hy * 2f * JITTER_PIXELS) / jh);
+                ndcJitter = new Vector2(2f * (hx * 2f * JITTER_PIXELS) / jw, 2f * (hy * 2f * JITTER_PIXELS) / jh);
                 ProjectionMatrix.M31 -= ndcJitter.X;
                 ProjectionMatrix.M32 -= ndcJitter.Y;
-                var pj = m_PrevTAAJitterNDC;
-                FSO.LotView.Utils.TAAResolve.JitterDeltaUV = new Vector2((ndcJitter.X - pj.X) * 0.5f, (ndcJitter.Y - pj.Y) * -0.5f);
-                m_PrevTAAJitterNDC = ndcJitter;
             }
-            else
-            {
-                FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
-                m_PrevTAAJitterNDC = Vector2.Zero;
-            }
+            FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
 
             Matrix ViewMatrix = Camera.View;
             Matrix WorldMatrix = Matrix.Identity;
@@ -1559,6 +1556,7 @@ namespace FSO.Client.Rendering.City
             VertexShader.CurrentTechnique = VertexShader.Techniques[2];
             var mv = WorldMatrix * ViewMatrix;
             var mvp = (mv) * ProjectionMatrix;
+            var mvpUnjit = mv * ProjectionUnjit; // for PrevBaseMatrix - keeps the velocity buffer jitter-free
             VertexShader.Parameters["BaseMatrix"].SetValue(mvp);
             var frustum = new BoundingFrustum(mvp);
             VertexShader.Parameters["MV"].SetValue(mv);
@@ -1636,7 +1634,9 @@ namespace FSO.Client.Rendering.City
             var tempx = dir.X;
             dir.X = -dir.Z;
             dir.Z = tempx;
-            SkyDome.Draw(m_GraphicsDevice, m_TintColor, ViewMatrix, ProjectionMatrix, Time, Weather, Vector3.Normalize(dir), 1f);
+            // AbstractSkyDome.Draw jitters internally and expects an UN-jittered projection (see its
+            // contract note) - pass ProjectionUnjit, not the already-jittered ProjectionMatrix.
+            SkyDome.Draw(m_GraphicsDevice, m_TintColor, ViewMatrix, ProjectionUnjit, Time, Weather, Vector3.Normalize(dir), 1f);
 
             //handle slices
             if (Camera.Zoomed == TerrainZoomMode.Far)
@@ -1670,7 +1670,8 @@ namespace FSO.Client.Rendering.City
             RenderTargetBinding[] savedCityRTs = null;
             if (cityUseVel)
             {
-                VertexShader.Parameters["PrevBaseMatrix"]?.SetValue(m_PrevMainValid ? m_PrevMainMov : mvp);
+                VertexShader.Parameters["PrevBaseMatrix"]?.SetValue(m_PrevMainValid ? m_PrevMainMov : mvpUnjit);
+                PixelShader.Parameters["JitterNDC"]?.SetValue(ndcJitter);
                 savedCityRTs = m_GraphicsDevice.GetRenderTargets();
                 var colorRT = (savedCityRTs != null && savedCityRTs.Length > 0)
                     ? (RenderTarget2D)savedCityRTs[0].RenderTarget
@@ -1682,8 +1683,9 @@ namespace FSO.Client.Rendering.City
             Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, terrPass, terrPass, SubdivGeometry.Ready, 16);
 
             if (cityUseVel && savedCityRTs != null) m_GraphicsDevice.SetRenderTargets(savedCityRTs);
-            // This frame's BaseMatrix becomes next frame's previous (camera-induced velocity reproject).
-            m_PrevMainMov = mvp; m_PrevMainValid = true;
+            // This frame's UN-jittered BaseMatrix becomes next frame's previous (camera-induced velocity
+            // reproject) - keeps the velocity buffer jitter-free instead of carrying last frame's jitter.
+            m_PrevMainMov = mvpUnjit; m_PrevMainValid = true;
 
             var pass = (ShadowsEnabled ? ((fog) ? 4 : 0) : ((fog) ? 3 : 2));
             // Un-jittered projection for screen-space helpers (transformSpr -> UI markers, picking, spotlights,
@@ -1859,16 +1861,20 @@ namespace FSO.Client.Rendering.City
             // temporal AA. The lot geometry jitters via WorldState.Projection, but this backdrop reads the
             // un-jittered camera projection — so without matching jitter it samples the same pixel centers
             // every frame and TAA can't resolve it (distant terrain stays aliased). Using the SAME jitter as
-            // the lot means the resolve's JitterDeltaUV (set from the lot's sequence) cancels it for both.
+            // the lot keeps both in sync. CityComputeVel (PixShader.fx) subtracts JitterNDC from currClip and
+            // PrevBaseMatrix is supplied UN-jittered below, so the velocity buffer stays jitter-free.
+            var pUnjit = p;
             if (taaJitter.X != 0 || taaJitter.Y != 0) { p.M31 -= taaJitter.X; p.M32 -= taaJitter.Y; }
             var mvp = mv * p * Matrix.CreateScale(1f, 1f, 0.3f);
+            var mvpUnjit = mv * pUnjit * Matrix.CreateScale(1f, 1f, 0.3f);
             m_MovMatrix = mvp;
             VertexShader.Parameters["BaseMatrix"].SetValue(mvp);
             VertexShader.Parameters["MV"].SetValue(mv);
-            // Previous-frame mvp for backdrop velocity (foliage/terrain velocity passes). First frame uses
-            // the current mvp so velocity starts at zero rather than a huge spurious value.
-            VertexShader.Parameters["PrevBaseMatrix"]?.SetValue(m_PrevMovValid ? m_PrevMovMatrix : mvp);
-            m_PrevMovMatrix = mvp;
+            // Previous-frame UN-jittered mvp for backdrop velocity (foliage/terrain velocity passes). First
+            // frame uses this frame's un-jittered mvp so velocity starts at zero rather than a spurious value.
+            VertexShader.Parameters["PrevBaseMatrix"]?.SetValue(m_PrevMovValid ? m_PrevMovMatrix : mvpUnjit);
+            PixelShader.Parameters["JitterNDC"]?.SetValue(taaJitter);
+            m_PrevMovMatrix = mvpUnjit;
             m_PrevMovValid = true;
             var frustum = new BoundingFrustum(mvp);
                 
