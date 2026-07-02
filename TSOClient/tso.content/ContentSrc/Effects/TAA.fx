@@ -441,10 +441,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // CONVERGED value is the temporal mean over the jitter footprint, which wipes single-texel texture
     // detail (sand speckles) that edge-only spatial AA (FXAA/SMAA) never touches. On low-variance texture
     // regions, keep the blend responsive (~3-4 frame window) so the per-frame raw sample dominates — the
-    // point-sampled "crunchy" texture look survives, at the cost of a small residual shimmer there (low
-    // amplitude, since these regions are low-contrast by definition). Foliage/edges (high sigma) keep the
-    // full deep accumulation — texDetail is ~0 there.
-    blend = max(blend, texDetail * 0.28); // 0.35 first cut read slightly noisy at low render scales
+    // point-sampled "crunchy" texture look survives, at the cost of a small residual shimmer there.
+    // RESOLUTION-AWARE: that trade is only worth it at NATIVE res (speckles are per-output-pixel, shimmer
+    // subtle). At low render scales the floor just injects upscaled shimmer — and the content-side mip bias
+    // + TAAU accumulation now recover texture detail PROPERLY there. BlendFactor is already resolution-
+    // scaled by TAAResolve (0.06 native -> 0.03 at <=0.5x), so derive the fade from it directly:
+    // full floor at native, zero at or below 0.5x render scale. Foliage/edges (high sigma): texDetail ~0.
+    float floorScale = saturate(BlendFactor / 0.03 - 1.0);
+    blend = max(blend, texDetail * 0.28 * floorScale);
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));
