@@ -65,26 +65,33 @@ namespace FSO.Client.UI.Panels
         private bool InternalChange;
 
         // --- Anti-aliasing / resolution controls (merged in from the former separate dialog) ---
-        private UICombobox AACombo, TAACombo, MotionBlurCombo, BloomCombo, AOCombo;
-        private object[] _aaObjs, _taaObjs, _mblurObjs, _bloomObjs, _aoObjs;
+        private UICombobox AACombo, MotionBlurCombo, BloomCombo, AOCombo, UpscalerCombo, TAADebugCombo;
+        private object[] _aaObjs, _mblurObjs, _bloomObjs, _aoObjs, _upscalerObjs, _taaDbgObjs;
+        private UILabel TAADebugRowLabel; // row hides when Cosmic TAA isn't the AA mode
         private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
         private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
-        private const float RENDER_SCALE_MIN = 0.5f, RENDER_SCALE_MAX = 2f;
+        // Min 1/3 = the DLSS/FSR2 "Ultra Performance" ratio (1080p output from 360p render at 0.33x).
+        private const float RENDER_SCALE_MIN = 1f / 3f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
-        private const int MBLUR_DEBUG = 99; // Motion-blur dropdown sentinel for the velocity-buffer debug view
+        private const int MBLUR_DEBUG = 99;       // Motion-blur dropdown sentinel: velocity-buffer debug (hue) view
+        private const int MBLUR_DEBUG_DEPTH = 98; // Motion-blur dropdown sentinel: velocity-buffer DEPTH (v.b) view
 
         // Unified anti-aliasing modes: mutually-exclusive (MSAA, PostAA) combinations — MSAA and SMAA are
         // never enabled together. The dropdown value is the index into this table. MSAA tiers above the GPU's
         // FSOEnvironment.MaxMSAA are filtered out when the dropdown is built (so 8× is hidden on Apple Silicon).
         // PostAA: 0=none, 1=FXAA, 3=SMAA (high). (PostAA 2 "SMAA Low" was dropped — it hit the same shader.)
-        private static readonly (string label, int msaa, int postAA)[] AAModes =
+        // taa: 0=off, 1=Cosmic TAA (our temporal AA; enables the Upscaler row's Cosmic TAAU), 2=+debug view.
+        // Mutually exclusive with the other modes here (the engine composes spatial+temporal internally, but
+        // the menu presents one AA choice; TAA forces MSAA off anyway — multisampled velocity corrupts it).
+        private static readonly (string label, int msaa, int postAA, int taa)[] AAModes =
         {
-            ("Off",     0, 0),
-            ("FXAA",    0, 1),
-            ("SMAA",    0, 3),
-            ("MSAA 2×", 2, 0),
-            ("MSAA 4×", 4, 0),
-            ("MSAA 8×", 8, 0),
+            ("Off",                 0, 0, 0),
+            ("FXAA",                0, 1, 0),
+            ("SMAA",                0, 3, 0),
+            ("Cosmic TAA",          0, 0, 1),
+            ("MSAA 2×",             2, 0, 0),
+            ("MSAA 4×",             4, 0, 0),
+            ("MSAA 8×",             8, 0, 0),
         };
 
         public UIGraphicsOptionsDialog() : base(UIDialogStyle.OK, true)
@@ -466,6 +473,9 @@ namespace FSO.Client.UI.Panels
                 AORadius = settings.AORadius,
                 AOIntensity = settings.AOIntensity,
                 VelocityDebug = settings.VelocityDebug,
+                VelocityDebugDepth = settings.VelocityDebugDepth,
+                TAADebug = settings.TAADebug,
+                Upscaler = settings.Upscaler,
                 Sharpen = settings.Sharpen,
                 SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,
@@ -496,36 +506,48 @@ namespace FSO.Client.UI.Panels
             // Ambient occlusion rows stay hidden (AO path disabled in World.cs, AOEnabled=false). Velocity
             // debug is folded into the Motion-blur dropdown (no separate row).
 
-            // --- Effects (bottom of the column) ---
-            AddMotionBlurRow("Motion blur strength", 358);
-            MotionBlurCombo = AddRow("Motion blur (3D)", 326,
-                new[] { "Off", "On", "Debug (velocity)" }, new[] { 0, 2, MBLUR_DEBUG }, out _mblurObjs,  // 2 = per-pixel 3D
+            // --- Effects (bottom of the column; shifted down 32px to make room for the Upscaler row) ---
+            AddMotionBlurRow("Motion blur strength", 390);
+            MotionBlurCombo = AddRow("Motion blur (3D)", 358,
+                new[] { "Off", "On", "Debug (velocity)", "Debug (depth)" }, new[] { 0, 2, MBLUR_DEBUG, MBLUR_DEBUG_DEPTH }, out _mblurObjs,  // 2 = per-pixel 3D
                 v =>
                 {
                     var s = GlobalSettings.Default;
-                    s.VelocityDebug = (v == MBLUR_DEBUG);
+                    s.VelocityDebug = (v == MBLUR_DEBUG || v == MBLUR_DEBUG_DEPTH);
+                    s.VelocityDebugDepth = (v == MBLUR_DEBUG_DEPTH);
                     s.MotionBlur = (v == 2) ? 2 : 0;
                     ApplyAndRefresh(true);
                 });
-            AddBloomIntensityRow("Bloom intensity", 292);
-            AddBloomThresholdRow("Bloom threshold", 260);
-            BloomCombo = AddRow("Bloom", 226,
+            AddBloomIntensityRow("Bloom intensity", 324);
+            AddBloomThresholdRow("Bloom threshold", 292);
+            BloomCombo = AddRow("Bloom", 258,
                 new[] { "Off", "On" }, new[] { 0, 1 }, out _bloomObjs,
                 v => { GlobalSettings.Default.Bloom = v == 1; ApplyAndRefresh(true); });
-            AddGroupHeader("Effects", 200);
+            AddGroupHeader("Effects", 232);
 
             // --- Resolution ---
+            // Upscaler for render scale < 1: FSR 1 (EASU spatial) vs Cosmic TAAU (our TAA accumulating
+            // jittered render-res samples directly onto the native grid). TAAU needs TAA's history/velocity,
+            // so the row only shows while TAA is on (RefreshSelections toggles visibility).
+            UpscalerCombo = AddRow("Upscaler", 200,
+                new[] { "FSR 1", "Cosmic TAAU" }, new[] { 0, 1 }, out _upscalerObjs,
+                v => { GlobalSettings.Default.Upscaler = v; ApplyAndRefresh(); });
             AddSharpenRow("Sharpening", 168); // FSR RCAS post-pass; applies at any render scale
             SharpenLabel.Tooltip = "FSR RCAS sharpening — applies at any render scale.";
             AddRenderScaleRow("Render scale", 136);
             AddGroupHeader("Resolution", 110);
 
             // --- Anti-aliasing (top of the column; added last so its drop-down overlays everything) ---
-            TAACombo = AddRow("Temporal AA (3D)", 78,
-                new[] { "Off", "On" }, new[] { 0, 1 }, out _taaObjs,
-                v => { GlobalSettings.Default.TAA = v == 1; ApplyAndRefresh(); });
-            // One unified AA selector: mutually-exclusive MSAA / FXAA / SMAA, MSAA tiers capped to the GPU max
-            // (so 8× is hidden on Apple Silicon). Value = index into AAModes; OnAAMode sets MSAALevel + PostAA.
+            // Cosmic TAA debug view: its own row, visible only while Cosmic TAA is the AA mode. Added BEFORE
+            // the AA combo so the AA dropdown's open list renders over it.
+            TAADebugCombo = AddRow("Cosmic TAA debug", 78,
+                new[] { "Off", "On" }, new[] { 0, 1 }, out _taaDbgObjs,
+                v => { GlobalSettings.Default.TAADebug = v == 1; ApplyAndRefresh(); });
+            TAADebugRowLabel = _LastRowLabel;
+
+            // One unified AA selector: mutually-exclusive Cosmic TAA / MSAA / FXAA / SMAA (Cosmic TAA lives
+            // here now — its old separate row is gone; the debug view has its own gated row above). MSAA
+            // tiers capped to the GPU max (so 8× is hidden on Apple Silicon). Value = index into AAModes.
             var aaNames = new System.Collections.Generic.List<string>();
             var aaValues = new System.Collections.Generic.List<int>();
             for (int i = 0; i < AAModes.Length; i++)
@@ -537,10 +559,13 @@ namespace FSO.Client.UI.Panels
             RefreshSelections();
         }
 
+        private UILabel _LastRowLabel; // label created by the most recent AddRow (for rows that hide/show)
+
         private UICombobox AddRow(string label, int y, string[] names, int[] values, out object[] valueObjs, Action<int> onPick)
         {
             var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
             DynamicOverlay.Add(lbl);
+            _LastRowLabel = lbl;
 
             var objs = new object[values.Length];
             var items = new List<UIComboboxItem>();
@@ -583,7 +608,11 @@ namespace FSO.Client.UI.Panels
             {
                 if (InternalChange) return;
                 var s = GlobalSettings.Default;
-                s.RenderScale = (float)(System.Math.Round(RenderScaleSlider.Value * 20.0) / 20.0); // soft 0.05 grid
+                float v = (float)(System.Math.Round(RenderScaleSlider.Value * 20.0) / 20.0); // soft 0.05 grid
+                // Snap-to-min: the 0.05 grid can't express the 1/3 "Ultra Performance" floor — dragging to
+                // the end of the slider should land exactly on it, not round up to 0.35.
+                if (RenderScaleSlider.Value <= RENDER_SCALE_MIN + 0.01f) v = RENDER_SCALE_MIN;
+                s.RenderScale = v;
                 s.SuperSampling = (s.RenderScale > 1f) ? 2 : 1;
                 ApplyAndRefresh(true);
             };
@@ -654,7 +683,10 @@ namespace FSO.Client.UI.Panels
                 Orientation = 0,
                 Texture = GetTexture(0x42500000001),
                 MinValue = 0f,
-                MaxValue = 1f,
+                // Capped at 0.5: MotionBlurAmount is the shutter fraction (0.5 = the film-standard 180
+                // degree shutter). Anything above that is way too strong in practice, so the old 0..1
+                // range's midpoint is now the slider maximum.
+                MaxValue = 0.5f,
                 AllowDecimals = true,
                 Position = new Vector2(AAX + 175, y + 8)
             };
@@ -676,8 +708,8 @@ namespace FSO.Client.UI.Panels
         private void SetMotionBlurSlider(float amt)
         {
             if (MotionBlurSlider == null) return;
-            MotionBlurSlider.Value = amt;
-            if (MotionBlurLabel != null) MotionBlurLabel.Caption = amt.ToString("0.0#");
+            MotionBlurSlider.Value = System.Math.Min(amt, 0.5f); // legacy configs may hold up to 1.0
+            if (MotionBlurLabel != null) MotionBlurLabel.Caption = System.Math.Min(amt, 0.5f).ToString("0.0#");
         }
 
         // Bloom luminance threshold (0..1, LDR). Below this stays out of the bright-pass.
@@ -796,21 +828,31 @@ namespace FSO.Client.UI.Panels
         {
             if (index < 0 || index >= AAModes.Length) return;
             var s = GlobalSettings.Default;
+            bool taaWasOff = !s.TAA;
             s.MSAALevel = AAModes[index].msaa;
             s.PostAA = AAModes[index].postAA;
+            s.TAA = AAModes[index].taa >= 1;
+            if (!s.TAA) s.TAADebug = false; // debug rides on TAA; its own row (visible while TAA on) sets it
+            // Enabling Cosmic TAA auto-selects Cosmic TAAU as the upscaler (the Upscaler row's Cosmic entry
+            // un-grays); disabling leaves the stored preference (engine falls back to FSR 1 without TAA).
+            if (taaWasOff && s.TAA) s.Upscaler = 1;
             ApplyAndRefresh();
         }
 
-        // Map the current (MSAALevel, PostAA) settings back to an AAModes index for the dropdown. Exact match
-        // first; otherwise prefer the hardware MSAA tier if one is set, else the post-AA method, else Off.
+        // Map the current (MSAALevel, PostAA, TAA) settings back to an AAModes index for the dropdown. TAA
+        // wins (it's mutually exclusive in the menu); then exact match; otherwise prefer the hardware MSAA
+        // tier if one is set, else the post-AA method, else Off.
         private int CurrentAAIndex()
         {
             var s = GlobalSettings.Default;
+            if (s.TAA)
+                for (int i = 0; i < AAModes.Length; i++)
+                    if (AAModes[i].taa == 1) return i;
             for (int i = 0; i < AAModes.Length; i++)
-                if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == s.PostAA) return i;
+                if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == s.PostAA && AAModes[i].taa == 0) return i;
             if (s.MSAALevel > 0)
                 for (int i = 0; i < AAModes.Length; i++)
-                    if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == 0) return i;
+                    if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == 0 && AAModes[i].taa == 0) return i;
             if (s.PostAA > 0)
                 for (int i = 0; i < AAModes.Length; i++)
                     if (AAModes[i].msaa == 0 && AAModes[i].postAA != 0) return i;
@@ -851,6 +893,9 @@ namespace FSO.Client.UI.Panels
                 AORadius = s.AORadius,
                 AOIntensity = s.AOIntensity,
                 VelocityDebug = s.VelocityDebug,
+                VelocityDebugDepth = s.VelocityDebugDepth,
+                TAADebug = s.TAADebug,
+                Upscaler = s.Upscaler,
                 Sharpen = s.Sharpen,
                 SharpenAmount = s.SharpenAmount,
                 Weather = s.Weather,
@@ -875,8 +920,19 @@ namespace FSO.Client.UI.Panels
             InternalChange = true;
             SelectValue(AACombo, _aaObjs, CurrentAAIndex());
             SetRenderScaleSlider(s.RenderScale);
-            SelectValue(TAACombo, _taaObjs, s.TAA ? 1 : 0);
-            SelectValue(MotionBlurCombo, _mblurObjs, s.VelocityDebug ? MBLUR_DEBUG : ((s.MotionBlur == 2) ? 2 : 0));
+            SelectValue(MotionBlurCombo, _mblurObjs, s.VelocityDebug ? (s.VelocityDebugDepth ? MBLUR_DEBUG_DEPTH : MBLUR_DEBUG) : ((s.MotionBlur == 2) ? 2 : 0));
+            // Upscaler row: always visible; the Cosmic TAAU entry is selectable only while Cosmic TAA is the
+            // AA mode (it needs TAA's history/velocity) and renders grayed out otherwise.
+            UpscalerCombo.Items = new List<UIComboboxItem>
+            {
+                new UIComboboxItem { Name = "FSR 1", Value = _upscalerObjs[0] },
+                new UIComboboxItem { Name = "Cosmic TAAU", Value = _upscalerObjs[1], Disabled = !s.TAA },
+            };
+            SelectValue(UpscalerCombo, _upscalerObjs, (s.TAA && s.Upscaler == 1) ? 1 : 0);
+            // Cosmic TAA debug row: only shown while Cosmic TAA is the AA mode.
+            SelectValue(TAADebugCombo, _taaDbgObjs, s.TAADebug ? 1 : 0);
+            TAADebugCombo.Visible = s.TAA;
+            if (TAADebugRowLabel != null) TAADebugRowLabel.Visible = s.TAA;
             SetMotionBlurSlider(s.MotionBlurAmount);
             SelectValue(BloomCombo, _bloomObjs, s.Bloom ? 1 : 0);
             SetBloomSliders(s.BloomThreshold, s.BloomIntensity);

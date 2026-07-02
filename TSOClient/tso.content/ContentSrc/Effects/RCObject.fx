@@ -295,6 +295,11 @@ VertexOutV vsRCV(VertexIn v)
 // NDC_jittered = NDC_unjittered + JitterNDC, so subtract it. PreviousViewProjection is already un-jittered.
 // Leaving the jitter in velocity made motion blur smear stationary pixels and fed jitter back into TAA.
 float2 JitterNDC;
+// Negative texture LOD bias under TAA at render scale < 1 (DLSS/FSR2 integration requirement, mirrors
+// GrassShader.MipBias): sample the sharper mip so the temporal resolve converges at the ORIGINAL texture
+// frequency instead of one mip lower. Only the velocity techniques consume it (they are what runs under
+// TAA); 0 otherwise. The per-frame aliasing it adds is what the jittered accumulation integrates away.
+float MipBias;
 
 float2 ComputeVelocity(float4 curr, float4 prev)
 {
@@ -319,7 +324,7 @@ float PackDepth(float4 clip) { return saturate(clip.w / 800.0); }
 PSOutputV psRCV(VertexOutV v)
 {
 	PSOutputV o;
-	float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcess(v.modelPos));
+	float4 color = gammaMul(tex2Dbias(TexSampler, float4(v.texCoord, 0, MipBias)), lightProcess(v.modelPos));
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
@@ -332,7 +337,7 @@ PSOutputV psDirRCV(VertexOutV v)
 {
 	PSOutputV o;
 	float3 n = normalize(v.normal);
-	float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirection(v.modelPos, n));
+	float4 color = gammaMul(tex2Dbias(TexSampler, float4(v.texCoord, 0, MipBias)), lightProcessDirection(v.modelPos, n));
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
@@ -472,7 +477,8 @@ PSOutputV psWallRCV(WallVertexOutV v)
 #if SIMPLE
     float4 color = gammaMul(v.color * tex2D(TexSampler, texC), lightInterp(mPos, v.texCoord.z));
 #else
-    float4 color = gammaMul(v.color * tex2Dgrad(AnisoSampler, texC, ddx(v.texCoord.xy), ddy(v.texCoord.xy)), lightInterp(mPos, v.texCoord.z));
+    // MipBias: sharper wall-texture mip under TAA — see uniform comment.
+    float4 color = gammaMul(v.color * tex2Dgrad(AnisoSampler, texC, ddx(v.texCoord.xy) * exp2(MipBias), ddy(v.texCoord.xy) * exp2(MipBias)), lightInterp(mPos, v.texCoord.z));
 #endif
     if (SideMask != 0) {
         texC.x = frac(texC.x);

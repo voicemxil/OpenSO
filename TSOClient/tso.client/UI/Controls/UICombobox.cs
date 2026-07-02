@@ -17,6 +17,7 @@ namespace FSO.Client.UI.Controls
     {
         public string Name;
         public object Value;
+        public bool Disabled; // renders with the list's disabled (gray) style and can't be selected
     }
 
     /// <summary>
@@ -100,7 +101,7 @@ namespace FSO.Client.UI.Controls
                 {
                     MenuListBox.Items.AddRange(value.Select(x =>
                     {
-                        return new UIListBoxItem(x.Value, new object[] { x.Name });
+                        return new UIListBoxItem(x.Value, new object[] { x.Name }) { Disabled = x.Disabled };
                     }));
                 }
 
@@ -185,8 +186,24 @@ namespace FSO.Client.UI.Controls
         }
 
 
+        // Environment.TickCount when a focus-out auto-closed the open list. Clicking the drop button while
+        // the list is open first steals focus, so OnFocusChanged has usually ALREADY closed the list by the
+        // time the button-click handler runs — and an unconditional ToggleOpen() there re-opened it, making
+        // the button appear unable to close the dropdown (you had to pick an option). The timestamp lets the
+        // click handler recognize "this same click just closed us" and treat the click as the close.
+        private int _FocusClosedTick = int.MinValue;
+
         void DropDownButton_OnButtonClick(UIElement button)
         {
+            // Unsigned delta: guards only when the focus-out happened within the last 100ms. (A signed
+            // subtraction against the int.MinValue sentinel OVERFLOWED negative — "< 100" then swallowed
+            // every open-click and the dropdowns couldn't open at all.)
+            if (!open && (uint)(System.Environment.TickCount - _FocusClosedTick) < 100u)
+            {
+                // The focus-out from THIS click already closed the list — the user's intent was "close".
+                GameFacade.Screens.inputManager.SetFocus(this);
+                return;
+            }
             ToggleOpen();
             GameFacade.Screens.inputManager.SetFocus(this);
         }
@@ -248,7 +265,10 @@ namespace FSO.Client.UI.Controls
         public void OnFocusChanged(FocusEvent newFocus)
         {
             if (newFocus == FocusEvent.FocusOut && open)
+            {
                 ToggleOpen();
+                _FocusClosedTick = System.Environment.TickCount; // see DropDownButton_OnButtonClick
+            }
         }
 
         public override void Update(UpdateState state)

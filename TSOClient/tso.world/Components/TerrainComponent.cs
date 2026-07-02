@@ -453,6 +453,12 @@ namespace FSO.LotView.Components
             // fill rate (~distance^2 more blade pixels) — accepted for quality.
             Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width/1920f) * 2.5f;
 
+            // Negative texture LOD bias under TAA at render scale < 1 (DLSS/FSR2 integration requirement):
+            // sample the sharper mip so the temporal resolve converges at the ORIGINAL texture frequency
+            // instead of one mip lower ("painted over" ground noise / roof textures). Centralized value —
+            // World.ChangeAAMode/ConfigureCityAA compute it; objects/walls (RCObject) consume it too.
+            Effect.MipBias = FSO.Common.Utils.PPXDepthEngine.TAAMipBias;
+
             Effect.FadeRectangle = new Vector4(FadeDistance / 2f + SubworldOff.X, FadeDistance / 2f + SubworldOff.Y, FadeDistance, FadeDistance);
             Effect.FadeWidth = 35f*3;
 
@@ -839,6 +845,7 @@ namespace FSO.LotView.Components
             Effect.TerrainNoise = TextureGenerator.GetTerrainNoise(device);
             Effect.TerrainNoiseMip = TextureGenerator.GetTerrainNoise(device);
             Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width / 1920f) * 2.5f; // 2.5x blade LOD distance (see other GrassFadeMul site)
+            Effect.MipBias = 0f; // facade/thumbnail gen: no TAA resolve to integrate biased sampling — keep neutral
 
             Effect.FadeRectangle = new Vector4(FadeDistance / 2f + SubworldOff.X, FadeDistance / 2f + SubworldOff.Y, FadeDistance, FadeDistance);
             Effect.FadeWidth = 35f * 3;

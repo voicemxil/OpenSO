@@ -1529,16 +1529,29 @@ namespace FSO.Client.Rendering.City
             if (cityTAA)
             {
                 const float JITTER_PIXELS = 0.5f;
-                var r2 = FSO.Common.Utils.R2Jitter.Sample(m_TAAFrameIndex++);
+                // Cycled Halton(2,3) (mirrors World.PreDraw) — see R2Jitter class docs for why this
+                // replaced the free-running R2 sequence (directional crawl under recency weighting).
+                var r2 = FSO.Common.Utils.R2Jitter.SampleHalton(m_TAAFrameIndex++, FSO.Common.Utils.PPXDepthEngine.SSAA);
                 float hx = r2.X;
                 float hy = r2.Y;
                 var jbb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
                 int jw = jbb?.Width ?? m_GraphicsDevice.Viewport.Width;
                 int jh = jbb?.Height ?? m_GraphicsDevice.Viewport.Height;
-                ndcJitter = new Vector2(2f * (hx * 2f * JITTER_PIXELS) / jw, 2f * (hy * 2f * JITTER_PIXELS) / jh);
+                // Jitter = ±0.5px of the grid TAA resolves on (mirrors World.PreDraw): under SUPERSAMPLING
+                // TAA runs at native res after the downsample, so scale the render-px jitter by SSAA to keep
+                // the full reference footprint; upscaling/native need no scaling (TAA at render res / native).
+                float jscale = System.Math.Max(1f, FSO.Common.Utils.PPXDepthEngine.SSAA);
+                ndcJitter = new Vector2(2f * (hx * 2f * JITTER_PIXELS) * jscale / jw, 2f * (hy * 2f * JITTER_PIXELS) * jscale / jh);
                 ProjectionMatrix.M31 -= ndcJitter.X;
                 ProjectionMatrix.M32 -= ndcJitter.Y;
             }
+            // Publish the city's jitter (zero when city TAA is off) — the SAME M31/M32 convention as the lot
+            // (WorldState.Projection), so every consumer works unchanged here: TAAResolve's SampleJitterUV
+            // (the variance box + the Cosmic TAAU sample-position reconstruction) and the sky dome's own
+            // jitter application. Previously the city never wrote this, which (a) left the sky dome applying
+            // STALE LOT jitter against the city's own sequence and (b) gave TAAU no sample positions in the
+            // city — the map rendered black (why city TAAU was force-disabled).
+            FSO.Common.Utils.PPXDepthEngine.TAAJitterNDC = ndcJitter;
             FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
 
             Matrix ViewMatrix = Camera.View;

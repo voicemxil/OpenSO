@@ -10,6 +10,13 @@ namespace FSO.LotView.Utils
     /// </summary>
     public static class RCASSharpen
     {
+        /// <summary>
+        /// When set, used instead of the user's SharpenAmount. World.PreDraw sets this for the TAA-coupled
+        /// auto-sharpen (TAA's history resampling is inherently a low-pass, so reference TAA pipelines pair
+        /// it with a post sharpen); null whenever the user's own sharpen setting is active.
+        /// </summary>
+        public static float? OverrideAmount;
+
         public static void Draw(GraphicsDevice gd, Texture2D src)
         {
             var effect = WorldContent.FSR;
@@ -19,7 +26,7 @@ namespace FSO.LotView.Utils
             effect.CurrentTechnique = effect.Techniques["RCAS"];
             effect.Parameters["tex"].SetValue(src);
             effect.Parameters["SourceSize"].SetValue(new Vector2(1f / src.Width, 1f / src.Height));
-            effect.Parameters["Sharpness"].SetValue(WorldConfig.Current.SharpenAmount);
+            effect.Parameters["Sharpness"].SetValue(OverrideAmount ?? WorldConfig.Current.SharpenAmount);
             effect.CurrentTechnique.Passes[0].Apply();
 
             gd.SetVertexBuffer(WorldContent.GetTextureVerts(gd));

@@ -20,6 +20,12 @@ float4 DiffuseColor;
 float2 ScreenOffset;
 float GrassProb;
 float GrassFadeMul;
+// Negative texture LOD bias under TAA/TAAU (the DLSS/FSR2-spec integration requirement): at render scale
+// < 1 the derivative-selected mip is one level lower than the OUTPUT grid needs, so the temporal resolve
+// converges to a mip-blurred texture ("painted over" ground detail). Biasing by ~log2(renderScale) samples
+// the sharper mip; the per-frame aliasing that adds is exactly what the jittered temporal accumulation
+// integrates into stable native-res texture detail. 0 when TAA is off (no resolve to integrate the noise).
+float MipBias;
 
 float2 TexOffset;
 float4 TexMatrix;
@@ -732,9 +738,9 @@ void BasePS3D(GrassPSVTX input, out float4 color:COLOR0)
 			color *= tex2D(TexSampler, LoopUV(input.GrassInfo.yz));
 #else
 #if SM4
-			color *= tex2Dgrad(AnisoTexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz), ddy(input.GrassInfo.yz));
+			color *= tex2Dgrad(AnisoTexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz) * exp2(MipBias), ddy(input.GrassInfo.yz) * exp2(MipBias));
 #else
-			color *= tex2Dgrad(TexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz), ddy(input.GrassInfo.yz));
+			color *= tex2Dgrad(TexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz) * exp2(MipBias), ddy(input.GrassInfo.yz) * exp2(MipBias));
 #endif
 #endif
 
@@ -754,8 +760,8 @@ void BasePS3D(GrassPSVTX input, out float4 color:COLOR0)
 		float a = 1 - (2 - sqrt(input.ScreenPos.z / (25 * GrassFadeMul)));
 		if (a > 0) {
 			a = min(1, a);
-			//blade mipmaps
-			float2 rand = tex2D(TerrainNoiseMipSampler, input.GrassInfo.yz * 100 / 1024.0).xy;
+			//blade mipmaps (MipBias: sharper noise mip under TAA — see uniform comment)
+			float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias)).xy;
 			float multex = rand.x;
 			multex *= ((2.0 - input.GrassInfo.x) / 2);
 			multex = (multex - 0.5) * 2.5 + 0.5;
@@ -860,9 +866,9 @@ GrassPSOutputV BasePS3DV(GrassPSVTXv input)
             color *= tex2D(TexSampler, LoopUV(input.GrassInfo.yz));
 #else
 #if SM4
-            color *= tex2Dgrad(AnisoTexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz), ddy(input.GrassInfo.yz));
+            color *= tex2Dgrad(AnisoTexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz) * exp2(MipBias), ddy(input.GrassInfo.yz) * exp2(MipBias));
 #else
-            color *= tex2Dgrad(TexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz), ddy(input.GrassInfo.yz));
+            color *= tex2Dgrad(TexSampler, LoopUV(input.GrassInfo.yz), ddx(input.GrassInfo.yz) * exp2(MipBias), ddy(input.GrassInfo.yz) * exp2(MipBias));
 #endif
 #endif
             if (color.a == 0) discard;
@@ -878,7 +884,8 @@ GrassPSOutputV BasePS3DV(GrassPSVTXv input)
         float a = 1 - (2 - sqrt(input.ScreenPos.z / (25 * GrassFadeMul)));
         if (a > 0) {
             a = min(1, a);
-            float2 rand = tex2D(TerrainNoiseMipSampler, input.GrassInfo.yz * 100 / 1024.0).xy;
+            // MipBias: sharper noise mip under TAA — see uniform comment.
+            float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias)).xy;
             float multex = rand.x;
             multex *= ((2.0 - input.GrassInfo.x) / 2);
             multex = (multex - 0.5) * 2.5 + 0.5;

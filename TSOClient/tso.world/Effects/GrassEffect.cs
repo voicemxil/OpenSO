@@ -28,6 +28,7 @@ namespace FSO.LotView.Effects
         private EffectParameter pScreenOffset;
         private EffectParameter pGrassProb;
         private EffectParameter pGrassFadeMul;
+        private EffectParameter pMipBias;
 
         private EffectParameter pTexOffset;
         private EffectParameter pTexMatrix;
@@ -108,6 +109,11 @@ namespace FSO.LotView.Effects
         public Vector2 JitterNDC
         {
             set { pJitterNDC?.SetValue(value); }
+        }
+        // Negative texture LOD bias under TAA/TAAU (0 otherwise) — see GrassShader.fx MipBias.
+        public float MipBias
+        {
+            set { pMipBias?.SetValue(value); }
         }
         public Matrix PreviousWorld
         {
@@ -455,6 +461,7 @@ namespace FSO.LotView.Effects
             pScreenOffset = Parameters["ScreenOffset"];
             pGrassProb = Parameters["GrassProb"];
             pGrassFadeMul = Parameters["GrassFadeMul"];
+            pMipBias = Parameters["MipBias"];
 
             pTexOffset = Parameters["TexOffset"];
             pTexMatrix = Parameters["TexMatrix"];

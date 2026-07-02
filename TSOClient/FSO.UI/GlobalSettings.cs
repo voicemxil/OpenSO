@@ -100,6 +100,9 @@ namespace FSO.Client
             { "AORadius", "0.5"},        //world-space AO sample radius
             { "AOIntensity", "1.0"},     //AO composite strength (0..2)
             { "VelocityDebug", "false"}, //diagnostic: render the MRT1 velocity buffer to screen (3D only)
+            { "VelocityDebugDepth", "false"}, //diagnostic: velocity debug shows packed DEPTH (v.b) instead of hue
+            { "TAADebug", "false"},      //diagnostic: TAA meta/trust debug view (TAA dropdown "On + Debug")
+            { "Upscaler", "1"},          //render scale < 1 upscaler: 0 = FSR 1 (EASU), 1 = Cosmic TAAU (needs TAA on)
             { "EdgeScroll", "true"},
             { "Lighting", "true"},
             { "FXVolume", "10"},
@@ -191,6 +194,9 @@ namespace FSO.Client
         public float AORadius { get; set; } //world-space AO sample radius
         public float AOIntensity { get; set; } //AO composite strength
         public bool VelocityDebug { get; set; } //diagnostic: visualize MRT1 velocity buffer to screen
+        public bool VelocityDebugDepth { get; set; } //diagnostic: velocity debug shows packed DEPTH (v.b) instead of hue
+        public bool TAADebug { get; set; } //diagnostic: TAA meta/trust debug view (TAA dropdown "On + Debug")
+        public int Upscaler { get; set; } //render scale < 1 upscaler: 0 = FSR 1 (EASU), 1 = Cosmic TAAU (needs TAA on)
         public bool EdgeScroll { get; set; }
         public bool Lighting { get; set; }
         public byte FXVolume { get; set; }

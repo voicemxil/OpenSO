@@ -46,6 +46,9 @@ namespace FSO.LotView.Utils
             gd.BlendState = BlendState.Opaque;
             effect.Parameters["velocityTex"]?.SetValue(velocity);
             effect.Parameters["Scale"]?.SetValue(SCALE);
+            // Depth mode (motion-blur combo "Debug (depth)"): grayscale of the packed linear depth in v.b
+            // instead of the velocity hue — validates the depth the TAA disocclusion tests consume.
+            effect.Parameters["DepthMode"]?.SetValue(WorldConfig.Current.VelocityDebugDepth ? 1f : 0f);
             var tech = effect.Techniques["VelocityViz"];
             if (tech == null) return;
             effect.CurrentTechnique = tech;
