@@ -301,8 +301,9 @@ namespace FSO.Common.Utils
                 // matters most for the META target: garbage could decode as a high accumulation count N and
                 // make the resolve trust the (also-garbage) history heavily for a frame — a nondeterministic
                 // bright/ghost flash on TAA-enable. History clears to transparent black (depth 0); meta clears
-                // to (0,127,127,0) = N=0 with the GB prev-velocity encode decoding to ~zero velocity (127/255
-                // -> -0.0002 UV) so the disparity reactive starts silent instead of firing on garbage.
+                // to (0,127,127,0) = N=0, GB prev-velocity decoding to ~zero (127/255 -> -0.0002 UV) so the
+                // disparity reactive starts silent, and A=0 = zero luma-oscillation evidence (the anti-fizzle
+                // gate starts untrusting and must earn ~10 consecutive alternations before deepening).
                 var prevRTs = GD.GetRenderTargets();
                 var metaClear = new Color(0, 127, 127, 0);
                 GD.SetRenderTarget(HistoryA); GD.Clear(Color.Transparent);

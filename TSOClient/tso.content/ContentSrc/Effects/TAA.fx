@@ -4,13 +4,14 @@
 //   colorTex       — this frame's rendered color (post-scale-resolve, pre-blur).
 //   historyTex     — previous frame's TAA output (RGB) + packed dilated depth (A), velocity-reprojected.
 //   metaHistoryTex — previous frame's meta: R = accumulation count N (N/MaxAccum), GB = previous dilated
-//                    velocity (v*10+0.5), A = reserved instability EMA. Velocity-reprojected too.
+//                    velocity (v*10+0.5), A = packed luma-oscillation state (sign bit + 7-bit EMA — the
+//                    anti-fizzle detector). Velocity-reprojected too.
 //   velocityTex    — per-pixel screen-space velocity (.rg) + normalized linear depth (.b) + valid mask (.a).
 //
 // Outputs to TWO render targets:
 //   COLOR0 — displayed frame + next frame's history (RGB) with this pixel's dilated depth packed in A
 //            (fp16 target when available — see PPXDepthEngine.HistoryIsFP16 / DepthRejectParams).
-//   COLOR1 — next frame's meta: R = new N, GB = dilated velocity encode, A = reserved (TAADebug technique
+//   COLOR1 — next frame's meta: R = new N, GB = dilated velocity encode, A = oscillation pack (TAADebug technique
 //            repurposes GB for diagnostics and disables their consumers).
 //
 // Algorithm (Karis 2014 / UE4 / Playdead recipe, extended with a per-pixel accumulation counter):
@@ -161,9 +162,9 @@ struct TAAOut
 {
     float4 color : COLOR0; // displayed frame + next frame's history (RGB), dilated depth in A
     // Meta layout (RGBA8): R = new accumulation count N (N/MaxAccum), GB = this frame's dilated velocity
-    // encoded v*10+0.5 (exact: all velocity writers clamp to +/-0.05 UV), A = reserved luma-instability EMA
-    // (written 0 for now, 1 on non-reprojectable). The TAADebug technique repurposes GB for diagnostics and
-    // correspondingly DISABLES the GB-consuming logic (self-consistent while debugging).
+    // encoded v*10+0.5 (exact: all velocity writers clamp to +/-0.05 UV), A = packed luma-oscillation state
+    // (sign bit + 7-bit EMA; 0 on non-reprojectable / meta clear). The TAADebug technique repurposes GB+A
+    // for diagnostics and correspondingly DISABLES their consuming logic (self-consistent while debugging).
     float4 meta  : COLOR1;
 };
 
@@ -300,6 +301,28 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         reactive = smoothstep(dispLo, dispLo + 4.5, velDispPx);
     }
 
+    // --- LUMA-OSCILLATION DETECTOR (Decima-style anti-fizzle), state in meta.A (1 sign bit + 7-bit EMA).
+    //     Fizzle = a CONVERGED pixel whose curr-vs-history luma delta ALTERNATES SIGN at frame frequency
+    //     (jitter flipping which sub-pixel fragment covers the sample). A ghost's delta is MONOTONIC (stale
+    //     history decays one-way), so sign-alternation is a signal a ghost structurally cannot produce —
+    //     the one trust gate that survives this project's "every magnitude/stability gate ghosted" history.
+    //     Measured on PRE-blend curr vs PRE-clamp historyRaw so deeper trust doesn't extinguish its own
+    //     evidence (no limit cycle). Disabled under debugMeta (GB/A carry diagnostics there; osc=0 -> no-op).
+    float osc = 0.0;
+    float packedA = 0.0;
+    if (!debugMeta)
+    {
+        float prevSgn = step(0.5, pm.a);
+        float prevOsc = saturate((pm.a - 0.5 * prevSgn) / 0.498);
+        float dl   = curr.x - historyRaw.x; // signed, pre-clamp history
+        float mag  = step(0.01, abs(dl));   // amplitude gate: below this is converged noise, not fizzle
+        float sgn  = step(0.0, dl);
+        float flip = mag * abs(sgn - prevSgn); // 1 only when a real-amplitude delta reversed sign
+        osc = lerp(prevOsc, flip, 0.125);      // ~8-frame EMA
+        float newSgn = lerp(prevSgn, sgn, mag); // hold the sign bit through quiet frames
+        packedA = reprojectable ? saturate(newSgn * 0.5 + osc * 0.498) : 0.0; // off-screen = evidence reset
+    }
+
     // --- ACCUMULATION COUNTER: grows +1 per frame (cap MaxAccum); hard-resets only when history is off-
     //     screen. Deliberately NOT zeroed by depthReject (noisy edge signal pinned silhouettes at N=0).
     //     Ghost/reactive events SOFT-CAP it instead. Its job: the WARMUP RAMP in the blend section — at low
@@ -353,6 +376,21 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // from pulsing aliased when the camera stops; tune toward 0.94 if a screen-wide stop-pulse shows).
     historyWeight = min(historyWeight, lerp(1.0, 0.88, reactive));
 
+    // --- OSCILLATION TRUST (anti-fizzle action). Every gate must pass: proven sign-alternation (a ghost
+    //     fails osc), ~zero velocity (a mover fails stillGate), no disocclusion signal (a reveal fails the
+    //     rejects), and low diff (essential — without it this lerp could RAISE trust on a changing pixel).
+    //     Ceiling = half the effective blend factor (0.94->0.97 native, 0.97->0.985 at 0.5x), capped off the
+    //     freeze asymptote. The 1.5-sigma variance clamp stays untouched — the hard bound under any failure.
+    //     Known residual: TV/video textures equilibrate at osc~0.5 -> at most ~0.15 partial trust (slight
+    //     smoothing, clamp-bounded); tuning lever = the smoothstep lower edge (0.4 -> 0.55 kills it). ---
+    float stillGate = 1.0 - smoothstep(0.25, 0.5, velPx);
+    float oscTrust = smoothstep(0.4, 0.75, osc)
+                   * stillGate
+                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive)
+                   * (1.0 - saturate(diff * 3.0));
+    float oscCeil = min(1.0 - 0.5 * BlendFactor, 0.985);
+    historyWeight = lerp(historyWeight, oscCeil, oscTrust);
+
     float motionBoost = saturate(vmag * 20.0) * 0.35; // more current when moving fast (less ghosting)
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
@@ -382,18 +420,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     if (debugMeta)
     {
         // Diagnostic encode for the accumulation debug blit: red = converged N, green = reject strength
-        // (depth or ghost), blue = non-reprojectable. GB-consuming logic is disabled in this technique, so
-        // next frame never decodes these bytes as a velocity.
-        o.meta = float4(newN / MaxAccum, max(depthReject, ghostReject), reprojectable ? 0.0 : 1.0, 1.0);
+        // (depth or ghost), blue = non-reprojectable. GB/A-consuming logic is disabled in this technique,
+        // so next frame never decodes these bytes as velocity/oscillation. A = 0 specifically so toggling
+        // debug OFF can't leave a stale A=1 that would decode as full oscillation trust screen-wide.
+        o.meta = float4(newN / MaxAccum, max(depthReject, ghostReject), reprojectable ? 0.0 : 1.0, 0.0);
     }
     else
     {
         // Shipping encode: R = N, GB = this frame's dilated velocity for next frame's disparity reactive,
-        // A = reserved instability EMA (0 for now; 1 flags non-reprojectable for the future consumer).
+        // A = packed oscillation state (sign bit + 7-bit EMA; 0 on non-reprojectable = evidence reset).
         o.meta = float4(newN / MaxAccum,
                         velocity.x * 10.0 + 0.5,
                         velocity.y * 10.0 + 0.5,
-                        reprojectable ? 0.0 : 1.0);
+                        packedA);
     }
     return o;
 }
