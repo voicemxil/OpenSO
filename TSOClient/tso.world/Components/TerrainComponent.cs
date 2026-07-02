@@ -455,11 +455,9 @@ namespace FSO.LotView.Components
 
             // Negative texture LOD bias under TAA at render scale < 1 (DLSS/FSR2 integration requirement):
             // sample the sharper mip so the temporal resolve converges at the ORIGINAL texture frequency
-            // instead of one mip lower ("painted over" ground noise / roof textures). The per-frame aliasing
-            // this adds is exactly what the jittered accumulation integrates away. Clamped to -2 (1/4 scale).
-            float mbSsaa = FSO.Common.Utils.PPXDepthEngine.SSAA;
-            Effect.MipBias = (WorldConfig.Current.TAA && mbSsaa < 0.999f && mbSsaa > 0f)
-                ? Math.Max(-2f, (float)Math.Log(mbSsaa, 2.0)) : 0f;
+            // instead of one mip lower ("painted over" ground noise / roof textures). Centralized value —
+            // World.ChangeAAMode/ConfigureCityAA compute it; objects/walls (RCObject) consume it too.
+            Effect.MipBias = FSO.Common.Utils.PPXDepthEngine.TAAMipBias;
 
             Effect.FadeRectangle = new Vector4(FadeDistance / 2f + SubworldOff.X, FadeDistance / 2f + SubworldOff.Y, FadeDistance, FadeDistance);
             Effect.FadeWidth = 35f*3;

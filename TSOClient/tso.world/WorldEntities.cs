@@ -54,6 +54,7 @@ namespace FSO.LotView
             gd.BlendState = BlendState.NonPremultiplied;
             effect.ViewProjection = state.ViewProjection;
             effect.JitterNDC = state.TAAJitter; // un-jitter the velocity pass (0 when TAA off)
+            effect.MipBias = FSO.Common.Utils.PPXDepthEngine.TAAMipBias; // sharper texture mips under TAA at scale<1
             // Subworld ModelTranslation fix: in 3D, SubDraw sets Cameras.ModelTranslation so state.View
             // (and the ViewProjection re-derived by the PrepareCulling above) include the subworld offset,
             // but PreviousViewProjection was captured at frame start without it. Apply the same translation
@@ -127,6 +128,7 @@ namespace FSO.LotView
                     prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
                 effect.Parameters["PreviousViewProjection"]?.SetValue(prevVP);
                 effect.Parameters["JitterNDC"]?.SetValue(state.TAAJitter); // un-jitter the velocity pass
+                effect.Parameters["MipBias"]?.SetValue(FSO.Common.Utils.PPXDepthEngine.TAAMipBias); // sharper mips under TAA
             }
             else
             {
@@ -178,6 +180,7 @@ namespace FSO.LotView
             gd.BlendState = BlendState.NonPremultiplied;
             effect.ViewProjection = state.ViewProjection;
             effect.JitterNDC = state.TAAJitter; // un-jitter the velocity pass (0 when TAA off)
+            effect.MipBias = FSO.Common.Utils.PPXDepthEngine.TAAMipBias; // sharper texture mips under TAA at scale<1
             // Subworld ModelTranslation fix — see TerrainComponent.Draw / WallComponentRC.Draw.
             var prevVP = state.PreviousViewProjection;
             if (state.Cameras.ModelTranslation.HasValue)

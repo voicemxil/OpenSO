@@ -1139,6 +1139,9 @@ namespace FSO.LotView
             // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
             // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
             PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1;
+            // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias).
+            PPXDepthEngine.TAAMipBias = (taaOn && scale < 0.999f && scale > 0f)
+                ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
@@ -1276,6 +1279,9 @@ namespace FSO.LotView
             // reconstruction valid sample positions here. Mirrors ChangeAAMode; set before
             // EnableHistoryTargets below (history sizes to the native grid in TAAU mode).
             PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1;
+            // Content-shader mip bias under TAA (mirrors ChangeAAMode).
+            PPXDepthEngine.TAAMipBias = (cityTaaOn && scale < 0.999f && scale > 0f)
+                ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;

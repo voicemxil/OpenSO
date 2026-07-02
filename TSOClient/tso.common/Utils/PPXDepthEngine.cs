@@ -496,6 +496,10 @@ namespace FSO.Common.Utils
         // NATIVE grid; the resolve then accumulates jittered render-res samples directly onto it — detail
         // beyond render resolution emerges from the sample positions (the supersampled-like resolve).
         public static bool TAAUEnabled;
+        // Negative texture LOD bias for content shaders under TAA at render scale < 1 (log2(scale), clamped
+        // -2; 0 otherwise). Set by World.ChangeAAMode / ConfigureCityAA; consumed by every velocity-technique
+        // param push (RCObject objects/walls, GrassShader terrain/roofs). See the shaders' MipBias comments.
+        public static float TAAMipBias;
         // True only while DrawBackbuffer invokes TAAFunc as the upscaler stage; TAAResolve reads it to bind
         // native-size history + set InvColorSize (render) vs InvScreenSize (native).
         public static bool TAAUpscaleMode;

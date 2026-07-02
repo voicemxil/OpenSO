@@ -18,6 +18,7 @@ namespace FSO.LotView.Effects
         private EffectParameter pPreviousWorld;
         private EffectParameter pPreviousViewProjection;
         private EffectParameter pJitterNDC;
+        private EffectParameter pMipBias;
 
         private EffectParameter pObjectID;
         private EffectParameter pUVScale;
@@ -55,6 +56,11 @@ namespace FSO.LotView.Effects
         public Vector2 JitterNDC
         {
             set { if (pJitterNDC != null) pJitterNDC.SetValue(value); }
+        }
+        // Negative texture LOD bias under TAA at render scale < 1 — see RCObject.fx MipBias.
+        public float MipBias
+        {
+            set { if (pMipBias != null) pMipBias.SetValue(value); }
         }
 
         public float ObjectID
@@ -136,6 +142,7 @@ namespace FSO.LotView.Effects
             pPreviousWorld = Parameters["PreviousWorld"];                     //null if shader not yet extended
             pPreviousViewProjection = Parameters["PreviousViewProjection"];  //null if shader not yet extended
             pJitterNDC = Parameters["JitterNDC"];                            //null if shader not yet extended
+            pMipBias = Parameters["MipBias"];                                //null if shader not yet extended
 
             pObjectID = Parameters["ObjectID"];
             pUVScale = Parameters["UVScale"];
