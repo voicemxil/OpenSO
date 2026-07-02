@@ -690,9 +690,11 @@ namespace FSO.LotView
                 && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
             if (taaJitterReady)
             {
-                // R2 (plastic-number) low-discrepancy sequence: free-running index, no period to wrap -
-                // see FSO.Common.Utils.R2Jitter for why this replaced Halton(2,3).
-                var r2 = FSO.Common.Utils.R2Jitter.Sample(State.TAAFrameIndex++);
+                // Cycled Halton(2,3) — the industry-standard TAA jitter (isotropic sample-to-sample jumps,
+                // short repeating cycle so converged output goes STILL). Replaced free-running R2, whose
+                // constant-vector increments made partially-converged aliasing crawl directionally under
+                // TAA's recency-weighted accumulation — see R2Jitter class docs.
+                var r2 = FSO.Common.Utils.R2Jitter.SampleHalton(State.TAAFrameIndex++, FSO.Common.Utils.PPXDepthEngine.SSAA);
                 float hx = r2.X; // [-0.5, +0.5)
                 float hy = r2.Y;
                 var bb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();

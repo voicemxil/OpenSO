@@ -1529,7 +1529,9 @@ namespace FSO.Client.Rendering.City
             if (cityTAA)
             {
                 const float JITTER_PIXELS = 0.5f;
-                var r2 = FSO.Common.Utils.R2Jitter.Sample(m_TAAFrameIndex++);
+                // Cycled Halton(2,3) (mirrors World.PreDraw) — see R2Jitter class docs for why this
+                // replaced the free-running R2 sequence (directional crawl under recency weighting).
+                var r2 = FSO.Common.Utils.R2Jitter.SampleHalton(m_TAAFrameIndex++, FSO.Common.Utils.PPXDepthEngine.SSAA);
                 float hx = r2.X;
                 float hy = r2.Y;
                 var jbb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
