@@ -34,8 +34,10 @@ namespace FSO.LotView.Utils
             return MathHelper.Clamp(BLEND_FACTOR * scale, 0.03f, BLEND_FACTOR);
         }
 
-        // Cap on the per-pixel accumulation counter N. Stable pixels converge to ~1/MAX_ACCUM current weight
-        // (deep supersampling); reset to 0 on disocclusion. Must match the shader's decode (metaR * MAX_ACCUM).
+        // Cap on the per-pixel accumulation counter N (meta.R). The counter drives the WARMUP ramp (raw
+        // image first after a history clear / off-screen reset, detail builds on top) — it does NOT deepen
+        // blend trust past the diff-driven baseline (that direction ghosted in every variant tried). Must
+        // match the shader's decode (metaR * MAX_ACCUM).
         private const float MAX_ACCUM = 64f;
 
         // Per-frame jitter delta (UV units), set by World.PreDraw. Added back during history reprojection
@@ -43,9 +45,10 @@ namespace FSO.LotView.Utils
         public static Vector2 JitterDeltaUV;
 
         // Diagnostic (graphics options motion-blur "Debug" while TAA is on): blit the META target to the
-        // screen instead of the resolved frame. Red intensity = accumulation counter N/MaxAccum — black means
-        // the pixel resets every frame (never converges -> raw jitter shows), full red = fully converged.
-        // Accumulation itself runs untouched underneath; this only changes which texture hits the screen.
+        // screen instead of the resolved frame, via the TAADebug technique's diagnostic encode:
+        // RED = effective history trust this frame (dark = taking current / warming up, bright = deep
+        // accumulation), GREEN = depth/ghost reject strength, BLUE = non-reprojectable. The resolve itself
+        // runs untouched underneath; this only changes the meta encode + which texture hits the screen.
         public static bool DebugAccum;
 
         public static void Draw(GraphicsDevice gd, RenderTarget2D src)

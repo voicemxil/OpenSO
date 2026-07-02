@@ -419,11 +419,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 
     if (debugMeta)
     {
-        // Diagnostic encode for the accumulation debug blit: red = converged N, green = reject strength
-        // (depth or ghost), blue = non-reprojectable. GB/A-consuming logic is disabled in this technique,
-        // so next frame never decodes these bytes as velocity/oscillation. A = 0 specifically so toggling
-        // debug OFF can't leave a stale A=1 that would decode as full oscillation trust screen-wide.
-        o.meta = float4(newN / MaxAccum, max(depthReject, ghostReject), reprojectable ? 0.0 : 1.0, 0.0);
+        // Diagnostic encode for the debug blit — EFFECTIVE signals, not internal counters (the old
+        // "red = N" view once showed full-red while the blend wasn't actually deep, misleading a whole
+        // debugging round): red = effective history trust this frame (1 - blend: dark = taking current/
+        // warming up, bright = deep accumulation), green = reject strength (depth or ghost), blue =
+        // non-reprojectable. Note the reactive/oscillation contributions are compiled out under debugMeta
+        // (they read meta GB/A, which this technique repurposes), so red slightly overstates trust vs the
+        // shipping technique. A = 0 so toggling debug OFF can't leave a stale byte that decodes as full
+        // oscillation trust screen-wide.
+        o.meta = float4(1.0 - blend, max(depthReject, ghostReject), reprojectable ? 0.0 : 1.0, 0.0);
     }
     else
     {
