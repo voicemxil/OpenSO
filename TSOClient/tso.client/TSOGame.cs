@@ -221,6 +221,8 @@ namespace FSO.Client
                 AORadius = settings.AORadius,
                 AOIntensity = settings.AOIntensity,
                 VelocityDebug = settings.VelocityDebug,
+                VelocityDebugDepth = settings.VelocityDebugDepth,
+                TAADebug = settings.TAADebug,
                 Sharpen = settings.Sharpen,
                 SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,

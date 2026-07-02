@@ -19,6 +19,10 @@
 // magnitude, wrong direction, per-vertex flicker, etc.
 
 float Scale; // amplifies tiny velocities so they're visible. 30 reads typical pan as a clear color shift.
+// 0 = velocity hue view (default). 1 = DEPTH view: grayscale of the packed normalized linear depth (v.b,
+// 0=near..1=far); unwritten pixels stay black. Lets the same debug pass validate the depth the TAA
+// disocclusion tests and motion blur's soft depth compare actually consume.
+float DepthMode;
 
 texture velocityTex;
 sampler velocitySampler = sampler_state {
@@ -45,6 +49,18 @@ float4 Viz_PS(VSOut input) : COLOR0
 
     // alpha == 0 -> pure black: nothing wrote velocity at this pixel.
     if (v.a < 0.5) return float4(0, 0, 0, 1);
+
+    if (DepthMode > 0.5)
+    {
+        // DEPTH view: grayscale of the packed normalized linear depth (near = dark, far = bright).
+        // The buffer is fp32 (smooth), but displaying it through the 8-bit backbuffer quantizes to 256
+        // levels — visible banding that ISN'T in the data. Dither by +-1/2 display LSB (interleaved
+        // gradient noise) so display quantization dissolves; genuine source banding (steps far larger
+        // than one display LSB) would still show as steps.
+        float ign = frac(52.9829189 * frac(dot(input.Coord * 1024.0, float2(0.06711056, 0.00583715))));
+        float d = saturate(v.b + (ign - 0.5) / 255.0);
+        return float4(d, d, d, 1);
+    }
 
     // Encode velocity around mid-gray. R = vx*scale + 0.5, G = vy*scale + 0.5.
     float r = saturate(v.r * Scale + 0.5);

@@ -1233,15 +1233,13 @@ namespace FSO.LotView
                 PPXDepthEngine.AOFunc = Utils.AOPass.Draw;
             }
 
-            // Velocity diagnostic visualizer: when on, overrides the entire post chain in DrawBackbuffer
-            // so the user sees the raw MRT1 buffer instead of the scene. Surfacing this lets us debug
-            // which shaders' DrawWithVelocity techniques are correct without guessing from blur artifacts.
-            // With TAA active the same Debug option instead shows TAA's ACCUMULATION counter (red intensity =
-            // N/MaxAccum: black = resets every frame -> raw jitter shows through there; bright = converged) —
-            // that's the thing to diagnose when jitter/shimmer persists, so it takes priority over the raw
-            // velocity view (turn TAA off to see that one).
-            Utils.TAAResolve.DebugAccum = cfg.VelocityDebug && taaReady;
-            bool velocityDebug = wantVelocity && cfg.VelocityDebug && !taaReady && WorldContent.VelocityViz != null;
+            // Velocity diagnostic visualizer (motion-blur combo "Debug (velocity/depth)"): when on, overrides
+            // the entire post chain in DrawBackbuffer so the user sees the raw MRT1 buffer (hue = velocity,
+            // or grayscale packed depth) instead of the scene — independent of TAA now. The TAA meta/trust
+            // debug view lives on the TAA dropdown ("On + Debug" -> cfg.TAADebug); if both are enabled the
+            // velocity visualizer wins (it bypasses the whole chain, TAA included).
+            Utils.TAAResolve.DebugAccum = cfg.TAADebug && taaReady;
+            bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }
 
@@ -1326,10 +1324,10 @@ namespace FSO.LotView
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
             PPXDepthEngine.AOFunc = null;
 
-            // Debug selection mirrors ChangeAAMode: with TAA on, the "Debug" option shows the accumulation
-            // view (TAADebug technique); with TAA off, the raw velocity visualizer.
-            Utils.TAAResolve.DebugAccum = cfg.VelocityDebug && taaReady;
-            bool velocityDebug = wantVelocity && cfg.VelocityDebug && !taaReady && WorldContent.VelocityViz != null;
+            // Debug selection mirrors ChangeAAMode: TAA meta/trust view from the TAA dropdown (cfg.TAADebug),
+            // velocity/depth visualizer from the motion-blur combo — independent; velocity view wins if both.
+            Utils.TAAResolve.DebugAccum = cfg.TAADebug && taaReady;
+            bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }
 

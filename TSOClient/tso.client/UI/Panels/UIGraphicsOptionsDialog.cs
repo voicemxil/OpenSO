@@ -71,7 +71,8 @@ namespace FSO.Client.UI.Panels
         private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
         private const float RENDER_SCALE_MIN = 0.5f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
-        private const int MBLUR_DEBUG = 99; // Motion-blur dropdown sentinel for the velocity-buffer debug view
+        private const int MBLUR_DEBUG = 99;       // Motion-blur dropdown sentinel: velocity-buffer debug (hue) view
+        private const int MBLUR_DEBUG_DEPTH = 98; // Motion-blur dropdown sentinel: velocity-buffer DEPTH (v.b) view
 
         // Unified anti-aliasing modes: mutually-exclusive (MSAA, PostAA) combinations — MSAA and SMAA are
         // never enabled together. The dropdown value is the index into this table. MSAA tiers above the GPU's
@@ -466,6 +467,8 @@ namespace FSO.Client.UI.Panels
                 AORadius = settings.AORadius,
                 AOIntensity = settings.AOIntensity,
                 VelocityDebug = settings.VelocityDebug,
+                VelocityDebugDepth = settings.VelocityDebugDepth,
+                TAADebug = settings.TAADebug,
                 Sharpen = settings.Sharpen,
                 SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,
@@ -499,11 +502,12 @@ namespace FSO.Client.UI.Panels
             // --- Effects (bottom of the column) ---
             AddMotionBlurRow("Motion blur strength", 358);
             MotionBlurCombo = AddRow("Motion blur (3D)", 326,
-                new[] { "Off", "On", "Debug (velocity)" }, new[] { 0, 2, MBLUR_DEBUG }, out _mblurObjs,  // 2 = per-pixel 3D
+                new[] { "Off", "On", "Debug (velocity)", "Debug (depth)" }, new[] { 0, 2, MBLUR_DEBUG, MBLUR_DEBUG_DEPTH }, out _mblurObjs,  // 2 = per-pixel 3D
                 v =>
                 {
                     var s = GlobalSettings.Default;
-                    s.VelocityDebug = (v == MBLUR_DEBUG);
+                    s.VelocityDebug = (v == MBLUR_DEBUG || v == MBLUR_DEBUG_DEPTH);
+                    s.VelocityDebugDepth = (v == MBLUR_DEBUG_DEPTH);
                     s.MotionBlur = (v == 2) ? 2 : 0;
                     ApplyAndRefresh(true);
                 });
@@ -522,8 +526,14 @@ namespace FSO.Client.UI.Panels
 
             // --- Anti-aliasing (top of the column; added last so its drop-down overlays everything) ---
             TAACombo = AddRow("Temporal AA (3D)", 78,
-                new[] { "Off", "On" }, new[] { 0, 1 }, out _taaObjs,
-                v => { GlobalSettings.Default.TAA = v == 1; ApplyAndRefresh(); });
+                new[] { "Off", "On", "On + Debug" }, new[] { 0, 1, 2 }, out _taaObjs,
+                v =>
+                {
+                    var s = GlobalSettings.Default;
+                    s.TAA = v >= 1;
+                    s.TAADebug = v == 2; // TAA meta/trust debug view (moved here from the motion-blur combo)
+                    ApplyAndRefresh();
+                });
             // One unified AA selector: mutually-exclusive MSAA / FXAA / SMAA, MSAA tiers capped to the GPU max
             // (so 8× is hidden on Apple Silicon). Value = index into AAModes; OnAAMode sets MSAALevel + PostAA.
             var aaNames = new System.Collections.Generic.List<string>();
@@ -851,6 +861,8 @@ namespace FSO.Client.UI.Panels
                 AORadius = s.AORadius,
                 AOIntensity = s.AOIntensity,
                 VelocityDebug = s.VelocityDebug,
+                VelocityDebugDepth = s.VelocityDebugDepth,
+                TAADebug = s.TAADebug,
                 Sharpen = s.Sharpen,
                 SharpenAmount = s.SharpenAmount,
                 Weather = s.Weather,
@@ -875,8 +887,8 @@ namespace FSO.Client.UI.Panels
             InternalChange = true;
             SelectValue(AACombo, _aaObjs, CurrentAAIndex());
             SetRenderScaleSlider(s.RenderScale);
-            SelectValue(TAACombo, _taaObjs, s.TAA ? 1 : 0);
-            SelectValue(MotionBlurCombo, _mblurObjs, s.VelocityDebug ? MBLUR_DEBUG : ((s.MotionBlur == 2) ? 2 : 0));
+            SelectValue(TAACombo, _taaObjs, s.TAA ? (s.TAADebug ? 2 : 1) : 0);
+            SelectValue(MotionBlurCombo, _mblurObjs, s.VelocityDebug ? (s.VelocityDebugDepth ? MBLUR_DEBUG_DEPTH : MBLUR_DEBUG) : ((s.MotionBlur == 2) ? 2 : 0));
             SetMotionBlurSlider(s.MotionBlurAmount);
             SelectValue(BloomCombo, _bloomObjs, s.Bloom ? 1 : 0);
             SetBloomSliders(s.BloomThreshold, s.BloomIntensity);

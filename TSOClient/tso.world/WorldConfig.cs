@@ -66,6 +66,8 @@ namespace FSO.LotView
         public float AORadius = 0.5f;       //world-space sample radius
         public float AOIntensity = 1.0f;    //AO multiplier in the composite (0..2)
         public bool VelocityDebug = false;  //diagnostic: visualize MRT1 velocity buffer to screen (3D only)
+        public bool VelocityDebugDepth = false; //diagnostic: velocity debug shows packed DEPTH (v.b) instead of hue
+        public bool TAADebug = false;       //diagnostic: TAA meta/trust debug view (TAA dropdown "On + Debug")
 
         public bool Directional = true;
         public bool Complex = false;
