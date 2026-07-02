@@ -698,9 +698,16 @@ namespace FSO.LotView
                 var bb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
                 int w = bb?.Width ?? device.Viewport.Width;
                 int h = bb?.Height ?? device.Viewport.Height;
+                // Jitter must be ±0.5px OF THE GRID TAA RESOLVES ON in every mode. jpx is in RENDER pixels
+                // (the jittered projection rasterizes the backbuffer). Upscaling (SSAA<1): TAA runs at render
+                // res (pre-EASU) -> factor 1, already correct. Native: factor 1. SUPERSAMPLING (SSAA>1): TAA
+                // runs at native res after the box downsample, and ±0.5 render px is only ±0.5/SSAA native px
+                // (half the reference footprint at 2x -> weakened sub-pixel coverage) -> scale by SSAA so the
+                // resolve grid sees the full ±0.5px spread.
+                float jscale = System.Math.Max(1f, FSO.Common.Utils.PPXDepthEngine.SSAA);
                 // Sub-pixel offset in PIXELS, range ±JITTER_PIXELS (reference ±0.5px footprint at 0.5).
-                float jpxX = hx * (2f * JITTER_PIXELS);
-                float jpxY = hy * (2f * JITTER_PIXELS);
+                float jpxX = hx * (2f * JITTER_PIXELS) * jscale;
+                float jpxY = hy * (2f * JITTER_PIXELS) * jscale;
                 // Camera is PERSPECTIVE — jitter is applied as an NDC translation via Projection.M31/M32
                 // (depth-independent for perspective). NDC<->pixel: ndc = 2*px/dim, hence the 2x (this is
                 // the standard pixel->NDC conversion, NOT a doubling of the jitter amount).

@@ -289,9 +289,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 
     // --- ACCUMULATION COUNTER: grows +1 per frame (cap MaxAccum); hard-resets only when history is off-
     //     screen. Deliberately NOT zeroed by depthReject (noisy edge signal pinned silhouettes at N=0).
-    //     Ghost/reactive events SOFT-CAP it instead: low N keeps the pixel responsive AND collapses conf
-    //     below, snapping the variance clamp back to tight (1.3 sigma) exactly where contaminated history
-    //     needs scrubbing — while off-screen N=0 stays a true reset. ---
+    //     Ghost/reactive events SOFT-CAP it instead. Its job: the WARMUP RAMP in the blend section — at low
+    //     N the pixel takes mostly-current (raw image first, detail builds on top) instead of blending in
+    //     the cleared-black history (which looked darkened/blurry until filled). It does NOT deepen trust
+    //     past the baseline blend (that direction ghosted in every variant tried). ---
     float newN = reprojectable ? min(prevN + 1.0, MaxAccum) : 0.0;
     newN = lerp(newN, min(newN, 2.0), ghostReject);
     newN = lerp(newN, min(newN, 8.0), reactive);
@@ -341,6 +342,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 
     float motionBoost = saturate(vmag * 20.0) * 0.35; // more current when moving fast (less ghosting)
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
+
+    // WARMUP RAMP (counter-driven): with N=0 (freshly cleared history / off-screen reset) the history is
+    // BLACK, and blending 94% of black produced a darkened, blurry image that "filled in" over ~16 frames
+    // whenever TAA was enabled or the render scale changed. Seed from the current frame instead: blend=1 at
+    // N=0 (raw image first), then 1/2, 1/3, ... — detail builds ON TOP of a correct base, and the ramp is a
+    // no-op once 1/(N+1) drops below the BlendFactor floor (~16 frames). Ghost-safe BY DIRECTION: max() can
+    // only push toward MORE current frame, never deepen history trust.
+    blend = max(blend, 1.0 / (newN + 1.0));
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));

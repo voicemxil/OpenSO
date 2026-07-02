@@ -1535,7 +1535,11 @@ namespace FSO.Client.Rendering.City
                 var jbb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
                 int jw = jbb?.Width ?? m_GraphicsDevice.Viewport.Width;
                 int jh = jbb?.Height ?? m_GraphicsDevice.Viewport.Height;
-                ndcJitter = new Vector2(2f * (hx * 2f * JITTER_PIXELS) / jw, 2f * (hy * 2f * JITTER_PIXELS) / jh);
+                // Jitter = ±0.5px of the grid TAA resolves on (mirrors World.PreDraw): under SUPERSAMPLING
+                // TAA runs at native res after the downsample, so scale the render-px jitter by SSAA to keep
+                // the full reference footprint; upscaling/native need no scaling (TAA at render res / native).
+                float jscale = System.Math.Max(1f, FSO.Common.Utils.PPXDepthEngine.SSAA);
+                ndcJitter = new Vector2(2f * (hx * 2f * JITTER_PIXELS) * jscale / jw, 2f * (hy * 2f * JITTER_PIXELS) * jscale / jh);
                 ProjectionMatrix.M31 -= ndcJitter.X;
                 ProjectionMatrix.M32 -= ndcJitter.Y;
             }
