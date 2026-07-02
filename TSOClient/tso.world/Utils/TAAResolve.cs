@@ -106,10 +106,12 @@ namespace FSO.LotView.Utils
             effect.Parameters["MaxAccum"]?.SetValue(MAX_ACCUM);
             effect.Parameters["JitterDelta"]?.SetValue(JitterDeltaUV);
             // Depth-disocclusion tuning keyed to the ACTUAL history format. fp16 history stores depth at
-            // ~11 effective bits, so the reject curve can be sharp (slope 12, no offset, tiny dead-zone);
+            // ~11 effective bits, so the reject curve can be sharp (slope 12, no offset, small dead-zone);
             // the RGBA8 fallback keeps the old blunted curve that existed to hide 1/255 quantization.
+            // Dead-zone 0.0015 (was 0.0005): the velocity buffer is fp16 now too, so BOTH sides of the
+            // ghost compare carry ~5e-4 relative quantization — the zone covers their sum with margin.
             effect.Parameters["DepthRejectParams"]?.SetValue(PPXDepthEngine.HistoryIsFP16
-                ? new Vector4(0.0005f, 12f, 0f, 0.02f)
+                ? new Vector4(0.0015f, 12f, 0f, 0.02f)
                 : new Vector4(2f / 255f, 6f, 0.25f, 0.05f));
             // Un-jittered offset for the variance-box taps. Sign derivation, verified against the velocity
             // shaders (which compute currNDC = clip.xy/w - JitterNDC to UN-jitter): jittered content sits at

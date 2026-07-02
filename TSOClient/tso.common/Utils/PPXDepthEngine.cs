@@ -140,14 +140,22 @@ namespace FSO.Common.Utils
             if (VelocityTarget == null || VelocityTarget.Width != Backbuffer.Width || VelocityTarget.Height != Backbuffer.Height)
             {
                 VelocityTarget?.Dispose();
-                // Vector4 (full 32-bit float per channel), NOT HalfVector4: the .b channel stores linear view
-                // depth for the SSAO, and 16-bit half only has ~10 mantissa bits -> the depth quantizes to
-                // visible steps that the AO depth-compare turns into banding/false occlusion. 32-bit float is
-                // the proper deferred-depth precision (MonoGame can't bind the hardware depth buffer as a
-                // texture, so linear depth lives in a colour target). .rg velocity also benefits.
-                VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.Vector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
+                // HalfVector4 (fp16): every velocity-aware draw writes this scene-wide, so its bandwidth is
+                // the TAA path's single biggest cost — fp16 halves it (8 vs 16 bytes/px). It was fp32 only
+                // for SSAO's depth-compare (half-precision linear depth banded the AO) — and AO is dead code
+                // now. TAA's own consumers are fine at fp16: .rg velocity is sub-pixel scale (relative fp16
+                // precision is ample), and the .b depth quantization (~5e-4 relative) is covered by widening
+                // the disocclusion dead-zone (see TAAResolve.DepthRejectParams). Restore Vector4 if AO is
+                // ever revived.
+                VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 NormalTarget?.Dispose();
-                NormalTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
+                // NormalTarget (world-space normals, MRT2) is NOT allocated: its only consumer was GTAO,
+                // which is dead code (AO removed from the options). Writing it cost 8 bytes/px of bandwidth
+                // on EVERY velocity-aware draw — a major reason the TAA path underperformed MSAA 8x. The
+                // velocity shaders still declare the COLOR2 output; D3D11 simply drops writes to unbound
+                // slots (BindVelocityMRT binds 2 targets when NormalTarget is null). Re-allocate here if
+                // AO is ever revived.
+                NormalTarget = null;
                 // Tile targets: ceil(res / K). Reallocated here whenever the velocity target is (re)sized.
                 int tw = System.Math.Max(1, (Backbuffer.Width + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
                 int th = System.Math.Max(1, (Backbuffer.Height + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
@@ -574,13 +582,27 @@ namespace FSO.Common.Utils
                     if (taau)
                     {
                         // Cosmic TAAU occupies the resolve slot (stage counting unchanged): src is the
-                        // render-res jittered frame; output/history are native.
+                        // render-res jittered frame; output/history are native. When a later stage follows,
+                        // skip the blit and hand it the native history target directly (same perf win as
+                        // the native-TAA path).
                         TAAUpscaleMode = true;
-                        TAAFunc(GD, src);
-                        TAAUpscaleMode = false;
+                        if (dst != null)
+                        {
+                            TAASkipFinalBlit = true;
+                            TAAOutput = null;
+                            TAAFunc(GD, src);
+                            TAASkipFinalBlit = false;
+                            TAAUpscaleMode = false;
+                            if (TAAOutput != null) { src = TAAOutput; TAAOutput = null; }
+                        }
+                        else
+                        {
+                            TAAFunc(GD, src);
+                            TAAUpscaleMode = false;
+                            src = dst;
+                        }
                     }
-                    else SSAAFunc(GD, src);
-                    src = dst;
+                    else { SSAAFunc(GD, src); src = dst; }
                 }
                 if (doMotionBlur)
                 {
@@ -602,9 +624,24 @@ namespace FSO.Common.Utils
                 {
                     remaining--;
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
-                    GD.SetRenderTarget(dst);
-                    TAAFunc(GD, src);
-                    src = dst;
+                    if (dst != null)
+                    {
+                        // A later stage (RCAS/bloom/AO) consumes the result — let it read the history target
+                        // directly instead of paying a fullscreen copy into the ping-pong target (perf: the
+                        // resolve already renders the full frame into history; the blit was pure duplication).
+                        TAASkipFinalBlit = true;
+                        TAAOutput = null;
+                        TAAFunc(GD, src);
+                        TAASkipFinalBlit = false;
+                        if (TAAOutput != null) { src = TAAOutput; TAAOutput = null; }
+                    }
+                    else
+                    {
+                        // TAA is the final stage: the resolve's blit is the only way onto the screen.
+                        GD.SetRenderTarget(null);
+                        TAAFunc(GD, src);
+                        src = null;
+                    }
                 }
                 if (doAO)
                 {

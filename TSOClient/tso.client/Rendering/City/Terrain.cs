@@ -1545,6 +1545,13 @@ namespace FSO.Client.Rendering.City
                 ProjectionMatrix.M31 -= ndcJitter.X;
                 ProjectionMatrix.M32 -= ndcJitter.Y;
             }
+            // Publish the city's jitter (zero when city TAA is off) — the SAME M31/M32 convention as the lot
+            // (WorldState.Projection), so every consumer works unchanged here: TAAResolve's SampleJitterUV
+            // (the variance box + the Cosmic TAAU sample-position reconstruction) and the sky dome's own
+            // jitter application. Previously the city never wrote this, which (a) left the sky dome applying
+            // STALE LOT jitter against the city's own sequence and (b) gave TAAU no sample positions in the
+            // city — the map rendered black (why city TAAU was force-disabled).
+            FSO.Common.Utils.PPXDepthEngine.TAAJitterNDC = ndcJitter;
             FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
 
             Matrix ViewMatrix = Camera.View;

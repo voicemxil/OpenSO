@@ -1271,11 +1271,11 @@ namespace FSO.LotView
             // msaa (not just the engine field) so the _CityLastMSAA change-detect cache below stays coherent.
             bool cityTaaOn = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             if (cityTaaOn) msaa = 0;
-            // Cosmic TAAU is LOT-ONLY for now: the city view's separate jitter path never publishes
-            // PPXDepthEngine.TAAJitterNDC (its velocity shaders un-jitter via their own JitterNDC uniform),
-            // so the TAAU reconstruction has no valid sample-position offset here — enabling it rendered the
-            // map black. The city keeps the validated FSR1 + render-res-TAA chain at any Upscaler setting.
-            PPXDepthEngine.TAAUEnabled = false;
+            // Cosmic TAAU in the city: enabled now that Terrain.Draw publishes the city's jitter to
+            // PPXDepthEngine.TAAJitterNDC each frame (same M31/M32 convention as the lot), giving the TAAU
+            // reconstruction valid sample positions here. Mirrors ChangeAAMode; set before
+            // EnableHistoryTargets below (history sizes to the native grid in TAAU mode).
+            PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
