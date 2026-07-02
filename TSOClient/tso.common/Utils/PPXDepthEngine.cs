@@ -10,6 +10,7 @@ namespace FSO.Common.Utils
         private static RenderTarget2D Backbuffer;
         private static RenderTarget2D ResolveTarget;  //screen-res intermediate for multi-pass resolves
         private static RenderTarget2D ResolveTarget2; //2nd ping-pong target (scale -> FXAA -> sharpen needs two)
+        private static RenderTarget2D RenderPostTarget; //RENDER-res intermediate: spatial AA before the upscaler (SSAA<1 only)
         private static RenderTarget2D VelocityTarget; //3D-mode per-pixel screen-space velocity (HalfVector4), MRT1 for TAA / motion blur
         // World-space normal (HalfVector4: .xyz normal, .a validity). MRT2, written by the same velocity-
         // aware shaders. Required for GTAO — derived ddx/ddy normals from NDC depth were noisy garbage.
@@ -82,6 +83,13 @@ namespace FSO.Common.Utils
             ResolveTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
             if (ResolveTarget2 != null) ResolveTarget2.Dispose();
             ResolveTarget2 = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
+            // RENDER-res intermediate for the upscaling path: spatial AA (FXAA/SMAA) must run at RENDER
+            // resolution BEFORE the upscaler (AMD FSR1 guideline — EASU/TAAU want anti-aliased input on the
+            // render grid; running them post-upscale smooths already-reconstructed pixels instead of the
+            // real edges). Only needed when SSAA < 1.
+            if (RenderPostTarget != null) { RenderPostTarget.Dispose(); RenderPostTarget = null; }
+            if (SSAA < 0.999f)
+                RenderPostTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, w, h, DepthFormat.None);
 
             // Bloom mip chain: half, quarter, ... of viewport res. HalfVector4 keeps highlights from clipping.
             if (BloomMip != null) foreach (var m in BloomMip) m?.Dispose();
@@ -257,13 +265,15 @@ namespace FSO.Common.Utils
                 return;
             }
             if (GD == null) return;
-            // TAA operates at the resolution of the surface it resolves: NATIVE (viewport) normally, but
-            // RENDER resolution when upscaling (SSAA < 1), where the TAA stage runs BEFORE the EASU upscale
-            // (see TAASkipFinalBlit). History/meta must match that surface 1:1. Callers (ChangeAAMode /
-            // ConfigureCityAA) invoke this after InitScreenTargets, so Backbuffer is already (re)sized.
+            // TAA operates at the resolution of the surface it RESOLVES ON: NATIVE (viewport) normally and
+            // under Cosmic TAAU (where the resolve is the upscaler and history is the native output grid),
+            // but RENDER resolution when upscaling via FSR 1 (TAA runs BEFORE the EASU upscale — see
+            // TAASkipFinalBlit). History/meta must match that surface 1:1. Callers (ChangeAAMode /
+            // ConfigureCityAA) invoke this after InitScreenTargets, so Backbuffer is already (re)sized,
+            // and set TAAUEnabled beforehand.
             int w = System.Math.Max(1, GD.Viewport.Width);
             int h = System.Math.Max(1, GD.Viewport.Height);
-            if (SSAA < 0.999f && Backbuffer != null)
+            if (SSAA < 0.999f && !TAAUEnabled && Backbuffer != null)
             {
                 w = Backbuffer.Width;
                 h = Backbuffer.Height;
@@ -473,6 +483,14 @@ namespace FSO.Common.Utils
         // and publishes the resolved frame via TAAOutput for the chain to feed into the upscaler.
         public static bool TAASkipFinalBlit;
         public static RenderTarget2D TAAOutput;
+        // Cosmic TAAU: the TAA resolve IS the upscaler (replaces EASU when render scale < 1). Set from
+        // WorldConfig (TAA on + Upscaler == TAAU) BEFORE EnableHistoryTargets so history/meta size to the
+        // NATIVE grid; the resolve then accumulates jittered render-res samples directly onto it — detail
+        // beyond render resolution emerges from the sample positions (the supersampled-like resolve).
+        public static bool TAAUEnabled;
+        // True only while DrawBackbuffer invokes TAAFunc as the upscaler stage; TAAResolve reads it to bind
+        // native-size history + set InvColorSize (render) vs InvScreenSize (native).
+        public static bool TAAUpscaleMode;
         // Optional ambient-occlusion pass (GTAO). Sits BEFORE bloom in the chain so AO darkens crevices
         // before bloom adds highlights — the standard order. Reads the velocity buffer for depth + scene
         // color for the composite, writes scene*AO to the bound target. null = off.
@@ -516,12 +534,28 @@ namespace FSO.Common.Utils
                 int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + (doTAA ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
                 int pong = 0;
 
-                // UPSCALING (+TAA): run TAA FIRST, at render resolution, on the raw jittered backbuffer —
-                // then upscale the anti-aliased result (see TAASkipFinalBlit doc). This also makes the
-                // ±0.5px jitter reference-correct relative to the grid TAA resolves on, and matches the
-                // velocity/history buffers 1:1. remaining stays >= 1 here (nonNative still pending), so TAA
-                // never needs to target the screen in this mode.
-                bool taaFirst = doTAA && SSAA < 0.999f;
+                // UPSCALING (+TAA), two modes:
+                //  * Cosmic TAAU (taau): the TAA resolve IS the upscaler — it runs in the nonNative stage
+                //    slot below, accumulating render-res jittered samples onto the NATIVE history grid.
+                //  * FSR 1 (taaFirst): TAA runs FIRST at render resolution on the raw jittered backbuffer,
+                //    then EASU upscales the anti-aliased result (AMD FSR1 order; see TAASkipFinalBlit doc).
+                //    remaining stays >= 1 here (nonNative still pending), so TAA never targets the screen.
+                bool taau = doTAA && SSAA < 0.999f && TAAUEnabled;
+                bool taaFirst = doTAA && SSAA < 0.999f && !taau;
+
+                // UPSCALING: spatial AA (FXAA/SMAA) runs FIRST, at RENDER resolution — before the TAA stage
+                // (same relative order as the native chain: spatial then temporal) and before the upscaler
+                // (EASU/TAAU want anti-aliased input on the render grid; post-upscale FXAA/SMAA smooth
+                // already-reconstructed pixels instead of the real edges).
+                bool postFirst = doPost && SSAA < 0.999f && RenderPostTarget != null;
+                if (postFirst)
+                {
+                    remaining--;
+                    GD.SetRenderTarget(RenderPostTarget);
+                    PostProcessFunc(GD, src);
+                    src = RenderPostTarget;
+                }
+
                 if (taaFirst)
                 {
                     remaining--;
@@ -537,7 +571,15 @@ namespace FSO.Common.Utils
                     remaining--;
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
                     GD.SetRenderTarget(dst);
-                    SSAAFunc(GD, src);
+                    if (taau)
+                    {
+                        // Cosmic TAAU occupies the resolve slot (stage counting unchanged): src is the
+                        // render-res jittered frame; output/history are native.
+                        TAAUpscaleMode = true;
+                        TAAFunc(GD, src);
+                        TAAUpscaleMode = false;
+                    }
+                    else SSAAFunc(GD, src);
                     src = dst;
                 }
                 if (doMotionBlur)
@@ -548,7 +590,7 @@ namespace FSO.Common.Utils
                     MotionBlurFunc(GD, src);
                     src = dst;
                 }
-                if (doPost)
+                if (doPost && !postFirst)
                 {
                     remaining--;
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
@@ -556,7 +598,7 @@ namespace FSO.Common.Utils
                     PostProcessFunc(GD, src);
                     src = dst;
                 }
-                if (doTAA && !taaFirst)
+                if (doTAA && !taaFirst && !taau)
                 {
                     remaining--;
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);

@@ -1136,6 +1136,9 @@ namespace FSO.LotView
             bool taaOn = cfg.TAA && State.CameraMode == CameraRenderMode._3D
                          && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             if (taaOn) msaa = 0;
+            // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
+            // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
+            PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
@@ -1266,7 +1269,13 @@ namespace FSO.LotView
             // TAA supersedes MSAA — same rationale as ChangeAAMode: a multisampled velocity MRT resolve
             // averages edge velocity/depth/mask and corrupts TAA's dilation/disocclusion. Force the LOCAL
             // msaa (not just the engine field) so the _CityLastMSAA change-detect cache below stays coherent.
-            if (cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null) msaa = 0;
+            bool cityTaaOn = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null;
+            if (cityTaaOn) msaa = 0;
+            // Cosmic TAAU is LOT-ONLY for now: the city view's separate jitter path never publishes
+            // PPXDepthEngine.TAAJitterNDC (its velocity shaders un-jitter via their own JitterNDC uniform),
+            // so the TAAU reconstruction has no valid sample-position offset here — enabling it rendered the
+            // map black. The city keeps the validated FSR1 + render-res-TAA chain at any Upscaler setting.
+            PPXDepthEngine.TAAUEnabled = false;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;

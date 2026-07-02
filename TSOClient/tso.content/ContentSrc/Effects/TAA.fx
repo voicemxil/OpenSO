@@ -26,7 +26,12 @@
 //      proven-stable pixel further (crisper persistent thin lines) but never below the baseline floor.
 //   7. Anti-flicker inverse-luma weighting on the final blend (LDR pipeline; no tonemap step).
 
-float2 InvScreenSize;
+float2 InvScreenSize; // 1 / OUTPUT (history) resolution — the grid TAA resolves on
+// 1 / INPUT color resolution. Equal to InvScreenSize normally; SMALLER-res (larger texels) under Cosmic
+// TAAU, where this pass IS the upscaler: it accumulates jittered render-res samples directly onto the
+// native output grid (history/meta native, color/velocity render-res). The reconstruction below is written
+// in input-pixel coordinates throughout, so the 1:1 mode is just the degenerate case.
+float2 InvColorSize;
 float  BlendFactor;   // baseline deep-history floor (current weight ~= BlendFactor on a stable pixel).
 float  MaxAccum;      // cap on the accumulation counter N. Matches TAAResolve.MAX_ACCUM.
 // Per-frame jitter delta (UV). Velocity is computed from the jittered projection, so adding this back when
@@ -192,14 +197,24 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     //    pixel center. At zero jitter the weights degenerate bit-identically to the old fixed 0.8889/0.0556
     //    (city view / jitter-off provably unchanged).
     //  * VELOCITY DILATION + depth range: taps at the true pixel (velocity buffer indexed by rendered pixel).
-    float2 texSize = 1.0 / InvScreenSize;
+    float2 texSize = 1.0 / InvScreenSize; // OUTPUT pixels (velocity gates, reactive thresholds)
+    float2 colSize = 1.0 / InvColorSize;  // INPUT color pixels (reconstruction, box, velocity taps)
     float2 boxUV = uv - SampleJitterUV;
-    float2 jShiftPx = SampleJitterUV * texSize; // tap displacement from pixel center, in pixels
-    float3 kx3 = float3(MitchellK(abs(-1.0 + jShiftPx.x)), MitchellK(abs(jShiftPx.x)), MitchellK(abs(1.0 + jShiftPx.x)));
-    float3 ky3 = float3(MitchellK(abs(-1.0 + jShiftPx.y)), MitchellK(abs(jShiftPx.y)), MitchellK(abs(1.0 + jShiftPx.y)));
+    // Nearest-jittered-sample reconstruction base (TAAU-general; exactly the M1 case at 1:1). In INPUT-pixel
+    // coordinates: the output pixel center sits at oPx; this frame's samples sit at texel centers + the
+    // content shift sPx. The nearest sample's texel is floor(oPx - sPx) — NOT floor(oPx - sPx - 0.5)+...,
+    // the -0.5 variant biases sample confidence low for ~half of output pixels (verified in design review).
+    float2 oPx = uv * colSize;
+    float2 sPx = SampleJitterUV * colSize;
+    float2 baseTexel = floor(oPx - sPx);
+    float2 fracd = (baseTexel + 0.5 + sPx) - oPx; // nearest sample's offset from the output center (input px)
+    // Tap k in {-1,0,1} sits at distance fracd + k; at 1:1, fracd == the jitter shift (old jShiftPx).
+    float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0)), MitchellK(abs(fracd.x)), MitchellK(abs(fracd.x + 1.0)));
+    float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0)), MitchellK(abs(fracd.y)), MitchellK(abs(fracd.y + 1.0)));
     float3 m1 = 0, m2 = 0;
     float3 filt = 0;
     float wsum = 0;
+    float3 crawC = 0; // the raw nearest jittered sample (center recon tap) — see texture-detail lean below
     float2 dilatedVel = float2(0, 0);
     float closestDepth = 1e9;
     float closestMask = 0.0;
@@ -207,15 +222,18 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     [unroll] for (int dy = -1; dy <= 1; dy++)
     [unroll] for (int dx = -1; dx <= 1; dx++)
     {
-        float2 ofs = float2(dx, dy) * InvScreenSize;
+        float2 ofs = float2(dx, dy) * InvColorSize; // neighborhood spans INPUT texels
         float3 c = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + ofs, 0, 0)).rgb);
         m1 += c;
         m2 += c * c;
-        // Reconstruction tap: raw texel + jitter-relative Mitchell weight (constant-folds under [unroll]).
-        float3 craw = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv + ofs, 0, 0)).rgb);
+        // Reconstruction tap: RAW texel center (bilinear at an exact center = point fetch) around the
+        // nearest jittered sample, weighted by its true distance to the output pixel center.
+        float2 tapUV = (baseTexel + float2(dx, dy) + 0.5) * InvColorSize;
+        float3 craw = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(tapUV, 0, 0)).rgb);
         float w = kx3[dx + 1] * ky3[dy + 1];
         filt += craw * w;
         wsum += w;
+        if (dx == 0 && dy == 0) crawC = craw; // folds under [unroll]
 
         float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
         // "No velocity written" -> depth sentinel 2.0 (beyond valid [0,1]) so genuinely-far valid pixels
@@ -228,6 +246,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     m2 *= (1.0 / 9.0);
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
     float3 curr = filt / wsum; // the filtered current sample (see comment above)
+
+    // TEXTURE-DETAIL PRESERVATION: TAA area-averages EVERYWHERE — unlike MSAA, which only supersamples
+    // edges and leaves texture interiors alone — so fine texture detail (sand speckles) converges to a
+    // mip-like blur, compounded by the Mitchell reconstruction spreading energy into neighbours every
+    // frame. On LOW-VARIANCE neighbourhoods there is no fizzle for the reconstruction to collapse, so lean
+    // the input toward the RAW nearest sample there: single-pixel texture energy survives accumulation
+    // (the converged result becomes the jitter-footprint average of raw samples — much closer to the
+    // no-AA texture look). High-variance content (foliage, edges, thin lines) keeps the full
+    // reconstruction that fixed its fizzle. RCAS after TAA recovers the remainder.
+    float texDetail = 1.0 - saturate(sigma.x * 12.0);
+    curr = lerp(curr, crawC, texDetail * 0.75); // (bisect exonerated this — the black view was city+TAAU)
 
     // Reproject with the dilated velocity (+ jitter delta cancels the jitter baked into the velocity buffer).
     // NO velocity-validity gate: the buffer is un-jittered now, so "velocity never written" decodes as zero
@@ -315,7 +344,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float prevSgn = step(0.5, pm.a);
         float prevOsc = saturate((pm.a - 0.5 * prevSgn) / 0.498);
         float dl   = curr.x - historyRaw.x; // signed, pre-clamp history
-        float mag  = step(0.01, abs(dl));   // amplitude gate: below this is converged noise, not fizzle
+        // Amplitude gate raised 0.01 -> 0.03: low-contrast texture shimmer (sand speckles under jitter)
+        // must NOT qualify for oscillation trust-deepening — the extra-deep average was "painting over"
+        // fine ground texture. High-contrast fizzle (foliage leaf/sky flips) clears 0.03 easily.
+        float mag  = step(0.03, abs(dl));
         float sgn  = step(0.0, dl);
         float flip = mag * abs(sgn - prevSgn); // 1 only when a real-amplitude delta reversed sign
         osc = lerp(prevOsc, flip, 0.125);      // ~8-frame EMA
@@ -394,13 +426,25 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float motionBoost = saturate(vmag * 20.0) * 0.35; // more current when moving fast (less ghosting)
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
-    // WARMUP RAMP (counter-driven): with N=0 (freshly cleared history / off-screen reset) the history is
-    // BLACK, and blending 94% of black produced a darkened, blurry image that "filled in" over ~16 frames
-    // whenever TAA was enabled or the render scale changed. Seed from the current frame instead: blend=1 at
-    // N=0 (raw image first), then 1/2, 1/3, ... — detail builds ON TOP of a correct base, and the ramp is a
-    // no-op once 1/(N+1) drops below the BlendFactor floor (~16 frames). Ghost-safe BY DIRECTION: max() can
-    // only push toward MORE current frame, never deepen history trust.
-    blend = max(blend, 1.0 / (newN + 1.0));
+    // WARMUP RAMP (counter-driven): with no accumulated history (fresh clear / off-screen reset) the
+    // history buffer is BLACK, and blending any of it darkens the image. Seed from the current frame:
+    // full current on the first frame, then 1/2, 1/3, ... — detail builds ON TOP of a correct base, and
+    // the ramp is a no-op once it drops below the BlendFactor floor (~16 frames). KEYED OFF min(prevN,newN):
+    // prevN is the evidence that actually EXISTS in the history (prevN=0 on frame one -> blend=1 -> output
+    // IS the raw frame; using newN here was an off-by-one that blended 50% cleared-black into frame one —
+    // the "starts darkened" bug), while newN keeps the ghost/reactive soft-caps' responsiveness boost (a
+    // capped newN=2 still floors blend at 1/3 to scrub contaminated history). Ghost-safe BY DIRECTION:
+    // max() can only push toward MORE current frame, never deepen history trust.
+    blend = max(blend, 1.0 / (min(prevN, newN) + 1.0));
+
+    // TEXTURE-DETAIL blend floor (pairs with the raw-sample input lean above): even with a raw input, the
+    // CONVERGED value is the temporal mean over the jitter footprint, which wipes single-texel texture
+    // detail (sand speckles) that edge-only spatial AA (FXAA/SMAA) never touches. On low-variance texture
+    // regions, keep the blend responsive (~3-4 frame window) so the per-frame raw sample dominates — the
+    // point-sampled "crunchy" texture look survives, at the cost of a small residual shimmer there (low
+    // amplitude, since these regions are low-contrast by definition). Foliage/edges (high sigma) keep the
+    // full deep accumulation — texDetail is ~0 there.
+    blend = max(blend, texDetail * 0.28); // 0.35 first cut read slightly noisy at low render scales
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));

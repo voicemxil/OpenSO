@@ -59,12 +59,16 @@ namespace FSO.LotView.Utils
             var historyCurr = PPXDepthEngine.GetHistoryCurr();
             var metaPrev = PPXDepthEngine.GetMetaPrev();
             var metaCurr = PPXDepthEngine.GetMetaCurr();
+            // Cosmic TAAU: this resolve IS the upscaler — history/output native, color/velocity render-res.
+            bool upscale = PPXDepthEngine.TAAUpscaleMode;
             if (effect == null || velocity == null || historyPrev == null || historyCurr == null
                 || metaPrev == null || metaCurr == null
-                // Size guard: history must match the surface being resolved 1:1 (render-res in pre-upscale
-                // mode, viewport otherwise). A transient mismatch (e.g. first frame after a scale change,
-                // before ChangeAAMode re-sizes the targets) falls through rather than resolving stretched.
-                || historyPrev.Width != src.Width || historyPrev.Height != src.Height)
+                // Size guard: history must match the surface being resolved on — the OUTPUT viewport under
+                // TAAU, the render-res src otherwise. A transient mismatch (e.g. first frame after a scale
+                // change, before ChangeAAMode re-sizes the targets) falls through rather than resolving
+                // stretched/misaligned.
+                || (upscale ? (historyPrev.Width != gd.Viewport.Width || historyPrev.Height != gd.Viewport.Height)
+                            : (historyPrev.Width != src.Width || historyPrev.Height != src.Height)))
             {
                 if (PPXDepthEngine.TAASkipFinalBlit)
                 {
@@ -94,7 +98,10 @@ namespace FSO.LotView.Utils
             effect.Parameters["historyTex"]?.SetValue(historyPrev);
             effect.Parameters["metaHistoryTex"]?.SetValue(metaPrev);
             effect.Parameters["velocityTex"]?.SetValue(velocity);
-            effect.Parameters["InvScreenSize"]?.SetValue(new Vector2(1f / src.Width, 1f / src.Height));
+            // InvScreenSize = the OUTPUT/history grid; InvColorSize = the INPUT color grid. Identical
+            // normally; under TAAU history is native while color/velocity stay render-res.
+            effect.Parameters["InvScreenSize"]?.SetValue(new Vector2(1f / historyPrev.Width, 1f / historyPrev.Height));
+            effect.Parameters["InvColorSize"]?.SetValue(new Vector2(1f / src.Width, 1f / src.Height));
             effect.Parameters["BlendFactor"]?.SetValue(ScaledBlendFactor());
             effect.Parameters["MaxAccum"]?.SetValue(MAX_ACCUM);
             effect.Parameters["JitterDelta"]?.SetValue(JitterDeltaUV);

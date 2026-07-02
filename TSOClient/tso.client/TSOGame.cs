@@ -223,6 +223,7 @@ namespace FSO.Client
                 VelocityDebug = settings.VelocityDebug,
                 VelocityDebugDepth = settings.VelocityDebugDepth,
                 TAADebug = settings.TAADebug,
+                Upscaler = settings.Upscaler,
                 Sharpen = settings.Sharpen,
                 SharpenAmount = settings.SharpenAmount,
                 Weather = settings.Weather,
