@@ -65,8 +65,9 @@ namespace FSO.Client.UI.Panels
         private bool InternalChange;
 
         // --- Anti-aliasing / resolution controls (merged in from the former separate dialog) ---
-        private UICombobox AACombo, MotionBlurCombo, BloomCombo, AOCombo, UpscalerCombo;
-        private object[] _aaObjs, _mblurObjs, _bloomObjs, _aoObjs, _upscalerObjs;
+        private UICombobox AACombo, MotionBlurCombo, BloomCombo, AOCombo, UpscalerCombo, TAADebugCombo;
+        private object[] _aaObjs, _mblurObjs, _bloomObjs, _aoObjs, _upscalerObjs, _taaDbgObjs;
+        private UILabel TAADebugRowLabel; // row hides when Cosmic TAA isn't the AA mode
         private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
         private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
         // Min 1/3 = the DLSS/FSR2 "Ultra Performance" ratio (1080p output from 360p render at 0.33x).
@@ -88,7 +89,6 @@ namespace FSO.Client.UI.Panels
             ("FXAA",                0, 1, 0),
             ("SMAA",                0, 3, 0),
             ("Cosmic TAA",          0, 0, 1),
-            ("Cosmic TAA (Debug)",  0, 0, 2),
             ("MSAA 2×",             2, 0, 0),
             ("MSAA 4×",             4, 0, 0),
             ("MSAA 8×",             8, 0, 0),
@@ -538,9 +538,16 @@ namespace FSO.Client.UI.Panels
             AddGroupHeader("Resolution", 110);
 
             // --- Anti-aliasing (top of the column; added last so its drop-down overlays everything) ---
+            // Cosmic TAA debug view: its own row, visible only while Cosmic TAA is the AA mode. Added BEFORE
+            // the AA combo so the AA dropdown's open list renders over it.
+            TAADebugCombo = AddRow("Cosmic TAA debug", 78,
+                new[] { "Off", "On" }, new[] { 0, 1 }, out _taaDbgObjs,
+                v => { GlobalSettings.Default.TAADebug = v == 1; ApplyAndRefresh(); });
+            TAADebugRowLabel = _LastRowLabel;
+
             // One unified AA selector: mutually-exclusive Cosmic TAA / MSAA / FXAA / SMAA (Cosmic TAA lives
-            // here now — its old separate row is gone; the debug view is the "(Debug)" entry). MSAA tiers
-            // capped to the GPU max (so 8× is hidden on Apple Silicon). Value = index into AAModes.
+            // here now — its old separate row is gone; the debug view has its own gated row above). MSAA
+            // tiers capped to the GPU max (so 8× is hidden on Apple Silicon). Value = index into AAModes.
             var aaNames = new System.Collections.Generic.List<string>();
             var aaValues = new System.Collections.Generic.List<int>();
             for (int i = 0; i < AAModes.Length; i++)
@@ -825,7 +832,7 @@ namespace FSO.Client.UI.Panels
             s.MSAALevel = AAModes[index].msaa;
             s.PostAA = AAModes[index].postAA;
             s.TAA = AAModes[index].taa >= 1;
-            s.TAADebug = AAModes[index].taa == 2;
+            if (!s.TAA) s.TAADebug = false; // debug rides on TAA; its own row (visible while TAA on) sets it
             // Enabling Cosmic TAA auto-selects Cosmic TAAU as the upscaler (the Upscaler row's Cosmic entry
             // un-grays); disabling leaves the stored preference (engine falls back to FSR 1 without TAA).
             if (taaWasOff && s.TAA) s.Upscaler = 1;
@@ -838,10 +845,9 @@ namespace FSO.Client.UI.Panels
         private int CurrentAAIndex()
         {
             var s = GlobalSettings.Default;
-            int taaVal = s.TAA ? (s.TAADebug ? 2 : 1) : 0;
-            if (taaVal > 0)
+            if (s.TAA)
                 for (int i = 0; i < AAModes.Length; i++)
-                    if (AAModes[i].taa == taaVal) return i;
+                    if (AAModes[i].taa == 1) return i;
             for (int i = 0; i < AAModes.Length; i++)
                 if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == s.PostAA && AAModes[i].taa == 0) return i;
             if (s.MSAALevel > 0)
@@ -923,6 +929,10 @@ namespace FSO.Client.UI.Panels
                 new UIComboboxItem { Name = "Cosmic TAAU", Value = _upscalerObjs[1], Disabled = !s.TAA },
             };
             SelectValue(UpscalerCombo, _upscalerObjs, (s.TAA && s.Upscaler == 1) ? 1 : 0);
+            // Cosmic TAA debug row: only shown while Cosmic TAA is the AA mode.
+            SelectValue(TAADebugCombo, _taaDbgObjs, s.TAADebug ? 1 : 0);
+            TAADebugCombo.Visible = s.TAA;
+            if (TAADebugRowLabel != null) TAADebugRowLabel.Visible = s.TAA;
             SetMotionBlurSlider(s.MotionBlurAmount);
             SelectValue(BloomCombo, _bloomObjs, s.Bloom ? 1 : 0);
             SetBloomSliders(s.BloomThreshold, s.BloomIntensity);
