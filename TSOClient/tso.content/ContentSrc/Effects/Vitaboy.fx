@@ -503,6 +503,10 @@ PSOutputV psVitaboyV(VitaVertexOutV v)
     if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
 #endif
     float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcess(v.modelPos) * AmbientLight);
+    // Invisible fringe texels (hair/clothing alpha=0) must not stamp avatar velocity + near depth over the
+    // background on MRT1 — AlphaBlend leaves color untouched but velocity.a=1 hard-overwrites, producing
+    // halo-shaped disocclusion/ghost boxes around sims in the TAA. Matches RCObject.fx's discard.
+    if (color.a < 0.01) discard;
     color.rgb *= pow((dot(normalize(v.normal), float3(0, 1, 0)) + 1) / 2, 0.5)*0.5 + 0.5f;
     o.color = color;
     // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. Linear (not NDC clip.z/clip.w)
@@ -541,6 +545,7 @@ PSOutputV psVitaboyDirV(VitaVertexOutV v)
     if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
 #endif
     float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirection(v.modelPos, normalize(v.normal)) * AmbientLight);
+    if (color.a < 0.01) discard; // see psVitaboyV — fringe texels must not stamp velocity/depth
     o.color = color;
     o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
     o.normal = float4(normalize(v.normal), 1);

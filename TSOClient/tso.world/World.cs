@@ -1119,6 +1119,15 @@ namespace FSO.LotView
                 else scale = 2f;
             }
 
+            // TAA supersedes MSAA (industry standard). The velocity MRT must match the scene target's sample
+            // count, so scene MSAA forces a MULTISAMPLED velocity buffer — and its resolve AVERAGES fg+bg
+            // velocity/depth/mask at exactly the silhouettes TAA's dilation + disocclusion depend on (mixed
+            // motion vectors = edge ghosting). Uses the FULL taaReady predicate (incl. MotionBlur content)
+            // so a missing shader can't strip MSAA while TAA never actually runs.
+            bool taaOn = cfg.TAA && State.CameraMode == CameraRenderMode._3D
+                         && WorldContent.TAA != null && WorldContent.MotionBlur != null;
+            if (taaOn) msaa = 0;
+
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
 
@@ -1158,8 +1167,7 @@ namespace FSO.LotView
             // Temporal AA: separate resolve-chain stage applied AFTER the spatial AA above, so FXAA/SMAA and
             // TAA compose (spatial edge smoothing + temporal stabilization) instead of being mutually
             // exclusive. Needs the velocity buffer, so 3D mode + TAA/MotionBlur content present.
-            bool taaReady = cfg.TAA && State.CameraMode == CameraRenderMode._3D
-                            && WorldContent.TAA != null && WorldContent.MotionBlur != null;
+            bool taaReady = taaOn; // same predicate the MSAA force above used
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
 
             // FSR RCAS sharpening: a final, user-controlled pass over the resolved frame, available at ANY
@@ -1167,7 +1175,20 @@ namespace FSO.LotView
             // downscale RESOLVE — supersampling resolves with the box/tent (SSAAFunc), never FSR — so RCAS
             // here is just optional sharpening, not "FSR downscaling".
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
-            PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
+            // TAA-coupled auto-sharpen: TAA's history resampling is inherently a low-pass, so reference TAA
+            // pipelines (UE, FSR2, DLSS) always pair the resolve with a post sharpen. When TAA is on and the
+            // user hasn't enabled their own sharpen, run a modest RCAS, scaled up at lower resolutions where
+            // TAA softening is most visible (the main reason 540p/720p TAA read worse than industry TAAs).
+            // The user's own sharpen setting, when active, wins untouched.
+            bool autoSharpen = !sharpen && taaReady && WorldContent.FSR != null;
+            if (autoSharpen)
+            {
+                float bbH = PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height;
+                // 0.25 at 1080p (the config default), ramping to 0.5 by 540p; floor 0.2 at high res.
+                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, 0.5f);
+            }
+            else RCASSharpen.OverrideAmount = null;
+            PPXDepthEngine.SharpenFunc = (sharpen || autoSharpen) ? RCASSharpen.Draw : null;
 
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
 
@@ -1206,7 +1227,12 @@ namespace FSO.LotView
             // Velocity diagnostic visualizer: when on, overrides the entire post chain in DrawBackbuffer
             // so the user sees the raw MRT1 buffer instead of the scene. Surfacing this lets us debug
             // which shaders' DrawWithVelocity techniques are correct without guessing from blur artifacts.
-            bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
+            // With TAA active the same Debug option instead shows TAA's ACCUMULATION counter (red intensity =
+            // N/MaxAccum: black = resets every frame -> raw jitter shows through there; bright = converged) —
+            // that's the thing to diagnose when jitter/shimmer persists, so it takes priority over the raw
+            // velocity view (turn TAA off to see that one).
+            Utils.TAAResolve.DebugAccum = cfg.VelocityDebug && taaReady;
+            bool velocityDebug = wantVelocity && cfg.VelocityDebug && !taaReady && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }
 
@@ -1230,6 +1256,11 @@ namespace FSO.LotView
             if (scale == 1f && cfg.SuperSampling > 1) scale = cfg.SuperSampling;
             if (msaa == 0 && scale == 1f && cfg.AA > 0) { if (cfg.AA == 1) msaa = 4; else scale = 2f; }
 
+            // TAA supersedes MSAA — same rationale as ChangeAAMode: a multisampled velocity MRT resolve
+            // averages edge velocity/depth/mask and corrupts TAA's dilation/disocclusion. Force the LOCAL
+            // msaa (not just the engine field) so the _CityLastMSAA change-detect cache below stays coherent.
+            if (cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null) msaa = 0;
+
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
 
@@ -1246,7 +1277,9 @@ namespace FSO.LotView
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
             // RCAS sharpen — user-controlled, available at any render scale (the downscale resolve uses the
-            // box/tent, not FSR, so this is just optional sharpening).
+            // box/tent, not FSR, so this is just optional sharpening). No TAA in this path, so clear any
+            // TAA-coupled auto-sharpen override left over from the 3D path.
+            RCASSharpen.OverrideAmount = null;
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
@@ -1276,9 +1309,6 @@ namespace FSO.LotView
             bool motionBlur3D = wantVelocity && cfg.MotionBlur == 2 && WorldContent.MotionBlur != null && cfg.MotionBlurAmount > 0f;
             PPXDepthEngine.MotionBlurFunc = motionBlur3D ? PerPixelMotionBlur.Draw : null;
 
-            bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
-            PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
-
             // TAA: resolve-chain stage applied after the spatial AA. Needs the velocity buffer + history
             // (enabled above when cfg.TAA) and the shaders. Terrain.Draw applies the matching sub-pixel
             // projection jitter each frame whenever TAAFunc is set. AO stays disabled (as in ChangeAAMode).
@@ -1286,6 +1316,12 @@ namespace FSO.LotView
                             && PPXDepthEngine.GetVelocityTarget() != null && PPXDepthEngine.GetHistoryPrev() != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
             PPXDepthEngine.AOFunc = null;
+
+            // Debug selection mirrors ChangeAAMode: with TAA on, the "Debug" option shows the accumulation
+            // view (TAADebug technique); with TAA off, the raw velocity visualizer.
+            Utils.TAAResolve.DebugAccum = cfg.VelocityDebug && taaReady;
+            bool velocityDebug = wantVelocity && cfg.VelocityDebug && !taaReady && WorldContent.VelocityViz != null;
+            PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }
 
         public virtual void ChangedWorldConfig(GraphicsDevice gd)

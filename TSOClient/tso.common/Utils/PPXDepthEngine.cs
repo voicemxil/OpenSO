@@ -19,8 +19,15 @@ namespace FSO.Common.Utils
         // neighbouring tiles. Both at velocity-res / MB_TILE_SIZE.
         private static RenderTarget2D MBTileMax, MBNeighborMax;
         public const int MB_TILE_SIZE = 20;
-        private static RenderTarget2D HistoryA, HistoryB; //TAA history ping-pong (screen-res RGBA8)
-        private static bool _HistoryAIsPrev; //which buffer holds last frame's TAA output
+        private static RenderTarget2D HistoryA, HistoryB; //TAA history ping-pong (screen-res RGBA8: RGB color, A depth)
+        // TAA meta ping-pong (screen-res RGBA8), swapped in lock-step with History. R = per-pixel accumulation
+        // count N (normalized N/MAXN) that drives a variable blend rate for deep convergence + instant reset;
+        // GB = octahedral-encoded previous-frame world normal for normal-based disocclusion rejection.
+        private static RenderTarget2D MetaA, MetaB;
+        private static bool _HistoryAIsPrev; //which buffer holds last frame's TAA output (governs History + Meta)
+        // True when HistoryA/B were allocated as HalfVector4 (fp16). TAAResolve keys the shader's
+        // DepthRejectParams off this so the RGBA8 fallback keeps the old quantization-blunted tuning.
+        public static bool HistoryIsFP16 { get; private set; }
         private static SpriteBatch SB;
         public static float SSAA = 1f; //render scale: >1 supersample (downsample resolve), <1 upscale, 1 native
         public static int MSAA = 0;
@@ -236,32 +243,79 @@ namespace FSO.Common.Utils
         // TAA history ping-pong. Each frame TAA reads from "prev" and writes to "curr", then SwapHistory
         // toggles roles for the next frame.
         //
-        // Size MUST match ResolveTarget (screen viewport size), NOT Backbuffer — TAA slots into the resolve
-        // chain after the SSAA scale-resolve step, so its input/output are always screen-res. Sizing History
-        // to Backbuffer broke render scaling: when SSAA<1 (downscale), History was smaller than the chain's
-        // working surface and the SpriteBatch blit at the end of TAAResolve drew under-sized content.
+        // Sizing: matches the surface TAA resolves on — the viewport normally (TAA runs after the SSAA
+        // scale-resolve), but the RENDER-res Backbuffer when upscaling (SSAA < 1), where TAA now runs
+        // BEFORE the EASU upscale (AMD FSR1 pipeline; see TAASkipFinalBlit / DrawBackbuffer).
         public static void EnableHistoryTargets(bool enable)
         {
             if (!enable)
             {
                 if (HistoryA != null) { HistoryA.Dispose(); HistoryA = null; }
                 if (HistoryB != null) { HistoryB.Dispose(); HistoryB = null; }
+                if (MetaA != null) { MetaA.Dispose(); MetaA = null; }
+                if (MetaB != null) { MetaB.Dispose(); MetaB = null; }
                 return;
             }
             if (GD == null) return;
+            // TAA operates at the resolution of the surface it resolves: NATIVE (viewport) normally, but
+            // RENDER resolution when upscaling (SSAA < 1), where the TAA stage runs BEFORE the EASU upscale
+            // (see TAASkipFinalBlit). History/meta must match that surface 1:1. Callers (ChangeAAMode /
+            // ConfigureCityAA) invoke this after InitScreenTargets, so Backbuffer is already (re)sized.
             int w = System.Math.Max(1, GD.Viewport.Width);
             int h = System.Math.Max(1, GD.Viewport.Height);
+            if (SSAA < 0.999f && Backbuffer != null)
+            {
+                w = Backbuffer.Width;
+                h = Backbuffer.Height;
+            }
             if (HistoryA == null || HistoryA.Width != w || HistoryA.Height != h)
             {
                 HistoryA?.Dispose();
                 HistoryB?.Dispose();
-                HistoryA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                HistoryB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                MetaA?.Dispose();
+                MetaB?.Dispose();
+                // History wants fp16: the RGBA8 history was the TAA's double root cause — the packed depth in
+                // alpha was 1/255-quantized (false depth-disocclusions at silhouettes; the reject curve had to
+                // be blunted to hide it) and color accumulation stalled once per-frame deltas dropped below
+                // one 8-bit LSB (convergence plateau ~N=32). fp16 fixes both; fall back to Color on hardware
+                // that can't render to HalfVector4 — the shader's DepthRejectParams uniform keeps the old
+                // blunted tuning on the fallback path (see TAAResolve).
+                try
+                {
+                    HistoryA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                    HistoryB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                    HistoryIsFP16 = true;
+                }
+                catch
+                {
+                    HistoryA?.Dispose(); HistoryB?.Dispose();
+                    HistoryA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                    HistoryB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                    HistoryIsFP16 = false;
+                }
+                MetaA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                MetaB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
                 _HistoryAIsPrev = true;
+
+                // Clear to defined contents so the first TAA frame can't read uninitialized GPU garbage. This
+                // matters most for the META target: garbage could decode as a high accumulation count N and
+                // make the resolve trust the (also-garbage) history heavily for a frame — a nondeterministic
+                // bright/ghost flash on TAA-enable. History clears to transparent black (depth 0); meta clears
+                // to (0,127,127,0) = N=0 with the GB prev-velocity encode decoding to ~zero velocity (127/255
+                // -> -0.0002 UV) so the disparity reactive starts silent instead of firing on garbage.
+                var prevRTs = GD.GetRenderTargets();
+                var metaClear = new Color(0, 127, 127, 0);
+                GD.SetRenderTarget(HistoryA); GD.Clear(Color.Transparent);
+                GD.SetRenderTarget(HistoryB); GD.Clear(Color.Transparent);
+                GD.SetRenderTarget(MetaA); GD.Clear(metaClear);
+                GD.SetRenderTarget(MetaB); GD.Clear(metaClear);
+                if (prevRTs != null && prevRTs.Length > 0) GD.SetRenderTargets(prevRTs); else GD.SetRenderTarget(null);
             }
         }
         public static RenderTarget2D GetHistoryPrev() => _HistoryAIsPrev ? HistoryA : HistoryB;
         public static RenderTarget2D GetHistoryCurr() => _HistoryAIsPrev ? HistoryB : HistoryA;
+        public static RenderTarget2D GetMetaPrev() => _HistoryAIsPrev ? MetaA : MetaB;
+        public static RenderTarget2D GetMetaCurr() => _HistoryAIsPrev ? MetaB : MetaA;
         public static void SwapHistory() { _HistoryAIsPrev = !_HistoryAIsPrev; }
 
         private static RenderTarget2D ActiveColor;
@@ -408,6 +462,16 @@ namespace FSO.Common.Utils
         // rather than in place of it — TAA temporally stabilizes the already edge-smoothed frame. Screen-res
         // in/out (same slot timing as PostProcessFunc). null = off.
         public static Action<GraphicsDevice, RenderTarget2D> TAAFunc;
+        // TAA pre-upscale mode (render scale < 1): TAA runs at RENDER resolution BEFORE the EASU upscale —
+        // AMD's documented FSR1 pipeline (TAA -> EASU -> RCAS). EASU is an edge-adaptive NONLINEAR upscaler
+        // specified for anti-aliased input; feeding it the raw jittered frame made it re-detect and re-draw
+        // edges differently every frame, so the TAA that ran after it received a shape-morphing, DOUBLE-
+        // amplitude wobble (±0.5 render px = ±1 native px at 0.5 scale) it could never stabilise — the
+        // "persistent jitter in the resolved output at low res". DrawBackbuffer sets TAASkipFinalBlit before
+        // invoking TAAFunc; the resolve renders into its (render-res) history target, skips the stretch blit,
+        // and publishes the resolved frame via TAAOutput for the chain to feed into the upscaler.
+        public static bool TAASkipFinalBlit;
+        public static RenderTarget2D TAAOutput;
         // Optional ambient-occlusion pass (GTAO). Sits BEFORE bloom in the chain so AO darkens crevices
         // before bloom adds highlights — the standard order. Reads the velocity buffer for depth + scene
         // color for the composite, writes scene*AO to the bound target. null = off.
@@ -451,6 +515,22 @@ namespace FSO.Common.Utils
                 int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + (doTAA ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
                 int pong = 0;
 
+                // UPSCALING (+TAA): run TAA FIRST, at render resolution, on the raw jittered backbuffer —
+                // then upscale the anti-aliased result (see TAASkipFinalBlit doc). This also makes the
+                // ±0.5px jitter reference-correct relative to the grid TAA resolves on, and matches the
+                // velocity/history buffers 1:1. remaining stays >= 1 here (nonNative still pending), so TAA
+                // never needs to target the screen in this mode.
+                bool taaFirst = doTAA && SSAA < 0.999f;
+                if (taaFirst)
+                {
+                    remaining--;
+                    TAASkipFinalBlit = true;
+                    TAAOutput = null;
+                    TAAFunc(GD, src);
+                    TAASkipFinalBlit = false;
+                    if (TAAOutput != null) { src = TAAOutput; TAAOutput = null; }
+                }
+
                 if (nonNative)
                 {
                     remaining--;
@@ -475,7 +555,7 @@ namespace FSO.Common.Utils
                     PostProcessFunc(GD, src);
                     src = dst;
                 }
-                if (doTAA)
+                if (doTAA && !taaFirst)
                 {
                     remaining--;
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
