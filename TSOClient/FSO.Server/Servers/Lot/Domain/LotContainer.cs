@@ -1536,19 +1536,29 @@ namespace FSO.Server.Servers.Lot.Domain
                     waitForDeletion = true;
                 }
                 else if (result && ava.KillTimeout != -1)
-                { 
-                    // If this avatar has started the leave lot animation, we might be able to get rid of them instantly.
-                    if (ava.Thread.Stack.Any(x => x.CalleePrivate.Name == "templateperson" && x.Routine.ID == 8373))
+                {
+                    // This avatar already called UserLeaveLot (KillTimeout ticks up toward
+                    // VMAvatar.FORCE_DELETE_TIMEOUT - 60 seconds - before the VM deletes them on its own).
+                    // We don't need to wait for that timeout just because a rejoin came in; force the
+                    // deletion now and wait below for it to land.
+                    //
+                    // This used to be gated on the avatar's leave-lot interaction (routine 8373) still
+                    // being the active BHAV stack frame ("we might be able to get rid of them instantly").
+                    // But once that interaction finishes playing out - e.g. the walk-off-lot animation
+                    // completes - the stack frame pops and this branch did nothing, so IsAvatarOnLot
+                    // returned true immediately with no retry: rejoining within that up-to-60s idle window
+                    // (after the user has already visibly left) always failed with "The PropertySim
+                    // believes your Sim is still in the property". KillTimeout != -1 alone already means
+                    // the avatar is exclusively in the leave-lot state (UserLeaveLot cancels every other
+                    // queued action), so it's safe to force-delete regardless of the current stack frame.
+                    Lot.ForwardCommand(new VMNetDeleteObjectCmd()
                     {
-                        Lot.ForwardCommand(new VMNetDeleteObjectCmd()
-                        {
-                            ObjectID = ava.ObjectID,
-                            CleanupAll = true,
-                            Verified = true,
-                        });
+                        ObjectID = ava.ObjectID,
+                        CleanupAll = true,
+                        Verified = true,
+                    });
 
-                        waitForDeletion = true;
-                    }
+                    waitForDeletion = true;
                 }
             });
 
