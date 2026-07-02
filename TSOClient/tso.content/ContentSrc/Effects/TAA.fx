@@ -111,6 +111,19 @@ float3 ClipAABB(float3 cmin, float3 cmax, float3 hist)
     return (u > 1) ? center + d / u : hist;
 }
 
+// Mitchell-Netravali (B=C=1/3) kernel at arbitrary distance, valid for x in [0, 2).
+// k(0)=8/9=0.8889, k(0.5)=0.5347, k(1)=1/18=0.0556, k(1.5)=-0.0347 -> clamped to 0 by the max(): removing
+// the tiny negative lobe keeps the 3x3 reconstruction a convex combination — no ringing overshoot on bright
+// sub-pixel sparkle (which would amplify exactly the fizzle the oscillation gate exists to kill).
+float MitchellK(float x)
+{
+    float x2 = x * x;
+    float x3 = x2 * x;
+    float inner = (7.0 * x3 - 12.0 * x2 + 16.0 / 3.0) / 6.0;                     // |x| < 1
+    float outer = ((-7.0 / 3.0) * x3 + 12.0 * x2 - 20.0 * x + 32.0 / 3.0) / 6.0; // 1 <= |x| < 2
+    return max((x < 1.0) ? inner : outer, 0.0);
+}
+
 // Catmull-Rom (bicubic) history sampling — preserves high frequencies across reprojection so the jittered
 // samples build a sharp supersampled image (plain bilinear would low-pass every frame into mush).
 float3 SampleHistoryBicubic(float2 uv)
@@ -162,23 +175,27 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     TAAOut o;
     float2 uv = input.Coord;
 
-    // 3x3 neighborhood pass: FILTERED current sample (reference-standard reconstruction), variance stats
-    // (m1,m2) for the clamp AABB, and VELOCITY DILATION (reproject with the nearest-depth motion vector so
-    // thin/edge foreground objects don't ghost). The COLOUR/box taps read at the UN-jittered position (see
-    // SampleJitterUV) so the clamp box holds still frame-to-frame; the VELOCITY/depth taps stay at the true
-    // pixel (the velocity buffer is indexed by rendered pixel).
-    //
-    // FILTERED INPUT (UE/Karis Blackman-Harris-style, Decima-adjacent): the sample fed to the blend is a
-    // jitter-aware weighted average of the 3x3, NOT one raw jittered tap. On sub-pixel geometry (grass
-    // blades, leaves, thin lines) a raw tap is a coin flip — blade or sky, 100% different every frame,
-    // forever — which no safe history depth can average away; that unbounded per-frame input variance was
-    // the root of the foliage flicker every trust-widening attempt failed to fix. Filtering the input
-    // collapses the variance BEFORE the blend, so the normal accumulation window suffices. Spatial filtering
-    // of the current frame only — zero extra history trust, so none of the ghosting failure modes apply.
-    // Slight softening is by design and reclaimed by the RCAS pass that follows TAA (the reference pairing).
-    // Because the taps are already positioned on the un-jittered content grid (boxUV), the weights are just
-    // a function of the integer offsets; hardware bilinear handles the sub-pixel placement.
+    // 3x3 neighborhood pass — three jobs, three tap sets:
+    //  * VARIANCE BOX (m1/m2): taps at the UN-jittered position (boxUV, bilinear does the shift) so the
+    //    clamp box stays content-STATIONARY frame-to-frame (validated fix: a wobbling box re-clips converged
+    //    history -> flicker). Statistics tolerate the bilinear low-pass; do NOT move these to raw taps.
+    //  * FILTERED INPUT (filt/wsum): JITTER-RELATIVE MITCHELL RECONSTRUCTION (UE TAAU / MJP formulation).
+    //    Taps at the RAW texel centers (uv + ofs — exact texels, no interpolation), weighted by the Mitchell
+    //    kernel evaluated at each tap's distance to the un-jittered pixel center. The previous scheme
+    //    (bilinear-shifted taps + fixed integer weights) pre-blurred every frame with an effective
+    //    Mitchell(x)tent kernel that DESTROYED the sub-pixel information the jitter exists to provide —
+    //    accumulation could never super-resolve through it. With raw taps + jitter-relative weights, each
+    //    frame contributes genuinely new sub-pixel information and the converged history super-resolves.
+    //    Sign derivation (pinned — this went wrong once): buffer[p] holds content that un-jittered belongs
+    //    at p + SampleJitterUV, so the tap at uv + ofs sits at displacement (ofs + SampleJitterUV) from the
+    //    pixel center. At zero jitter the weights degenerate bit-identically to the old fixed 0.8889/0.0556
+    //    (city view / jitter-off provably unchanged).
+    //  * VELOCITY DILATION + depth range: taps at the true pixel (velocity buffer indexed by rendered pixel).
+    float2 texSize = 1.0 / InvScreenSize;
     float2 boxUV = uv - SampleJitterUV;
+    float2 jShiftPx = SampleJitterUV * texSize; // tap displacement from pixel center, in pixels
+    float3 kx3 = float3(MitchellK(abs(-1.0 + jShiftPx.x)), MitchellK(abs(jShiftPx.x)), MitchellK(abs(1.0 + jShiftPx.x)));
+    float3 ky3 = float3(MitchellK(abs(-1.0 + jShiftPx.y)), MitchellK(abs(jShiftPx.y)), MitchellK(abs(1.0 + jShiftPx.y)));
     float3 m1 = 0, m2 = 0;
     float3 filt = 0;
     float wsum = 0;
@@ -193,13 +210,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float3 c = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + ofs, 0, 0)).rgb);
         m1 += c;
         m2 += c * c;
-        // Separable Mitchell-Netravali (B=C=1/3) reconstruction weights on the integer tap grid:
-        // k(0)=0.8889, k(1)=0.0556 -> center 0.790 / edge 0.049 / corner 0.003 (sums to 1). Sharper than
-        // the Gaussian/Blackman approximation (center 0.69) with all-positive weights at this support.
-        float kx = (dx == 0) ? 0.8889 : 0.0556;
-        float ky = (dy == 0) ? 0.8889 : 0.0556;
-        float w = kx * ky;
-        filt += c * w;
+        // Reconstruction tap: raw texel + jitter-relative Mitchell weight (constant-folds under [unroll]).
+        float3 craw = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv + ofs, 0, 0)).rgb);
+        float w = kx3[dx + 1] * ky3[dy + 1];
+        filt += craw * w;
         wsum += w;
 
         float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
@@ -253,8 +267,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // and zooms all produce real velocity, so genuine disocclusions keep full rejection. Content appearing
     // WITHOUT motion (cutaway wall toggles, build-mode placement) is caught by the variance clamp + luma
     // responsiveness, as in the original build.
-    float2 texSize = 1.0 / InvScreenSize;
-    float velPx = length(velocity * texSize);
+    float velPx = length(velocity * texSize); // texSize hoisted above the neighborhood loop
     float moveGate = smoothstep(0.5, 2.0, velPx);
 
     float historyDepth = historyPoint.a;
