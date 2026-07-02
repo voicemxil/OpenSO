@@ -138,6 +138,38 @@ namespace FSO.Files.RC
         public DGRP3DGeometry DepthMask;
         public BoundingBox? Bounds;
 
+        /// <summary>
+        /// Whether any geometry group retained collision triangles (see DGRP3DGeometry.ColVerts). False for
+        /// meshes built without going through the normal reconstruction+SComplete path (e.g. bounds-only
+        /// stubs), in which case picking should fall back to the AABB instead of treating every ray as a miss.
+        /// </summary>
+        public bool HasCollisionMesh
+        {
+            get
+            {
+                foreach (var g in Geoms)
+                    foreach (var e in g)
+                        if (e.Value.ColIndices != null && e.Value.ColIndices.Length > 0) return true;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Ray-triangle intersection against every geometry group's retained collision mesh, in mesh-local
+        /// space. Returns the closest hit distance along the ray, or null if nothing was hit.
+        /// </summary>
+        public float? IntersectsRay(Ray ray)
+        {
+            float? best = null;
+            foreach (var g in Geoms)
+                foreach (var e in g)
+                {
+                    var t = e.Value.IntersectsRay(ray);
+                    if (t != null && (best == null || t < best)) best = t;
+                }
+            return best;
+        }
+
 
         //for internal use
         private int TotalSprites;

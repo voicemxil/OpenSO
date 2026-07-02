@@ -73,6 +73,12 @@ namespace FSO.Files.RC
         public IndexBuffer Indices;
         public int PrimCount;
 
+        // Lightweight positions-only copy of the simplified mesh, kept resident after the render buffers
+        // are uploaded (unlike SVerts/SIndices, which are freed via DecrementDataRef) so mouse picking can
+        // do real ray-triangle tests against the object's actual silhouette instead of just its AABB.
+        public Vector3[] ColVerts;
+        public int[] ColIndices;
+
         public int RefCount = 1;
 
         public void SComplete(GraphicsDevice gd)
@@ -88,12 +94,57 @@ namespace FSO.Files.RC
                 Verts.SetData(SVerts.ToArray());
                 Indices = new IndexBuffer(gd, IndexElementSize.ThirtyTwoBits, SIndices.Count, BufferUsage.None);
                 Indices.SetData(SIndices.ToArray());
+
+                ColVerts = new Vector3[SVerts.Count];
+                for (int i = 0; i < SVerts.Count; i++) ColVerts[i] = SVerts[i].Position;
+                ColIndices = SIndices.ToArray();
             }
 
             if (!IffFile.RETAIN_CHUNK_DATA)
             {
                 DecrementDataRef();
             }
+        }
+
+        /// <summary>
+        /// Ray-triangle intersection against the retained collision mesh, in the same local space the
+        /// mesh vertices are authored in. Returns the closest hit distance along the ray, or null if the
+        /// ray misses every triangle (or no collision data is available).
+        /// </summary>
+        public float? IntersectsRay(Ray ray)
+        {
+            if (ColVerts == null || ColIndices == null) return null;
+            float? best = null;
+            for (int i = 0; i < ColIndices.Length - 2; i += 3)
+            {
+                var t = RayIntersectsTriangle(ray, ColVerts[ColIndices[i]], ColVerts[ColIndices[i + 1]], ColVerts[ColIndices[i + 2]]);
+                if (t != null && (best == null || t < best)) best = t;
+            }
+            return best;
+        }
+
+        // Moller-Trumbore ray-triangle intersection. Not backface culled, since reconstructed sprite
+        // geometry can be one-sided in either winding depending on the source sprite.
+        private static float? RayIntersectsTriangle(Ray ray, Vector3 v0, Vector3 v1, Vector3 v2)
+        {
+            const float EPSILON = 1e-6f;
+            var edge1 = v1 - v0;
+            var edge2 = v2 - v0;
+            var h = Vector3.Cross(ray.Direction, edge2);
+            var a = Vector3.Dot(edge1, h);
+            if (a > -EPSILON && a < EPSILON) return null;
+
+            var f = 1f / a;
+            var s = ray.Position - v0;
+            var u = f * Vector3.Dot(s, h);
+            if (u < 0f || u > 1f) return null;
+
+            var q = Vector3.Cross(s, edge1);
+            var v = f * Vector3.Dot(ray.Direction, q);
+            if (v < 0f || u + v > 1f) return null;
+
+            var t = f * Vector3.Dot(edge2, q);
+            return (t > EPSILON) ? t : (float?)null;
         }
 
         public DGRP3DGeometry() { }

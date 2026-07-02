@@ -153,6 +153,32 @@ namespace FSO.LotView.Components
             return GetBounds().Intersects(ray);
         }
 
+        /// <summary>
+        /// Picking test against the object's actual reconstructed silhouette rather than its AABB. Falls
+        /// back to the AABB result when no collision mesh is available (e.g. bounds-only stub meshes), so
+        /// objects without retained geometry remain clickable. Returns the hit distance along the world
+        /// ray (comparable with other objects' IntersectsBounds/IntersectsPrecise results), or null if the
+        /// ray misses the object entirely.
+        /// </summary>
+        public float? IntersectsPrecise(Ray ray)
+        {
+            var boxHit = IntersectsBounds(ray);
+            if (boxHit == null) return null;
+            if (!dgrp.HasCollisionMesh) return boxHit;
+
+            var world = World3D;
+            var invWorld = Matrix.Invert(world);
+            var localPos = Vector3.Transform(ray.Position, invWorld);
+            var localTarget = Vector3.Transform(ray.Position + ray.Direction, invWorld);
+            var localRay = new Ray(localPos, localTarget - localPos);
+
+            var localT = dgrp.IntersectsRay(localRay);
+            if (localT == null) return null; // AABB was hit, but the real geometry was missed
+
+            var worldHit = Vector3.Transform(localPos + localRay.Direction * localT.Value, world);
+            return Vector3.Dot(worldHit - ray.Position, ray.Direction);
+        }
+
         #endregion
 
         public Rectangle Bounding { get { return dgrp.Bounding ?? new Rectangle(); } }

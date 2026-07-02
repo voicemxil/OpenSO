@@ -150,6 +150,10 @@ namespace FSO.LotView.Utils
             return Mesh?.Bounds;
         }
 
+        public bool HasCollisionMesh => Mesh?.HasCollisionMesh ?? false;
+
+        public float? IntersectsRay(Ray ray) => Mesh?.IntersectsRay(ray);
+
         public virtual void ValidateSprite(WorldState world)
         {
             if (DrawGroup == null) return;
