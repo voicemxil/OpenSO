@@ -170,5 +170,7 @@ namespace FSO.LotView.Effects
         LMapDraw,
         DrawWithVelocity, //writes color to MRT0 + screen-space velocity to MRT1 (motion blur / TAA)
         WallDrawWithVelocity, //walls with velocity output for motion blur / TAA
+        DrawInstanced, //GPU-instanced variant of Draw - per-instance World read from stream-1 vertex data
+        DrawInstancedWithVelocity, //GPU-instanced variant of DrawWithVelocity
     }
 }

@@ -565,3 +565,41 @@ technique DrawWithVelocityDirection
     }
 }
 
+// psVitaboyV/psVitaboyDirV both shade via lightProcess()/lightProcessDirection() - the lightmap-sampling
+// model that's only valid when Advanced Lighting is actually on (WorldEntities.DrawAvatars picks psVitaboyAdv
+// /psVitaboyDir for the non-velocity path in that case). When Advanced Lighting is OFF, the non-velocity path
+// instead picks psVitaboyNoSSAA - a flat AmbientLight-only multiply, no lightmap sampling at all (AmbientLight
+// itself already carries the room's ambient color in that mode - see AvatarComponent.DrawAvatarMesh). The
+// velocity path had no equivalent and always forced the lightProcess-based shading regardless of the Advanced
+// Lighting setting, which sampled a lightmap that isn't maintained when Advanced Lighting is off (near-zero),
+// crushing sims to near-black the moment TAA/motion-blur (which forces a velocity technique) was turned on.
+// This mirrors psVitaboyNoSSAA but with velocity output, so the velocity path can respect the setting too.
+PSOutputV psVitaboyNoSSAAV(VitaVertexOutV v)
+{
+    PSOutputV o;
+    float depth = v.screenPos.z / v.screenPos.w;
+#if SIMPLE
+    if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
+#endif
+    float4 color = tex2D(TexSampler, v.texCoord) * AmbientLight;
+    if (color.a < 0.01) discard; // see psVitaboyV — fringe texels must not stamp velocity/depth
+    color.rgb *= pow((dot(normalize(v.normal), float3(0, 1, 0)) + 1) / 2, 0.5)*0.5 + 0.5f;
+    o.color = color;
+    o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
+    o.normal = float4(normalize(v.normal), 1);
+    return o;
+}
+technique DrawWithVelocityFlat
+{
+    pass Pass1
+    {
+#if SM4
+        VertexShader = compile vs_4_0 vsVitaboyV();
+        PixelShader = compile ps_4_0 psVitaboyNoSSAAV();
+#else
+        VertexShader = compile vs_3_0 vsVitaboyV();
+        PixelShader = compile ps_3_0 psVitaboyNoSSAAV();
+#endif;
+    }
+}
+

@@ -39,6 +39,10 @@ namespace FSO.LotView.Utils
 
         //3d cache
         private DGRP3DMesh Mesh;
+        // Exposed read-only for GPU-instancing batch grouping (WorldEntities): two objects can only be
+        // instanced together if they share this exact mesh reference. Use EnsureMesh3D() first if the
+        // mesh may not have been loaded yet (e.g. before this object's first Draw3D call).
+        public DGRP3DMesh Mesh3D => Mesh;
         public Matrix World;
         // Previous-frame world matrix, pushed by ObjectComponent.Draw. Read by velocity-aware techniques in
         // RCObject.fx to emit per-pixel screen-space motion. When unset (e.g. first draw) it equals World.
@@ -271,14 +275,23 @@ namespace FSO.LotView.Utils
             }
         }
 
-        public void Draw3D(WorldState world)
+        // Loads (if necessary) and returns the shared 3D mesh for this DGRP, without drawing it. Used by
+        // Draw3D/DrawLMap/Preload, and by the instancing batch grouping in WorldEntities, which needs the
+        // mesh reference before deciding whether an object belongs to a batchable group.
+        public DGRP3DMesh EnsureMesh3D()
         {
-            if (DrawGroup == null) return;
             if (_Dirty.IsSet(ComponentRenderMode._3D) || Mesh == null)
             {
                 Mesh = Content.Content.Get().RCMeshes.Get(DrawGroup, Source);
                 _Dirty &= ~ComponentRenderMode._3D;
             }
+            return Mesh;
+        }
+
+        public void Draw3D(WorldState world)
+        {
+            if (DrawGroup == null) return;
+            EnsureMesh3D();
 
             //immedately draw the mesh.
             var device = world.Device;
@@ -382,14 +395,160 @@ namespace FSO.LotView.Utils
             if (Room == 65533) effect.SetTechnique(drawTech);
         }
 
+        // Reused across groups/frames to avoid per-batch GC churn. Grown (never shrunk) to the largest
+        // group seen so far.
+        private static DynamicVertexBuffer InstanceVB;
+        private static DynamicVertexBuffer InstanceVBVelocity;
+        private static RCInstanceData[] InstanceScratch = new RCInstanceData[0];
+        private static RCInstanceDataVelocity[] InstanceScratchVelocity = new RCInstanceDataVelocity[0];
+
+        /// <summary>
+        /// Draws every geom of a shared DGRP mesh once via hardware instancing, for a group of objects
+        /// that all share this exact mesh plus the same dynamic-sprite-flag state (grouping/eligibility is
+        /// decided by the caller - see WorldEntities). Mirrors the per-object geom loop in Draw3D, but
+        /// issues one DrawInstancedPrimitives call per geom instead of one DrawIndexedPrimitives call per
+        /// object. Callers must not route Room==65533 ("disabled"/grayscale) objects here - that state
+        /// forces a different technique in the per-object path and has no instanced equivalent.
+        /// </summary>
+        public static void DrawInstanced(WorldState world, DGRP3DMesh mesh, ulong dynamicSpriteFlags,
+            ulong dynamicSpriteFlags2, sbyte level, Matrix[] worlds, Matrix[] prevWorlds, int count)
+        {
+            if (count == 0) return;
+            var device = world.Device;
+            var effect = WorldContent.RCObject;
+
+            effect.Level = (float)(level - 0.999f);
+            var advDir = WorldConfig.Current.Directional && WorldConfig.Current.AdvancedLighting;
+            bool useVelocity = prevWorlds != null;
+            var drawTech = useVelocity ? RCObjectTechniques.DrawInstancedWithVelocity : RCObjectTechniques.DrawInstanced;
+
+            VertexBuffer instanceVB;
+            if (useVelocity)
+            {
+                if (InstanceScratchVelocity.Length < count) InstanceScratchVelocity = new RCInstanceDataVelocity[count];
+                for (int n = 0; n < count; n++)
+                {
+                    var w = worlds[n];
+                    var p = prevWorlds[n];
+                    InstanceScratchVelocity[n] = RCInstanceDataVelocity.FromMatrices(ref w, ref p);
+                }
+                if (InstanceVBVelocity == null || InstanceVBVelocity.VertexCount < count)
+                {
+                    InstanceVBVelocity?.Dispose();
+                    InstanceVBVelocity = new DynamicVertexBuffer(device, RCInstanceDataVelocity.VertexDeclaration,
+                        Math.Max(count, 64), BufferUsage.WriteOnly);
+                }
+                InstanceVBVelocity.SetData(InstanceScratchVelocity, 0, count, SetDataOptions.Discard);
+                instanceVB = InstanceVBVelocity;
+            }
+            else
+            {
+                if (InstanceScratch.Length < count) InstanceScratch = new RCInstanceData[count];
+                for (int n = 0; n < count; n++)
+                {
+                    var w = worlds[n];
+                    InstanceScratch[n] = RCInstanceData.FromMatrix(ref w);
+                }
+                if (InstanceVB == null || InstanceVB.VertexCount < count)
+                {
+                    InstanceVB?.Dispose();
+                    InstanceVB = new DynamicVertexBuffer(device, RCInstanceData.VertexDeclaration,
+                        Math.Max(count, 64), BufferUsage.WriteOnly);
+                }
+                InstanceVB.SetData(InstanceScratch, 0, count, SetDataOptions.Discard);
+                instanceVB = InstanceVB;
+            }
+
+            // Unlike Draw3D (which can rely on the caller having already set Draw/DrawWithVelocity before
+            // the per-object loop), nothing else ever selects the Instanced techniques - so this must be
+            // set unconditionally up front, not just inside the "has a drawable depth mask" branch below.
+            effect.SetTechnique(drawTech);
+
+            if (mesh.DepthMask != null)
+            {
+                var geom = mesh.DepthMask;
+                if (geom.Verts != null)
+                {
+                    effect.SetTechnique(RCObjectTechniques.DepthClear);
+                    device.SetVertexBuffers(new VertexBufferBinding(geom.Verts, 0, 0), new VertexBufferBinding(instanceVB, 0, 1));
+                    device.Indices = geom.Indices;
+
+                    device.DepthStencilState = DepthClear1;
+                    effect.CurrentTechnique.Passes[0].Apply();
+                    device.BlendState = NoColor;
+                    device.DrawInstancedPrimitives(PrimitiveType.TriangleList, 0, 0, geom.PrimCount, count);
+
+                    device.DepthStencilState = (mesh.MaskType == DGRP3DMaskType.Portal) ? DepthClear2Strict : DepthClear2;
+                    effect.CurrentTechnique.Passes[1].Apply();
+                    device.DrawInstancedPrimitives(PrimitiveType.TriangleList, 0, 0, geom.PrimCount, count);
+
+                    device.DepthStencilState = DepthStencilState.Default;
+                    device.BlendState = BlendState.NonPremultiplied;
+                    effect.SetTechnique(drawTech);
+                }
+            }
+
+            int i = 0;
+            foreach (var spr in mesh.Geoms)
+            {
+                if (i == 0 || (((i - 1) > 63) ? ((dynamicSpriteFlags2 & ((ulong)0x1 << ((i - 1) - 64))) > 0) :
+                    ((dynamicSpriteFlags & ((ulong)0x1 << (i - 1))) > 0)) || (mesh.MaskType == DGRP3DMaskType.Portal && i == mesh.Geoms.Count - 1))
+                {
+                    foreach (var geom in spr.Values)
+                    {
+                        if (geom.PrimCount == 0 || !geom.Rendered) continue;
+                        if (mesh.MaskType == DGRP3DMaskType.Portal && i == mesh.Geoms.Count - 1)
+                            device.DepthStencilState = Portal;
+                        effect.MeshTex = geom.Pixel;
+                        var info = geom.Pixel?.Tag as TextureInfo;
+                        effect.UVScale = info?.UVScale ?? Vector2.One;
+                        var pass = effect.CurrentTechnique.Passes[advDir ? 1 : 0]; // Room < 65533 always true here
+                        pass.Apply();
+
+                        device.SetVertexBuffers(new VertexBufferBinding(geom.Verts, 0, 0), new VertexBufferBinding(instanceVB, 0, 1));
+                        device.Indices = geom.Indices;
+                        device.DrawInstancedPrimitives(PrimitiveType.TriangleList, 0, 0, geom.PrimCount, count);
+
+                        if (mesh.MaskType == DGRP3DMaskType.Portal && i == mesh.Geoms.Count - 1)
+                            device.DepthStencilState = DepthStencilState.Default;
+                    }
+                }
+                i++;
+            }
+
+            if (mesh.MaskType == DGRP3DMaskType.Portal)
+            {
+                var geom = mesh.DepthMask;
+                if (geom.Verts != null)
+                {
+                    effect.SetTechnique(RCObjectTechniques.DepthClear);
+                    device.SetVertexBuffers(new VertexBufferBinding(geom.Verts, 0, 0), new VertexBufferBinding(instanceVB, 0, 1));
+                    device.Indices = geom.Indices;
+                    effect.CurrentTechnique.Passes[1].Apply();
+
+                    device.DepthStencilState = StencilClearOnly;
+                    device.BlendState = NoColor;
+                    device.DrawInstancedPrimitives(PrimitiveType.TriangleList, 0, 0, geom.PrimCount, count);
+                    device.BlendState = BlendState.NonPremultiplied;
+                }
+                device.DepthStencilState = DepthStencilState.Default;
+                effect.SetTechnique(drawTech);
+            }
+
+            // The instanced techniques' vertex shader requires the stream-1 instance buffer to be bound;
+            // leaving one of them as CurrentTechnique would break the very next non-batched object's
+            // Draw3D call, which only binds a single (stream-0) vertex buffer and - like this method used
+            // to before this fix - assumes technique was already left on the plain Draw/DrawWithVelocity
+            // technique by whatever drew immediately before it (this method's own instanced draws, or the
+            // caller in WorldEntities). Restore that invariant here rather than relying on every caller to
+            // do it.
+            effect.SetTechnique(useVelocity ? RCObjectTechniques.DrawWithVelocity : RCObjectTechniques.Draw);
+        }
+
         public void DrawLMap(GraphicsDevice device, sbyte level, float yOff)
         {
             if (DrawGroup == null) return;
-            if (_Dirty.IsSet(ComponentRenderMode._3D))
-            {
-                Mesh = Content.Content.Get().RCMeshes.Get(DrawGroup, Source);
-                _Dirty &= ~ComponentRenderMode._3D;
-            }
+            EnsureMesh3D();
 
             if (Mesh.MaskType == DGRP3DMaskType.Portal) return;
             //immedately draw the mesh.
@@ -430,11 +589,7 @@ namespace FSO.LotView.Utils
 
             if (mode.IsSet(ComponentRenderMode._3D) || world.CameraMode != CameraRenderMode._2D || WorldConfig.Current.UltraLighting)
             {
-                if (_Dirty.IsSet(ComponentRenderMode._3D))
-                {
-                    Mesh = Content.Content.Get().RCMeshes.Get(DrawGroup, Source);
-                    _Dirty &= ~ComponentRenderMode._3D;
-                }
+                EnsureMesh3D();
             }
         }
 

@@ -1,9 +1,11 @@
-﻿using FSO.LotView.Components;
+﻿using FSO.Files.RC;
+using FSO.LotView.Components;
 using FSO.LotView.Effects;
 using FSO.LotView.Model;
 using FSO.LotView.Utils;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 
@@ -119,7 +121,14 @@ namespace FSO.LotView
                 // used to be hardcoded regardless of `advDir`, so enabling TAA/motion-blur (which forces the
                 // velocity technique) silently dropped avatars back to flat/ambient shading even with
                 // Directional Lighting on, which read as the light direction itself changing.
-                effect.CurrentTechnique = effect.Techniques[advDir ? 8 : 7]; //DrawWithVelocityDirection / DrawWithVelocity, last two techniques in Vitaboy.fx
+                // Also respect Advanced Lighting being OFF entirely: DrawWithVelocity/DrawWithVelocityDirection
+                // both shade via the lightmap-sampling lightProcess()/lightProcessDirection() path, which is
+                // only valid when Advanced Lighting is on (mirrors psVitaboyAdv/psVitaboyDir below). With it
+                // off, that lightmap isn't maintained, so those techniques crushed sims to near-black the
+                // moment TAA/motion-blur forced a velocity technique - use the flat AmbientLight-only
+                // DrawWithVelocityFlat (mirrors the non-velocity path's psVitaboyNoSSAA) instead.
+                int velTech = !WorldConfig.Current.AdvancedLighting ? 9 : (advDir ? 8 : 7);
+                effect.CurrentTechnique = effect.Techniques[velTech]; //DrawWithVelocityFlat / DrawWithVelocityDirection / DrawWithVelocity, last three techniques in Vitaboy.fx
                 effect.Parameters["ViewProjection"]?.SetValue(state.View * state.Projection);
                 // Subworld ModelTranslation fix: state.View already has the translation, but
                 // PreviousViewProjection was captured pre-translation -> apply same translation here.
@@ -224,10 +233,7 @@ namespace FSO.LotView
             dyn = dyn.OrderBy(x => x.DrawOrder);
 
             gd.BlendState = BlendState.NonPremultiplied;
-            foreach (var obj in dyn)
-            {
-                obj.Draw(gd, state);
-            }
+            DrawObjectsBatched(gd, state, dyn.ToList());
 
             if (useVelocity)
             {
@@ -285,12 +291,137 @@ namespace FSO.LotView
             else staticObj = Blueprint.Changes.StaticObjects;
             staticObj = staticObj.Where(x => (x.Level <= state.Level) && x.DoDraw(state)).OrderBy(x => x.DrawOrder);
 
-            foreach (var obj in staticObj)
-            {
-                obj.Draw(gd, state);
-            }
+            DrawObjectsBatched(gd, state, staticObj.ToList());
 
             _2d.EndImmediate();
+        }
+
+        // ---------------------------------------------------------------------------- GPU instancing
+        // Batches repeated identical objects (same DGRP mesh + same dynamic-sprite-flag state + same
+        // floor level) into single DrawInstancedPrimitives calls instead of one draw call per object. See
+        // DGRPRenderer.DrawInstanced and ObjectComponent.CanInstance/PrepareInstancedDraw. Purely additive:
+        // objects that aren't part of a big-enough group still go through the exact same obj.Draw() path
+        // as before, at the same relative position in the (already depth-ordered) draw list. Grouping only
+        // reorders instances of the SAME mesh+state relative to each other (never relative to a different
+        // group or a non-batched object), which is why this only applies to non-2D-sprite object draws -
+        // see the transparency/ordering trade-off noted where WorldConfig.ObjectInstancing is declared.
+
+        private const int InstanceBatchMinSize = 4;
+
+        private readonly struct InstanceKey : IEquatable<InstanceKey>
+        {
+            public readonly DGRP3DMesh Mesh;
+            public readonly ulong Flags;
+            public readonly ulong Flags2;
+            public readonly sbyte Level;
+
+            public InstanceKey(DGRP3DMesh mesh, ulong flags, ulong flags2, sbyte level)
+            {
+                Mesh = mesh;
+                Flags = flags;
+                Flags2 = flags2;
+                Level = level;
+            }
+
+            public bool Equals(InstanceKey other) =>
+                Mesh == other.Mesh && Flags == other.Flags && Flags2 == other.Flags2 && Level == other.Level;
+            public override bool Equals(object obj) => obj is InstanceKey k && Equals(k);
+            public override int GetHashCode() => HashCode.Combine(Mesh, Flags, Flags2, Level);
+        }
+
+        private static Matrix[] _InstWorldScratch = new Matrix[0];
+        private static Matrix[] _InstPrevWorldScratch = new Matrix[0];
+
+        private static void DrawObjectsBatched(GraphicsDevice gd, WorldState state, IList<ObjectComponent> objs)
+        {
+            if (!WorldConfig.Current.ObjectInstancing || objs.Count < InstanceBatchMinSize)
+            {
+                for (int i = 0; i < objs.Count; i++) objs[i].Draw(gd, state);
+                return;
+            }
+
+            var keys = new InstanceKey?[objs.Count];
+            Dictionary<InstanceKey, List<int>> groups = null;
+            for (int i = 0; i < objs.Count; i++)
+            {
+                var obj = objs[i];
+                if (!obj.CanInstance(state)) continue;
+                var mesh = obj.EnsureMesh3D();
+                if (mesh == null) continue;
+
+                var key = new InstanceKey(mesh, obj.DynamicSpriteFlags, obj.DynamicSpriteFlags2, obj.Level);
+                keys[i] = key;
+
+                groups ??= new Dictionary<InstanceKey, List<int>>();
+                if (!groups.TryGetValue(key, out var idxList))
+                {
+                    idxList = new List<int>();
+                    groups[key] = idxList;
+                }
+                idxList.Add(i);
+            }
+
+            if (groups == null)
+            {
+                for (int i = 0; i < objs.Count; i++) objs[i].Draw(gd, state);
+                return;
+            }
+
+            var flushed = new bool[objs.Count];
+            for (int i = 0; i < objs.Count; i++)
+            {
+                if (flushed[i]) continue;
+
+                List<int> idxList = null;
+                if (keys[i].HasValue) groups.TryGetValue(keys[i].Value, out idxList);
+
+                if (idxList != null && idxList.Count >= InstanceBatchMinSize)
+                {
+                    FlushInstanceGroup(state, objs, idxList);
+                    foreach (var j in idxList) flushed[j] = true;
+                }
+                else
+                {
+                    objs[i].Draw(gd, state);
+                }
+            }
+        }
+
+        private static void FlushInstanceGroup(WorldState state, IList<ObjectComponent> objs, List<int> idxList)
+        {
+            int count = idxList.Count;
+            if (_InstWorldScratch.Length < count)
+            {
+                _InstWorldScratch = new Matrix[count];
+                _InstPrevWorldScratch = new Matrix[count];
+            }
+
+            // Same condition DGRPRenderer.Draw3D uses per-object to pick the velocity-writing technique -
+            // replicated here so the batched path stays behaviorally identical to the per-object path.
+            var device = state.Device;
+            bool useVelocity = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null
+                && device.GetRenderTargets().Length > 1;
+
+            DGRP3DMesh mesh = null;
+            ulong flags = 0, flags2 = 0;
+            sbyte level = 0;
+            for (int n = 0; n < count; n++)
+            {
+                var obj = objs[idxList[n]];
+                obj.PrepareInstancedDraw(out var world, out var prevWorld);
+                _InstWorldScratch[n] = world;
+                _InstPrevWorldScratch[n] = prevWorld;
+                if (n == 0)
+                {
+                    mesh = obj.EnsureMesh3D();
+                    flags = obj.DynamicSpriteFlags;
+                    flags2 = obj.DynamicSpriteFlags2;
+                    level = obj.Level;
+                }
+            }
+
+            DGRPRenderer.DrawInstanced(state, mesh, flags, flags2, level,
+                _InstWorldScratch, useVelocity ? _InstPrevWorldScratch : null, count);
         }
     }
 }
