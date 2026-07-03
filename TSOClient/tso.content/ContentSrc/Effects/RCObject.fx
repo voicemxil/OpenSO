@@ -370,6 +370,125 @@ technique DrawWithVelocity
 	}
 }
 
+// ---------------------------------------------------------------------------- Instanced draws
+// GPU instancing for repeated identical objects (same DGRP mesh + same dynamic-sprite state, batched by
+// DGRPRenderer.DrawInstanced). Per-instance World (and PreviousWorld, for the velocity variant) is fed
+// via stream-1 vertex data instead of the World/PreviousWorld uniforms, one full matrix row per TEXCOORD
+// register. We pass all 4 rows rather than the common 3-row affine-compact trick because this file uses
+// row-vector mul(v, M) semantics throughout; packing only 3 rows would require re-deriving the correct
+// multiply order for the dropped translation row, which is an easy source of transpose bugs. Instance
+// data is written directly from the CPU-side row-major Matrix (M11..M44) with no repacking, so instWorld
+// here is bit-for-bit the same matrix the per-object path would have set into the World uniform.
+struct VertexInInstanced
+{
+	float4 position : SV_Position0;
+	float2 texCoord : TEXCOORD0;
+	float3 normal : TEXCOORD1;
+	float4 instRow0 : TEXCOORD2;
+	float4 instRow1 : TEXCOORD3;
+	float4 instRow2 : TEXCOORD4;
+	float4 instRow3 : TEXCOORD5;
+};
+
+VertexOut vsRCInstanced(VertexInInstanced v)
+{
+	VertexOut result;
+	float4x4 instWorld = float4x4(v.instRow0, v.instRow1, v.instRow2, v.instRow3);
+
+	result.texCoord = v.texCoord * UVScale;
+
+	float4 wPos = mul(v.position, instWorld);
+	float4 finalPos = mul(wPos, ViewProjection);
+	result.position = finalPos;
+	result.modelPos = wPos;
+	result.normal = mul(v.normal, (float3x3)instWorld);
+
+	return result;
+}
+
+technique DrawInstanced
+{
+	pass Pass1
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_3 vsRCInstanced();
+		PixelShader = compile ps_4_0_level_9_3 psRC();
+#else
+		VertexShader = compile vs_3_0 vsRCInstanced();
+		PixelShader = compile ps_3_0 psRC();
+#endif;
+	}
+
+	pass PassDirectional
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_3 vsRCInstanced();
+		PixelShader = compile ps_4_0_level_9_3 psDirRC();
+#else
+		VertexShader = compile vs_3_0 vsRCInstanced();
+		PixelShader = compile ps_3_0 psDirRC();
+#endif;
+	}
+}
+
+struct VertexInInstancedV
+{
+	float4 position : SV_Position0;
+	float2 texCoord : TEXCOORD0;
+	float3 normal : TEXCOORD1;
+	float4 instRow0 : TEXCOORD2;
+	float4 instRow1 : TEXCOORD3;
+	float4 instRow2 : TEXCOORD4;
+	float4 instRow3 : TEXCOORD5;
+	float4 prevRow0 : TEXCOORD6;
+	float4 prevRow1 : TEXCOORD7;
+	float4 prevRow2 : TEXCOORD8;
+	float4 prevRow3 : TEXCOORD9;
+};
+
+VertexOutV vsRCInstancedV(VertexInInstancedV v)
+{
+	VertexOutV r;
+	float4x4 instWorld = float4x4(v.instRow0, v.instRow1, v.instRow2, v.instRow3);
+	float4x4 instPrevWorld = float4x4(v.prevRow0, v.prevRow1, v.prevRow2, v.prevRow3);
+
+	r.texCoord = v.texCoord * UVScale;
+	float4 wPos = mul(v.position, instWorld);
+	float4 finalPos = mul(wPos, ViewProjection);
+	r.position = finalPos;
+	r.modelPos = wPos;
+	r.normal = mul(v.normal, (float3x3)instWorld);
+	r.currClip = finalPos;
+	float4 prevWPos = mul(v.position, instPrevWorld);
+	r.prevClip = mul(prevWPos, PreviousViewProjection);
+	return r;
+}
+
+technique DrawInstancedWithVelocity
+{
+	pass Pass1
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_3 vsRCInstancedV();
+		PixelShader = compile ps_4_0_level_9_3 psRCV();
+#else
+		VertexShader = compile vs_3_0 vsRCInstancedV();
+		PixelShader = compile ps_3_0 psRCV();
+#endif;
+	}
+
+	pass PassDirectional
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_3 vsRCInstancedV();
+		PixelShader = compile ps_4_0_level_9_3 psDirRCV();
+#else
+		VertexShader = compile vs_3_0 vsRCInstancedV();
+		PixelShader = compile ps_3_0 psDirRCV();
+#endif;
+	}
+}
+
 technique DepthClear
 {
 	pass Pass1

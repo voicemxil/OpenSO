@@ -5,6 +5,7 @@ using Microsoft.Xna.Framework.Graphics;
 using FSO.Content;
 using FSO.LotView.Utils;
 using FSO.Files.Formats.IFF.Chunks;
+using FSO.Files.RC;
 using FSO.LotView.Model;
 using Microsoft.Xna.Framework;
 using FSO.Common.Utils;
@@ -426,6 +427,48 @@ namespace FSO.LotView.Components
             {
                 DrawOrder = world.WorldSpace.GetDepthFromTile(Position);
             }
+        }
+
+        // ---------------------------------------------------------------------------- GPU instancing
+        // Support for the batched-draw path in WorldEntities, which groups several ObjectComponents that
+        // share a mesh into one DGRPRenderer.DrawInstanced call instead of calling Draw() per object.
+
+        /// <summary>
+        /// True if this object may be drawn as part of a GPU-instanced batch this frame instead of via its
+        /// own Draw() call. Deliberately conservative: excludes anything Draw() does extra bookkeeping for
+        /// that the batch path does not replicate (particles, the 2D/headline branches, the Room==65533
+        /// "disabled" render override - see DGRPRenderer.DrawInstanced) or that only shows up in the rarer
+        /// "3D component forced on in a 2D camera" mode. Objects that fail this check simply fall back to
+        /// the existing per-object Draw() path with no behavior change.
+        /// </summary>
+        public bool CanInstance(WorldState world)
+        {
+            if (dgrp == null || DrawGroup == null) return false;
+            if (!Visible || CutawayHidden) return false;
+            if (!world.DrawOOB && (Position.X < -2043 && Position.Y < -2043)) return false;
+            if (Room == 65533) return false;
+            if (Particles.Count != 0) return false;
+            return world.CameraMode > CameraRenderMode._2D;
+        }
+
+        /// <summary>
+        /// Loads (if necessary) and returns this object's shared 3D mesh, without drawing it - used to
+        /// compute the instancing batch key (see WorldEntities).
+        /// </summary>
+        public DGRP3DMesh EnsureMesh3D() => dgrp?.EnsureMesh3D();
+
+        /// <summary>
+        /// Returns this frame's World3D and the previous frame's snapshot (for velocity), and advances the
+        /// previous-world bookkeeping for next frame - mirrors what ObjectComponent.Draw does around
+        /// dgrp.Draw3D, without issuing a draw call. Used by the instancing batch path, which draws a
+        /// whole group of objects via one DGRPRenderer.DrawInstanced call.
+        /// </summary>
+        public void PrepareInstancedDraw(out Matrix world, out Matrix prevWorld)
+        {
+            world = World3D;
+            prevWorld = _PrevWorld3DValid ? _PreviousWorld3D : world;
+            _PreviousWorld3D = world;
+            _PrevWorld3DValid = true;
         }
 
         public bool DoDraw(WorldState world)

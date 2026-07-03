@@ -73,6 +73,11 @@ namespace FSO.LotView
         public bool Directional = true;
         public bool Complex = false;
 
+        // GPU instancing for repeated identical lot objects (same DGRP mesh + same dynamic-sprite
+        // state). Off switches back to the per-object draw path with no other behavior change - keep
+        // this available as an escape hatch if an instancing artifact ever surfaces.
+        public bool ObjectInstancing = true;
+
         private bool _EnableTransitions = false;
         public bool EnableTransitions
         {
