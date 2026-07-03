@@ -226,10 +226,34 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Tap k in {-1,0,1} sits at distance fracd + k; at 1:1, fracd == the jitter shift (old jShiftPx).
     float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscale), MitchellK(abs(fracd.x) * kscale), MitchellK(abs(fracd.x + 1.0) * kscale));
     float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscale), MitchellK(abs(fracd.y) * kscale), MitchellK(abs(fracd.y + 1.0) * kscale));
-    float3 m1 = 0, m2 = 0;
+    // VARIANCE BOX (5-tap plus pattern, hoisted out of the loop so the EDGE DIRECTION below is available to
+    // the reconstruction weights). Fetched at the content-stationary boxUV: both the clamp statistics and
+    // the kernel direction stay stable under jitter (a jitter-wobbling kernel direction would itself be a
+    // fizzle source). The center tap doubles as the thin-coverage fallback sample (was a separate fetch).
+    float3 cboxC = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV, 0, 0)).rgb);
+    float3 cboxW = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV - float2(InvColorSize.x, 0), 0, 0)).rgb);
+    float3 cboxE = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(InvColorSize.x, 0), 0, 0)).rgb);
+    float3 cboxN = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV - float2(0, InvColorSize.y), 0, 0)).rgb);
+    float3 cboxS = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(0, InvColorSize.y), 0, 0)).rgb);
+    float3 m1 = (cboxC + cboxW + cboxE + cboxN + cboxS) * (1.0 / 5.0);
+    float3 m2 = (cboxC * cboxC + cboxW * cboxW + cboxE * cboxE + cboxN * cboxN + cboxS * cboxS) * (1.0 / 5.0);
+    // EDGE-DIRECTIONAL (ANISOTROPIC) RECONSTRUCTION — the pixel-shader analogue of DLSS/TSR's learned,
+    // edge-following sample kernels. On a strong luma edge, stretch the reconstruction kernel ALONG the
+    // edge (distances along the tangent count half): thin geometry then gathers several real samples per
+    // frame along its own length instead of ~one, which is where the "intense upscaling can't resolve thin
+    // geometry" limit came from. Central-difference gradient from the stationary box taps (no extra
+    // fetches); direction is jitter-stable. UPSCALE-GATED (kscale-1: 0 at native -> 1 at <= 0.5x) so the
+    // validated native-res kernel is untouched, and faded in with edge strength so flat regions keep the
+    // separable kernel bit-exactly.
+    float2 grad = float2(cboxE.x - cboxW.x, cboxS.x - cboxN.x);
+    float gmag = length(grad);
+    float edgeAniso = smoothstep(0.15, 0.5, gmag) * saturate(kscale - 1.0);
+    float2 en = grad / max(gmag, 1e-5);   // across-edge unit direction
+    float2 et = float2(-en.y, en.x);      // along-edge unit direction
     float3 filt = 0;
     float wsum = 0;
     float3 crawC = 0; // the raw nearest jittered sample (center recon tap) — see texture-detail lean below
+    float wC = 0;     // center tap's actual kernel weight — sample confidence below
     float2 dilatedVel = float2(0, 0);
     float2 centerVel = float2(0, 0); // this pixel's OWN velocity (un-dilated) — foreign-velocity reactive
     float closestDepth = 1e9;
@@ -239,16 +263,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     [unroll] for (int dx = -1; dx <= 1; dx++)
     {
         float2 ofs = float2(dx, dy) * InvColorSize; // neighborhood spans INPUT texels
-        // FETCH DIET (perf: the resolve was ~38 fetches/px): the variance box and the velocity dilation use
-        // the 5-tap PLUS pattern instead of the full 3x3 — the reference-sanctioned reduction (Playdead's
-        // cross; corner contribution to the statistics/dilation is marginal). The [unroll]'d literal test
-        // compiles the corner taps out entirely. The RECONSTRUCTION keeps all 9 taps (kernel quality).
+        // FETCH DIET (perf: the resolve was ~38 fetches/px): the velocity dilation uses the 5-tap PLUS
+        // pattern instead of the full 3x3 — the reference-sanctioned reduction (Playdead's cross; corner
+        // contribution to the dilation is marginal). The [unroll]'d literal test compiles the corner taps
+        // out entirely. The RECONSTRUCTION keeps all 9 taps (kernel quality). (The variance box is hoisted
+        // above the loop now, feeding the kernel direction.)
         if (dx == 0 || dy == 0)
         {
-            float3 c = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + ofs, 0, 0)).rgb);
-            m1 += c;
-            m2 += c * c;
-
             float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
             // "No velocity written" -> depth sentinel 2.0 (beyond valid [0,1]) so genuinely-far valid
             // pixels still win the nearest-depth tiebreak over unwritten neighbours.
@@ -258,22 +279,30 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
             if (dx == 0 && dy == 0) centerVel = v.rg; // folds under [unroll]; unwritten decodes as zero
         }
         // Reconstruction tap: RAW texel center (bilinear at an exact center = point fetch) around the
-        // nearest jittered sample, weighted by its true distance to the output pixel center.
+        // nearest jittered sample, weighted by its true distance to the output pixel center. Weight =
+        // separable Mitchell blended toward the edge-elongated radial Mitchell by edgeAniso (see above):
+        // distances along the edge tangent count HALF, so taps lying along the edge keep real weight.
         float2 tapUV = (baseTexel + float2(dx, dy) + 0.5) * InvColorSize;
         float3 craw = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(tapUV, 0, 0)).rgb);
         float w = kx3[dx + 1] * ky3[dy + 1];
+        if (edgeAniso > 0.001)
+        {
+            float2 vtap = fracd + float2(dx, dy);
+            float dAcross = dot(vtap, en);
+            float dAlong = dot(vtap, et);
+            float wAni = MitchellK(sqrt(dAcross * dAcross + dAlong * dAlong * 0.25) * kscale);
+            w = lerp(w, wAni, edgeAniso);
+        }
         filt += craw * w;
         wsum += w;
-        if (dx == 0 && dy == 0) crawC = craw; // folds under [unroll]
+        if (dx == 0 && dy == 0) { crawC = craw; wC = w; } // folds under [unroll]
     }
-    m1 *= (1.0 / 5.0);
-    m2 *= (1.0 / 5.0);
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
     // Thin-coverage fallback: with the output-sized kernel, some frames leave an output pixel with almost
     // no in-support sample (wsum ~ 0). Divide-guard + smooth fallback to the stationary bilinear estimate
-    // at the content-aligned position (boxUV); sample confidence already keeps those pixels history-leaning,
-    // so the fallback only ever feeds the small current-frame share. No-op at native (wsum ~ 1 there).
-    float3 stationaryC = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV, 0, 0)).rgb);
+    // at the content-aligned position (the hoisted box center tap — free). Sample confidence already keeps
+    // those pixels history-leaning, so the fallback only ever feeds the small current-frame share.
+    float3 stationaryC = cboxC;
     float3 curr = lerp(stationaryC, filt / max(wsum, 1e-4), saturate(wsum / 0.15));
 
     // TEXTURE-DETAIL PRESERVATION: TAA area-averages EVERYWHERE — unlike MSAA, which only supersamples
@@ -537,7 +566,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float upscaleRatio = InvColorSize.x / InvScreenSize.x; // outputRes / renderRes, > 1 under TAAU
     if (upscaleRatio > 1.001)
     {
-        float sampleConf = saturate(kx3[1] * ky3[1] * 1.2656); // center-tap weight / k(0)^2: 1 = sample on-pixel
+        // Center tap's ACTUAL kernel weight (captured in the loop, so it tracks the anisotropic blend),
+        // normalized by that kernel's own peak: separable peak = k(0)^2 = 0.7901, radial peak = k(0) = 0.8889.
+        float sampleConf = saturate(wC * lerp(1.2656, 1.125, edgeAniso)); // 1 = sample on-pixel
         // Floor 0.14 (0.35 -> 0.25 -> 0.18 -> 0.14 as the kernel sharpened): with the output-sized kernel,
         // off-frames carry almost no real information for this pixel — injecting less of them disturbs
         // converged fine geometry less (the residual TAAU-only fizzle), and the motion gate still restores
