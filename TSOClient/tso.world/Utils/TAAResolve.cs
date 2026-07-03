@@ -123,6 +123,13 @@ namespace FSO.LotView.Utils
             // behaves as before there.
             var jNdc = PPXDepthEngine.TAAJitterNDC;
             effect.Parameters["SampleJitterUV"]?.SetValue(new Vector2(-jNdc.X * 0.5f, jNdc.Y * 0.5f));
+            // Motion gates must think in NATIVE pixels regardless of the resolve grid. In pre-upscale (FSR1)
+            // mode the grid is render-res, so scene motion produced proportionally fewer grid-pixels of
+            // velocity at low render scale — disocclusion rejection barely armed and the oscillation lock
+            // survived on moving edges (the "ghosting + fizzle on disocclusion at low res, TAAU off" report).
+            // TAAU and native/supersample grids are already native-sized -> scale 1.
+            float ss = PPXDepthEngine.SSAA;
+            effect.Parameters["VelGatePxScale"]?.SetValue((!upscale && ss < 1f && ss > 0f) ? 1f / ss : 1f);
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
             var tech = (DebugAccum ? effect.Techniques["TAADebug"] : null) ?? effect.Techniques["TAA"];
