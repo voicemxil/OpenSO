@@ -460,7 +460,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // samples land on a given output pixel only on some phases), so fine geometry hovered under the lock
     // forever — the residual low-scale fizzle. TV-static-like content (~0.5 osc equilibrium) gains a bit
     // more partial trust as the cost; still clamp-bounded.
-    float oscLock = smoothstep(0.32, 0.7, osc) * stillGate
+    // INTENSE-UPSCALE EASING (floorScale: 1 native -> 0 at <= 0.5x): under heavy TAAU an output pixel gets
+    // a real sample only ~1 frame in 1/scale^2 (one in nine at 0.33x), so lock evidence accumulates that
+    // much slower — distant fine detail (tree canopies) hovered below the threshold forever. Ease the
+    // entry edge to 0.24 there; native keeps 0.32.
+    float oscLock = smoothstep(lerp(0.24, 0.32, floorScale), 0.7, osc) * stillGate
                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign);
     float gammaEff = GAMMA * (1.0 + oscLock); // up to 3 sigma on locked pixels (exonerated by the control build)
     float3 cmin = m1 - gammaEff * sigma;
@@ -571,7 +575,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // gave ghost contamination ON those surfaces (exactly where movers walk) the full deep accumulation
     // window — user-identified as the persistent low-res mover ghosting. Sand churn at low scale is the
     // accepted cost until the INPUT-side fix (terrain-noise mip bias). Foliage/edges (high sigma): ~0.
-    blend = max(blend, texDetail * 0.28);
+    // LOCK BYPASS: pixels with a PROVEN oscillation lock escape the floor — semi-uniform fine detail
+    // (distant tree canopy) can read low-variance at render res, and the floor re-churned it forever under
+    // intense TAAU. Ghost-safe by the lock's own argument: ghost residue is monotonic, cannot earn the
+    // lock, so the anti-ghost backstop stands exactly where it matters; the lock also dies on motion,
+    // rejects, and foreign velocity, so a bypassed pixel reverts the moment anything real happens.
+    blend = max(blend, texDetail * 0.28 * (1.0 - oscLock));
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));
