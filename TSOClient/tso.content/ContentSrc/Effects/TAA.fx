@@ -208,9 +208,18 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float2 sPx = SampleJitterUV * colSize;
     float2 baseTexel = floor(oPx - sPx);
     float2 fracd = (baseTexel + 0.5 + sPx) - oPx; // nearest sample's offset from the output center (input px)
+    // OUTPUT-SIZED RECONSTRUCTION KERNEL (the reference-TAAU sharpness mechanism, UE TSR / DLSS-class):
+    // distances are scaled by the upscale ratio so the Mitchell kernel is sized for the OUTPUT pixel, not
+    // the input texel. Unscaled, the kernel footprint at 0.5x scale spans ~4 output pixels and the converged
+    // image can never exceed a Mitchell blur at render resolution; scaled, only samples genuinely near each
+    // output pixel carry weight — per-frame coverage is sparser (sample confidence + the wsum fallback below
+    // carry those pixels via history), and over the Halton phase cycle every output pixel accumulates TRUE
+    // output-resolution detail. kscale = 1 at native (bit-identical weights to before); clamped at 2 so
+    // samples stay reachable at extreme scales (0.33x).
+    float kscale = min(InvColorSize.x / InvScreenSize.x, 2.0);
     // Tap k in {-1,0,1} sits at distance fracd + k; at 1:1, fracd == the jitter shift (old jShiftPx).
-    float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0)), MitchellK(abs(fracd.x)), MitchellK(abs(fracd.x + 1.0)));
-    float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0)), MitchellK(abs(fracd.y)), MitchellK(abs(fracd.y + 1.0)));
+    float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscale), MitchellK(abs(fracd.x) * kscale), MitchellK(abs(fracd.x + 1.0) * kscale));
+    float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscale), MitchellK(abs(fracd.y) * kscale), MitchellK(abs(fracd.y + 1.0) * kscale));
     float3 m1 = 0, m2 = 0;
     float3 filt = 0;
     float wsum = 0;
@@ -252,7 +261,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     m1 *= (1.0 / 5.0);
     m2 *= (1.0 / 5.0);
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
-    float3 curr = filt / wsum; // the filtered current sample (see comment above)
+    // Thin-coverage fallback: with the output-sized kernel, some frames leave an output pixel with almost
+    // no in-support sample (wsum ~ 0). Divide-guard + smooth fallback to the stationary bilinear estimate
+    // at the content-aligned position (boxUV); sample confidence already keeps those pixels history-leaning,
+    // so the fallback only ever feeds the small current-frame share. No-op at native (wsum ~ 1 there).
+    float3 stationaryC = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV, 0, 0)).rgb);
+    float3 curr = lerp(stationaryC, filt / max(wsum, 1e-4), saturate(wsum / 0.15));
 
     // TEXTURE-DETAIL PRESERVATION: TAA area-averages EVERYWHERE — unlike MSAA, which only supersamples
     // edges and leaves texture interiors alone — so fine texture detail (sand speckles) converges to a
@@ -359,7 +373,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float mag  = step(0.03, abs(dl));
         float sgn  = step(0.0, dl);
         float flip = mag * abs(sgn - prevSgn); // 1 only when a real-amplitude delta reversed sign
-        osc = lerp(prevOsc, flip, 0.125);      // ~8-frame EMA
+        osc = lerp(prevOsc, flip, 0.15);       // ~6-7 frame EMA (0.125 locked too slowly at low render scales,
+                                               // where real samples arrive rarely and evidence builds unevenly)
         float newSgn = lerp(prevSgn, sgn, mag); // hold the sign bit through quiet frames
         packedA = reprojectable ? saturate(newSgn * 0.5 + osc * 0.498) : 0.0; // off-screen = evidence reset
     }
@@ -390,8 +405,20 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // motion-gated at rest, so the tighter box only re-clipped converged high-frequency history for no
     // anti-ghost benefit. Restoring the baseline width is not trust-widening beyond baseline; it IS baseline.
     const float GAMMA = 1.5;
-    float3 cmin = m1 - GAMMA * sigma;
-    float3 cmax = m1 + GAMMA * sigma;
+    // FSR2-style "LOCK" via the oscillation signal (fine-geometry stability, matters most under TAAU): the
+    // clamp box is built from RENDER-res taps, but the converged history holds OUTPUT-res detail — a thin
+    // line that is sub-pixel at render res is DILUTED in the box statistics, so the box hugs the diluted
+    // mean and the clamp erodes the converged sharp feature every frame (the dim/flicker cycling on fine
+    // geometry). On pixels with PROVEN sign-alternation (a ghost is monotonic — it cannot earn this), ~zero
+    // velocity, and no disocclusion signals, widen the box so the locked history passes through intact.
+    // Ghost-safe by the exact argument that admitted the oscillation trust gate; every gate that breaks a
+    // lock in FSR2 (motion, disocclusion, velocity disparity) breaks it here too.
+    float stillGate = 1.0 - smoothstep(0.25, 0.5, velPx);
+    float oscLock = smoothstep(0.4, 0.75, osc) * stillGate
+                  * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive);
+    float gammaEff = GAMMA * (1.0 + oscLock); // up to 3 sigma on locked pixels (exonerated by the control build)
+    float3 cmin = m1 - gammaEff * sigma;
+    float3 cmax = m1 + gammaEff * sigma;
     float3 history = ClipAABB(cmin, cmax, historyRaw);
 
     // --- Blend: the original content-adaptive luminance-feedback weight, unmodified — diff-driven, no
@@ -424,11 +451,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     //     freeze asymptote. The 1.5-sigma variance clamp stays untouched — the hard bound under any failure.
     //     Known residual: TV/video textures equilibrate at osc~0.5 -> at most ~0.15 partial trust (slight
     //     smoothing, clamp-bounded); tuning lever = the smoothstep lower edge (0.4 -> 0.55 kills it). ---
-    float stillGate = 1.0 - smoothstep(0.25, 0.5, velPx);
-    float oscTrust = smoothstep(0.4, 0.75, osc)
-                   * stillGate
-                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive)
-                   * (1.0 - saturate(diff * 3.0));
+    // NO diff gate (thin/undersampled geometry carries a PERMANENTLY high diff — its render-res
+    // neighbourhood mean is diluted vs the converged output-res history — so a diff gate strangles the
+    // blend relief for exactly the pixels the lock exists to stabilize). Ghost-safety comes from the
+    // oscillation signal itself: a ghost's delta is monotonic, so osc decays x0.875/frame and the lock
+    // dies in ~5 frames. (Both halves exonerated of the city-black issue by the control build.)
+    float oscTrust = oscLock;
     float oscCeil = min(1.0 - 0.5 * BlendFactor, 0.985);
     historyWeight = lerp(historyWeight, oscCeil, oscTrust);
 
@@ -447,7 +475,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     if (upscaleRatio > 1.001)
     {
         float sampleConf = saturate(kx3[1] * ky3[1] * 1.2656); // center-tap weight / k(0)^2: 1 = sample on-pixel
-        blend *= lerp(lerp(0.35, 1.0, sampleConf), 1.0, moveGate);
+        // Floor 0.25 (was 0.35): with the output-sized kernel, off-frames carry even less real information
+        // for this pixel — injecting less of them disturbs converged fine geometry less (stability), and
+        // the motion gate still restores full responsiveness the moment anything moves.
+        blend *= lerp(lerp(0.25, 1.0, sampleConf), 1.0, moveGate);
     }
 
     // WARMUP RAMP (counter-driven): with no accumulated history (fresh clear / off-screen reset) the
@@ -488,15 +519,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 
     if (debugMeta)
     {
-        // Diagnostic encode for the debug blit — EFFECTIVE signals, not internal counters (the old
-        // "red = N" view once showed full-red while the blend wasn't actually deep, misleading a whole
-        // debugging round): red = effective history trust this frame (1 - blend: dark = taking current/
-        // warming up, bright = deep accumulation), green = reject strength (depth or ghost), blue =
-        // non-reprojectable. Note the reactive/oscillation contributions are compiled out under debugMeta
-        // (they read meta GB/A, which this technique repurposes), so red slightly overstates trust vs the
-        // shipping technique. A = 0 so toggling debug OFF can't leave a stale byte that decodes as full
-        // oscillation trust screen-wide.
-        o.meta = float4(1.0 - blend, max(depthReject, ghostReject), reprojectable ? 0.0 : 1.0, 0.0);
+        // Diagnostic encode for the debug blit. CRITICAL: R must stay the ACCUMULATION COUNTER even in
+        // debug — the next frame's resolve decodes meta.R as prevN in BOTH techniques, and a previous
+        // debug encode that wrote "effective trust" into R corrupted the feedback loop (fresh pixels wrote
+        // R=0 -> read prevN=0 -> warmup pinned blend=1 -> R=0 forever: newly revealed areas never regained
+        // trust WHILE DEBUGGING, which read as a scary real bug). Layout: R = counter (feedback-correct),
+        // G = reject strength (depth or ghost), B = EFFECTIVE HISTORY TRUST this frame (1 - blend: the
+        // honest "is the blend actually deep here" signal — bright blue = converged), A = 0 (no stale
+        // oscillation trust on toggle-off).
+        o.meta = float4(newN / MaxAccum, max(depthReject, ghostReject), 1.0 - blend, 0.0);
     }
     else
     {

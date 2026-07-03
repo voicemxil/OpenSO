@@ -410,7 +410,11 @@ namespace FSO.LotView
                     State.Zoom = WorldZoom.Near;
                     break;
             }
-            ChangeAAMode(m_Device);
+            // GameResized (not just ChangeAAMode): switching graphics mode changes the EFFECTIVE render
+            // scale (2D folds SSAA to 1; 3D restores it), so the 2D world dimensions must be recomputed
+            // from the new backbuffer/SSAA pair. Without this, dims computed under the 3D scale (e.g.
+            // bb/0.33 = 3x native) survived into 2D mode — the "impossible zoom out" after a 3D->2D switch.
+            GameResized();
             State.Platform = Platform;
         }
 
@@ -773,8 +777,27 @@ namespace FSO.LotView
         /// We will just take over the whole rendering of this scene :)
         /// </summary>
         /// <param name="device"></param>
+        private bool _WasVisibleLastDraw = true;
+
         public override void Draw(GraphicsDevice device){
             if (HasInit == false) { return; }
+
+            // ENGINE OWNERSHIP: a world that isn't the active presenter must NOT resolve to the screen.
+            // In the city view, the paused lot world behind it kept running its post chain every frame —
+            // painting its (stale/empty) backbuffer OVER the city output (the "city map black under TAAU"
+            // bug) while its config fought the city's over the shared PPXDepthEngine state.
+            if (!Visible)
+            {
+                _WasVisibleLastDraw = false;
+                return;
+            }
+            if (!_WasVisibleLastDraw)
+            {
+                // Regained visibility: re-apply this world's AA/scale config (the city view owned and
+                // reconfigured the shared engine while we were hidden).
+                _WasVisibleLastDraw = true;
+                ChangeAAMode(device);
+            }
 
             FrameCounter++;
             if (FrameCounter < LastCacheClear + 60*60)
@@ -1109,6 +1132,11 @@ namespace FSO.LotView
 
         public void ChangeAAMode(GraphicsDevice gd)
         {
+            // ENGINE OWNERSHIP: a hidden world (e.g. the paused lot behind the city view) must not
+            // reconfigure the shared PPXDepthEngine — its settings (2D SSAA fold, TAAU off, history
+            // teardown) fought the city's config every frame, thrashing the backbuffer size and destroying
+            // the city's TAA history. Draw() re-applies our config when we become visible again.
+            if (!Visible) return;
             var lastm = PPXDepthEngine.MSAA;
             var lasts = PPXDepthEngine.SSAA;
             var cfg = WorldConfig.Current;
