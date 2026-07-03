@@ -156,17 +156,21 @@ float3 SampleHistoryBicubic(float2 uv)
     float2 tp3  = (texPos1 + 2.0) * InvScreenSize;
     float2 tp12 = (texPos1 + offset12) * InvScreenSize;
 
-    // 5-tap Catmull-Rom (Karis optimization): the 4 corner taps carry the least weight — drop them and
-    // renormalize by the weight actually used. Visually near-identical to the 9-tap form at ~half the
-    // history fetch cost (part of the resolve fetch diet; the resolve was TAA's hot spot vs MSAA 8x).
+    // FULL 9-tap Catmull-Rom (restored from the 5-tap Karis diet): the dropped corner taps' weight was
+    // renormalized onto the axis taps, which low-passed DIAGONAL detail slightly on every reprojection —
+    // a real resampling-sharpness cost once the reconstruction kernel got anisotropic (diagonal thin
+    // geometry is exactly what it now resolves). +4 fetches; still under the pre-diet fetch budget.
     float3 r = float3(0, 0, 0);
+    r += tex2Dlod(historySampler, float4(tp0.x,  tp0.y,  0, 0)).rgb * (w0.x  * w0.y);
     r += tex2Dlod(historySampler, float4(tp12.x, tp0.y,  0, 0)).rgb * (w12.x * w0.y);
+    r += tex2Dlod(historySampler, float4(tp3.x,  tp0.y,  0, 0)).rgb * (w3.x  * w0.y);
     r += tex2Dlod(historySampler, float4(tp0.x,  tp12.y, 0, 0)).rgb * (w0.x  * w12.y);
     r += tex2Dlod(historySampler, float4(tp12.x, tp12.y, 0, 0)).rgb * (w12.x * w12.y);
     r += tex2Dlod(historySampler, float4(tp3.x,  tp12.y, 0, 0)).rgb * (w3.x  * w12.y);
+    r += tex2Dlod(historySampler, float4(tp0.x,  tp3.y,  0, 0)).rgb * (w0.x  * w3.y);
     r += tex2Dlod(historySampler, float4(tp12.x, tp3.y,  0, 0)).rgb * (w12.x * w3.y);
-    float wtotal = (w12.x * w0.y) + (w0.x * w12.y) + (w12.x * w12.y) + (w3.x * w12.y) + (w12.x * w3.y);
-    return clamp(r / wtotal, 0.0, 8.0); // renormalize + clamp ringing undershoot / fp16 overflow insurance
+    r += tex2Dlod(historySampler, float4(tp3.x,  tp3.y,  0, 0)).rgb * (w3.x  * w3.y);
+    return clamp(r, 0.0, 8.0); // weights sum to 1 exactly; clamp ringing undershoot / fp16 overflow insurance
 }
 
 struct TAAOut
@@ -400,6 +404,35 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float storedMove = smoothstep(0.35, 1.5, storedMovePx); // matches moveGate's slow-mover arming
     float ghostReject = max(moveGate, storedMove) * ghost;
 
+    // --- FEATURE-LEVEL HISTORY COMPARISON (structure, not value — the DLSS-analogue rectification cue).
+    //     A ghost carries STRUCTURE: its own edges, at positions/orientations the current frame does not
+    //     confirm. Value-diff misses contamination that preserves average brightness; comparing the
+    //     history's luma gradient against the current one catches it. Two signals, RESPONSIVE-ONLY (they
+    //     can only increase diff, never protect — law-compliant): (a) both gradients strong but pointing
+    //     differently (normalized correlation low); (b) history has structure where the current frame is
+    //     FLAT (the classic ghost-on-plain-background). MOTION-ADJACENT GATED (current or remembered
+    //     velocity): at rest, converged fine geometry's native-res history gradient legitimately
+    //     out-details the render-res current gradient — ungated, this would re-fizzle exactly what the
+    //     locks stabilize. Cost: 4 point history taps. ---
+    float featReject = 0.0;
+    {
+        float3 lw = float3(0.25, 0.5, 0.25); // YCoCg Y from RGB
+        float hE = dot(tex2Dlod(historyDepthSampler, float4(histUV + float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
+        float hW = dot(tex2Dlod(historyDepthSampler, float4(histUV - float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
+        float hS = dot(tex2Dlod(historyDepthSampler, float4(histUV + float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
+        float hN = dot(tex2Dlod(historyDepthSampler, float4(histUV - float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
+        float2 gradH = float2(hE - hW, hS - hN);
+        float gH = length(gradH);
+        float gC = gmag; // current luma gradient magnitude (stationary box taps, render-res)
+        // (a) directional disagreement where both frames claim structure
+        float bothStrong = smoothstep(0.08, 0.2, min(gH, gC));
+        float ncorr = dot(gradH, grad) / max(gH * gC, 1e-5);
+        float dirMismatch = bothStrong * saturate((0.3 - ncorr) * (1.0 / 0.6));
+        // (b) history structure over a current flat — the ghost signature
+        float structGhost = smoothstep(0.1, 0.25, gH) * (1.0 - smoothstep(0.03, 0.1, gC));
+        featReject = max(moveGate, storedMove) * saturate(max(dirMismatch, structGhost)) * 0.6;
+    }
+
     // --- VELOCITY-DISPARITY REACTIVE (FSR2 lock-break analogue): compare this frame's dilated velocity with
     //     the velocity stored alongside the history. A mismatch means the history was written by content
     //     moving differently than what's here now — reveals after the mover left the 3x3, starts/stops,
@@ -416,6 +449,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float velDispPx = length((velocity - prevVel) * texSize) * VelGatePxScale;
         reactive = smoothstep(dispLo, dispLo + 4.5, velDispPx);
     }
+
+    // Center tap's ACTUAL kernel weight normalized by that kernel's peak (separable k(0)^2 = 0.7901,
+    // radial k(0) = 0.8889): 1 = this frame's nearest real sample sits on the output pixel. Hoisted here
+    // for the WITNESS RULE, used by both the oscillation detector and the Kalman counter below: under
+    // TAAU, off-phase frames are interpolation, not observation — they may neither testify against
+    // history nor (for the oscillation EMA) build/decay alternation evidence.
+    float upscaleRatio = InvColorSize.x / InvScreenSize.x; // outputRes / renderRes, > 1 under TAAU
+    float sampleConf = saturate(wC * lerp(1.2656, 1.125, edgeAniso));
+    float testify = (upscaleRatio > 1.001) ? sampleConf : 1.0;
 
     // --- LUMA-OSCILLATION DETECTOR (Decima-style anti-fizzle), state in meta.A (1 sign bit + 7-bit EMA).
     //     Fizzle = a CONVERGED pixel whose curr-vs-history luma delta ALTERNATES SIGN at frame frequency
@@ -440,19 +482,44 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float mag  = step(0.03, abs(dl));
         float sgn  = step(0.0, dl);
         float flip = mag * abs(sgn - prevSgn); // 1 only when a real-amplitude delta reversed sign
-        osc = lerp(prevOsc, flip, 0.15);       // ~6-7 frame EMA (0.125 locked too slowly at low render scales,
-                                               // where real samples arrive rarely and evidence builds unevenly)
-        float newSgn = lerp(prevSgn, sgn, mag); // hold the sign bit through quiet frames
+        // WITNESS RULE on the EMA (the residual TAAU flicker root): off-phase frames' interpolation error
+        // is BIASED (no sign flip), so an ungated EMA DECAYED the alternation evidence between real
+        // samples — fine geometry hovered half-locked forever at low scale. Off-frames now neither build
+        // nor decay evidence (update rate scaled by testify); the lock holds solid between real samples.
+        osc = lerp(prevOsc, flip, 0.15 * testify); // ~6-7 frame EMA on witnessing frames
+        float newSgn = lerp(prevSgn, sgn, mag * testify); // hold the sign bit through quiet/blind frames
         packedA = reprojectable ? saturate(newSgn * 0.5 + osc * 0.498) : 0.0; // off-screen = evidence reset
     }
 
-    // --- ACCUMULATION COUNTER: grows +1 per frame (cap MaxAccum); hard-resets only when history is off-
-    //     screen. Deliberately NOT zeroed by depthReject (noisy edge signal pinned silhouettes at N=0).
-    //     Ghost/reactive events SOFT-CAP it instead. Its job: the WARMUP RAMP in the blend section — at low
-    //     N the pixel takes mostly-current (raw image first, detail builds on top) instead of blending in
-    //     the cleared-black history (which looked darkened/blurry until filled). It does NOT deepen trust
-    //     past the baseline blend (that direction ghosted in every variant tried). ---
-    float newN = reprojectable ? min(prevN + 1.0, MaxAccum) : 0.0;
+    // --- EVIDENCE-CONDITIONED ACCUMULATION (Kalman-gain counter). The warmup ramp blend >= 1/(N+1) IS a
+    //     Kalman gain — but for a filter whose every observation CONFIRMS the estimate: N counted FRAMES.
+    //     Now N counts EVIDENCE. The innovation |curr - history| is normalized by the neighbourhood stddev
+    //     (sigma = the expected sampling noise for THIS content: sand expects large innovations, a flat
+    //     wall expects none). Verdicts:
+    //       * agreement (innovation within the noise) grows N (+1/frame, as before);
+    //       * SIGN-ALTERNATING innovation counts as agreement regardless of size — zero-mean noise, the
+    //         converged-fine-geometry signature (without this, oscillating pixels equilibrated at N~6 and
+    //         the ramp floor re-fizzled exactly what the locks stabilize; ghosts/content changes are BIASED
+    //         one-way and cannot claim it — the osc signal again);
+    //       * persistent one-sided disagreement COLLAPSES N multiplicatively (x0.5/frame): deep trust
+    //         unwinds in 2-3 frames and stays responsive until the scene settles. Content changes WITHOUT
+    //         motion (TV screens, lighting, cutaway toggles) previously leaned on the instantaneous diff
+    //         curve alone.
+    //     TAAU WITNESS RULE: only frames whose nearest real sample covers this output pixel may testify
+    //     AGAINST history (off-phase frames are interpolation — they would falsely accuse converged thin
+    //     geometry); off-frames still accrue trust weakly (x0.3). Ghost-safe BY DIRECTION: a collapsed N
+    //     only ever ADDS current weight via the ramp — no deepening past baseline (that direction ghosted
+    //     in every variant tried). Hard-reset only when history is off-screen; deliberately NOT zeroed by
+    //     depthReject (noisy edge signal once pinned silhouettes at N=0); ghost/depth/reactive caps below.
+    float inno = abs(curr.x - historyRaw.x) / max(sigma.x, 0.02);
+    // Osc protection edge 0.12 (was 0.25): under TAAU the off-phase frames' interpolation error is BIASED
+    // (interpolation underestimates thin bright detail), so the alternation EMA decays between real samples
+    // and fine geometry's protection starved — trees collapsed to low N and the ramp floor re-injected
+    // jitter. Collapse 0.75 (was 0.5): a verdict should need a few consistent frames, not two.
+    float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno), smoothstep(0.12, 0.35, osc));
+    float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
+    float growK = agreeK * lerp(0.3, 1.0, testify);
+    float newN = reprojectable ? min(prevN * collapse + growK, MaxAccum) : 0.0;
     // Ghost-side reject now RESETS the counter (was a soft-cap to 2): the surface that wrote the history has
     // provably left, so the honest treatment is the same as off-screen — raw current, then the warmup ramp
     // rebuilds (1 -> 1/2 -> 1/3...). The old cross-fade left a hazy 2-3 frame ghost mix, chunky at low res.
@@ -494,7 +561,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // much slower — distant fine detail (tree canopies) hovered below the threshold forever. Ease the
     // entry edge to 0.24 there; native keeps 0.32.
     float oscLock = smoothstep(lerp(0.24, 0.32, floorScale), 0.7, osc) * stillGate
-                  * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign);
+                  * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
+                  * (1.0 - featReject);
     float gammaEff = GAMMA * (1.0 + oscLock); // up to 3 sigma on locked pixels (exonerated by the control build)
     float3 cmin = m1 - gammaEff * sigma;
     float3 cmax = m1 + gammaEff * sigma;
@@ -524,7 +592,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // by ANY resolve-side signal (magnitude, motion, even sign-alternation — the texture's noise rides on top
     // of the residue), so the knee always slowed ghost cleanup somewhere (haze around mover silhouettes).
     // Sand detail at low scale is an INPUT-side problem (terrain-noise mip bias), not a trust-side one.
-    diff = max(max(diff, depthReject), ghostReject);
+    diff = max(max(diff, depthReject), max(ghostReject, featReject));
     float historyWeight = lerp(1.0 - BlendFactor, 0.55, diff); // responsive end 0.6 -> 0.55: a full-diff pixel scrubs a shade faster
     // Velocity-disparity reactive caps the history trust directly (soft — 0.88 keeps a moving-content pixel
     // from pulsing aliased when the camera stops; tune toward 0.94 if a screen-wide stop-pulse shows).
@@ -563,12 +631,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     //     in-between frames lean on the history that already integrated real samples from other jitter
     //     phases. At 1:1 every frame is a complete estimate, so this is OFF there (design-review verdict);
     //     under camera motion it's faded out (moveGate) so responsiveness/anti-ghosting are untouched. ---
-    float upscaleRatio = InvColorSize.x / InvScreenSize.x; // outputRes / renderRes, > 1 under TAAU
-    if (upscaleRatio > 1.001)
+    if (upscaleRatio > 1.001) // upscaleRatio/sampleConf hoisted above the Kalman counter
     {
-        // Center tap's ACTUAL kernel weight (captured in the loop, so it tracks the anisotropic blend),
-        // normalized by that kernel's own peak: separable peak = k(0)^2 = 0.7901, radial peak = k(0) = 0.8889.
-        float sampleConf = saturate(wC * lerp(1.2656, 1.125, edgeAniso)); // 1 = sample on-pixel
         // Floor 0.14 (0.35 -> 0.25 -> 0.18 -> 0.14 as the kernel sharpened): with the output-sized kernel,
         // off-frames carry almost no real information for this pixel — injecting less of them disturbs
         // converged fine geometry less (the residual TAAU-only fizzle), and the motion gate still restores
@@ -585,7 +649,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // the "starts darkened" bug), while newN keeps the ghost/reactive soft-caps' responsiveness boost (a
     // capped newN=2 still floors blend at 1/3 to scrub contaminated history). Ghost-safe BY DIRECTION:
     // max() can only push toward MORE current frame, never deepen history trust.
-    blend = max(blend, 1.0 / (min(prevN, newN) + 1.0));
+    // LOCK EXEMPTION: oscillation-locked pixels skip the evidence floor — the lock is the sanctioned deep
+    // trust for converged fine geometry, and a lock structurally cannot coexist with cleared or invalid
+    // history (its evidence resets with the meta), so the ramp has no legitimate job on a locked pixel.
+    // Without this, a Kalman-collapsed N re-injected raw jitter OVER the lock's 0.965 trust on trees.
+    blend = max(blend, (1.0 / (min(prevN, newN) + 1.0)) * (1.0 - oscLock));
 
     // HONEST DISOCCLUSION (reference-upscaler behavior — DLSS/FSR2 discard, not fade): a positively
     // identified disocclusion means the history is INVALID, and blending any of it is wrong by construction
