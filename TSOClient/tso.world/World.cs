@@ -1243,7 +1243,11 @@ namespace FSO.LotView
             {
                 float bbH = PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height;
                 // 0.25 at 1080p (the config default), ramping to 0.5 by 540p; floor 0.2 at high res.
-                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, 0.5f);
+                // Ceiling raised to 0.62 under TAAU past 2x ratio: the deep temporal average at 1/3 scale
+                // is inherently softer, and the resolve's own confidence machinery now suppresses the
+                // shimmer that used to make strong sharpening at low res look noisy ("solidity" pass).
+                float sharpCap = (PPXDepthEngine.TAAUEnabled && scale > 0f && scale < 0.5f) ? 0.62f : 0.5f;
+                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, sharpCap);
             }
             else RCASSharpen.OverrideAmount = null;
             PPXDepthEngine.SharpenFunc = (sharpen || autoSharpen) ? RCASSharpen.Draw : null;

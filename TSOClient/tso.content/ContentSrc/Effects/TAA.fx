@@ -184,7 +184,9 @@ struct TAAOut
 {
     float4 color : COLOR0; // displayed frame + next frame's history (RGB), dilated depth in A
     // Meta layout (RGBA8): R = new accumulation count N (N/MaxAccum), GB = this frame's dilated velocity
-    // encoded v*10+0.5 (exact: all velocity writers clamp to +/-0.05 UV), A = packed luma-oscillation state
+    // encoded v*10+0.5 (SATURATES at +/-0.05 UV on store — writers now clamp at +/-0.5, so beyond 64px/frame
+    // the stored value pins and the velocity-disparity reactive fires during ultra-fast motion: desirable),
+    // A = packed luma-oscillation state
     // (sign bit + 7-bit EMA; 0 on non-reprojectable / meta clear). The TAADebug technique repurposes GB+A
     // for diagnostics and correspondingly DISABLES their consuming logic (self-consistent while debugging).
     float4 meta  : COLOR1;
@@ -280,6 +282,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Tap k in {-1,0,1} sits at distance fracd + k; at 1:1, fracd == the jitter shift (old jShiftPx).
     float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscaleEff), MitchellK(abs(fracd.x) * kscaleEff), MitchellK(abs(fracd.x + 1.0) * kscaleEff));
     float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscaleEff), MitchellK(abs(fracd.y) * kscaleEff), MitchellK(abs(fracd.y + 1.0) * kscaleEff));
+    // Render-texel-scale weights (kscale 1) for the SOFT display reconstruction (see loop).
+    float3 kx1 = float3(MitchellK(abs(fracd.x - 1.0)), MitchellK(abs(fracd.x)), MitchellK(abs(fracd.x + 1.0)));
+    float3 ky1 = float3(MitchellK(abs(fracd.y - 1.0)), MitchellK(abs(fracd.y)), MitchellK(abs(fracd.y + 1.0)));
+    float3 filtSoft = 0;
+    float wsumSoft = 0;
     float3 filt = 0;
     float wsum = 0;
     float3 crawC = 0; // the raw nearest jittered sample (center recon tap) — see texture-detail lean below
@@ -321,6 +328,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // distances along the edge tangent count HALF, so taps lying along the edge keep real weight.
         float2 tapUV = (baseTexel + float2(dx, dy) + 0.5) * InvColorSize;
         float3 craw = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(tapUV, 0, 0)).rgb);
+        // SOFT reconstruction (render-texel-scale Mitchell, no depth/aniso weighting): the display path
+        // for legitimately-rejected pixels (big reveals during rotation/pans). A proper smooth upscale of
+        // the current frame — the reference response to disocclusion — instead of near-raw. Same taps,
+        // ALU only.
+        float wSoft = kx1[dx + 1] * ky1[dy + 1];
+        filtSoft += craw * wSoft;
+        wsumSoft += wSoft;
         float w = kx3[dx + 1] * ky3[dy + 1];
         if (edgeAniso > 0.001)
         {
@@ -420,9 +434,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Both compared velocities are current-frame fp16 buffer values, so the threshold sits low.
     float velFgnPx = length((velocity - centerVel) * texSize) * VelGatePxScale;
     float foreign = smoothstep(0.75, 2.5, velFgnPx);
-    float2 reproVel = lerp(velocity, centerVel, foreign);
+    // REPROJECTION IS ALWAYS DILATED (the own-velocity override is RETIRED): switching ring pixels to
+    // their center-tap velocity was the first structural anti-halo fix, but during PARALLAX camera pans
+    // foreign fires along every silhouette and the switch made adjacent native pixels reproject with
+    // DIFFERENT velocities (fg/bg flipping per render texel) — the edge history tore into an unmatchable
+    // mix, every edge rejected, and lateral motion read as fully raw. Dilated reprojection keeps edges
+    // moving coherently with their foreground (the DLSS/FSR2 standard); the ring contamination the
+    // switch used to prevent is now scrubbed by the LATER machinery (center-depth ghost test, evidence
+    // wipe, honest disocclusion). foreign remains as a SIGNAL (suspicion, trust cap, lock exclusion).
     float vmag = length(velocity);
-    float2 histUV = uv - reproVel + JitterDelta;
+    // FACTOR EXPERIMENT RECORD (for the investigation log): factors -1, 0.5, 1, and renderScale were
+    // all tested against the displaced depth-phantom; none collapse it — the overshoot k is a constant
+    // > 2 at ALL scales. A C# probe (World.PreDraw "vel_probe.log") now measures k numerically.
+    float2 histUV = uv - velocity + JitterDelta;
     bool reprojectable = (histUV.x >= 0) && (histUV.x <= 1) && (histUV.y >= 0) && (histUV.y <= 1);
 
     // History fetch (bicubic for detail) + a POINT tap for the packed depth in alpha (see sampler comment).
@@ -637,7 +661,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // Curved: only MEANINGFUL invalidation wipes (smoothstep knee 0.25) — grazing partial rejects
         // (noisy, constant near any motion) were nuking locks screen-adjacent to movers every frame,
         // re-fizzling fine geometry that was never actually invalidated (the post-ghost-fix aliasing).
-        osc *= 1.0 - smoothstep(0.25, 0.75, max(max(depthReject, ghostReject), max(reactive, featReject)));
+        osc *= 1.0 - smoothstep(0.4, 0.85, max(max(depthReject, ghostReject), max(reactive, featReject)));
         float newSgn = lerp(prevSgn, sgn, mag * testify); // hold the sign bit through quiet/blind frames
         packedA = reprojectable ? saturate(newSgn * 0.5 + osc * 0.498) : 0.0; // off-screen = evidence reset
     }
@@ -669,13 +693,25 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // jitter. Collapse 0.75 (was 0.5): a verdict should need a few consistent frames, not two.
     float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno), smoothstep(0.12, 0.35, osc));
     float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
-    float growK = agreeK * lerp(0.3, 1.0, testify);
+    // GROWTH is witness-gated only once EVIDENCE exists: the witness rule protects CONVERGED history from
+    // off-phase false testimony — but it was also throttling REBUILDING to ~0.3/frame under TAAU, so every
+    // pixel a mover or camera-reveal swept re-converged in slow motion: the wide low-N "inverse ghost"
+    // trail behind all motion, worst at 0.33x where witnessing frames are rarest. A fresh pixel counts
+    // every frame (all samples are information when you know nothing); the off-phase discount fades in
+    // with minN as there is real history for off-phase frames to falsely accuse.
+    float growK = agreeK * lerp(1.0, lerp(0.3, 1.0, testify), saturate(prevN / 8.0));
     float newN = reprojectable ? min(prevN * collapse + growK, MaxAccum) : 0.0;
     // Ghost-side reject now RESETS the counter (was a soft-cap to 2): the surface that wrote the history has
     // provably left, so the honest treatment is the same as off-screen — raw current, then the warmup ramp
     // rebuilds (1 -> 1/2 -> 1/3...). The old cross-fade left a hazy 2-3 frame ghost mix, chunky at low res.
-    newN = lerp(newN, 0.0, ghostReject); // hard reset (a 1.5 "softer reveal" seed REGRESSED — ghost mix returned)
-    newN = lerp(newN, min(newN, 6.0), depthReject);
+    // SHAPED resets (the counter was the last unshaped reject consumer): PARTIAL band rejects — constant
+    // along every silhouette during motion — multiplied N toward zero every frame, pinning edge bands at
+    // N~3 where the warmup ramp injects ~25% raw per frame: the aliasing/jitter riding exactly on the
+    // debug view's green edges under motion. Only CONFIDENT rejection collapses the evidence now (still a
+    // hard reset at full strength — the 1.5 "soft seed" variant regressed and stays dead); gentle
+    // corrections leave the counter alone (their blend contribution already handles them).
+    newN = lerp(newN, 0.0, smoothstep(0.35, 0.85, ghostReject));
+    newN = lerp(newN, min(newN, 6.0), smoothstep(0.3, 0.8, depthReject));
     newN = lerp(newN, min(newN, 8.0), reactive);
 
     float lumaC = curr.x;                   // Y in YCoCg (current center sample)
@@ -724,6 +760,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // at ratio 3 the box spans ~3 output pixels, a converged thin line is so diluted in its own statistics
     // that even 3 sigma clips it on some jitter phases — the residual position-wobble at the lowest scale.
     float gammaEff = GAMMA * (1.0 + oscLock * lerp(1.0, 1.6, saturate(upscaleRatio - 2.0)));
+    // RECTIFY, DON'T REJECT (mid-evidence resolution — the escape from the ghost-vs-aliasing trade):
+    // blend-side rejection only chooses between keeping history (ghosts) and injecting raw (aliased
+    // edges). TIGHTENING THE CLAMP on reject evidence is the third option: the stale color is forcibly
+    // snapped toward the current neighborhood statistics — a FILTERED, anti-aliased value centred on m1 —
+    // so mid-strength rejects both scrub the ghost (within ~2 frames) and stay smooth. Raw injection
+    // below is reserved for near-certain rejection only.
+    float rejTighten = smoothstep(0.12, 0.6, max(depthReject, ghostReject));
+    gammaEff *= lerp(1.0, 0.3, rejTighten);
     float3 cmin = m1 - gammaEff * sigma;
     float3 cmax = m1 + gammaEff * sigma;
     // INPUT-RESOLUTION RECTIFICATION under TAAU (UE TSR mechanism — the last rest-state flicker fix): the
@@ -912,7 +956,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // reveal that killed the trailing ghost), while grazing partial rejects — constant along every moving
     // depth edge because the stored depth is dilated — stop injecting fractional raw every frame (the
     // post-ghost-fix edge aliasing). Placed after the warmup floor.
-    blend = max(blend, smoothstep(0.15, 0.85, max(depthReject, ghostReject)));
+    // Knee 0.65..0.98: raw injection is now reserved for NEAR-CERTAIN rejection only — the whole
+    // mid-evidence band is handled by clamp TIGHTENING instead (see rejTighten at the clamp: the stale
+    // color snaps to the filtered neighborhood statistics — ghost scrubbed AND smooth, no raw needed).
+    blend = max(blend, smoothstep(0.65, 0.98, max(depthReject, ghostReject)));
 
     // TEXTURE-DETAIL blend floor (pairs with the raw-sample input lean above): even with a raw input, the
     // CONVERGED value is the temporal mean over the jitter footprint, which wipes single-texel texture
@@ -941,8 +988,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float3 dispCurr = curr;
     if (upscaleRatio > 1.001)
     {
-        float rawSoften = saturate((blend - 0.3) * 1.6); // 0 while converged; ~1 when fully raw
-        dispCurr = lerp(curr, cboxC, rawSoften * 0.85);
+        float rawSoften = saturate((blend - 0.22) * 1.6); // earlier onset: reject-driven raw is covered sooner
+        // Soften target = the render-texel-scale Mitchell reconstruction (was bilinear cboxC): a real
+        // smooth upscale — edge-coherent, no cross-texel mush — which is the reference response for
+        // legitimately-revealed content (rotation/pan disocclusion is GENUINE every frame at speed; the
+        // detection was verified correct via the diagnostic split — display quality was the problem).
+        // Full-strength lerp: the soft reconstruction is sharper than bilinear was at 0.7.
+        dispCurr = lerp(curr, filtSoft / max(wsumSoft, 1e-4), rawSoften);
     }
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
