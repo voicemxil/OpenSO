@@ -765,6 +765,21 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // (relMotion) — the innovation branch alone then governs, so a real trail collapses N normally while a
     // static locked pixel (relMotion 0) keeps full protection.
     float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno), smoothstep(0.12, 0.35, osc) * (1.0 - relMotion));
+    // SLIGHT-BIAS PENALTY (the persistent-tail discriminator — respects the osc law). A faint monotonic ghost
+    // has a small ONE-SIDED innovation that the agreement branch reads as ~full agreement (inno < 1 ->
+    // agreeK ~ 1), so N maxes and the deep history holds it long after motion evidence is gone. The one
+    // resolve-side signal that separates it from converged content is OSCILLATION: texture churn (where the
+    // "residue indistinguishable from texture noise" law holds) is HIGH-osc; a truly-flat converged pixel has
+    // ~ZERO innovation; a slight ghost on a non-textured surface is LOW-osc with a small-but-REAL innovation.
+    // Dock agreeK in that band only (low osc + a mid-innovation window, well clear of both the flat-converged
+    // floor and genuine large changes) so the counter settles shallower and the residue washes out. Gated to
+    // low osc = non-textured surfaces (where the discriminator is valid — high-osc churn is untouched, so no
+    // conflict with the anti-fizzle lock), and to upscale (native bit-exact). Never deepens (min()).
+    // Lever to push if ghosting persists: raise the 0.35 dock toward 0.55.
+    float biasPenalty = (1.0 - smoothstep(0.12, 0.35, osc))
+                      * smoothstep(0.25, 0.7, inno) * (1.0 - smoothstep(1.0, 2.0, inno))
+                      * saturate(upscaleRatio - 1.0);
+    agreeK = min(agreeK, 1.0 - 0.35 * biasPenalty);
     float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
     // GROWTH is witness-gated only once EVIDENCE exists: the witness rule protects CONVERGED history from
     // off-phase false testimony — but it was also throttling REBUILDING to ~0.3/frame under TAAU, so every
@@ -912,7 +927,21 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // depth cap, reactive cap) — a stale pixel structurally cannot keep a large N. The diff term still
     // lerps toward full responsiveness instantly on top.
     float minN = min(prevN, newN);
-    float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), 0.992); // cap matches MaxAccum 128 (1/129)
+    // KALMAN DEEP-END CAP = the CYCLE-HIDING WINDOW at upscale (was a flat 0.992 = 129-frame memory at every
+    // scale). The design deliberately let evidence-trust EXCEED the lock ceiling ("raise-only" below), but at
+    // high upscale that excess depth buys NOTHING visible — a converged pixel's cycle is already hidden once
+    // the window reaches ~1.2x the Halton cycle (exactly what cycleCeil targets for the lock path) — while it
+    // DOES preserve the SLIGHT sub-threshold reprojection residue behind motion: a faint ghost has small
+    // innovation, which the Kalman counter reads as agreement (agreeK ~ 1, no collapse), so N maxes and the
+    // 129-frame history holds the residue for ~2s AFTER all motion evidence is gone (nothing motion-gated can
+    // reach that tail). Capping the deep end to the cycle window washes the residue out ~1.5x faster with no
+    // loss on converged content (cycle still hidden; oscillation-LOCKED fine geometry still reaches this same
+    // window via oscCeil). Fades in over ratio 1.2..1.8 so native / mild upscale keep the full 0.992.
+    // cycleWindow mirrors the lock path's cycleCeil (JitterPhases-driven) — this ALIGNS the two deep paths.
+    // Lever to push if ghosting persists: drop the 1.2 divisor toward 1.0 (window -> exactly one cycle).
+    float cycleWindow = clamp(1.0 - 1.0 / (1.2 * JitterPhases), 0.965, 0.99);
+    float deepCap = lerp(0.992, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio));
+    float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), deepCap);
     // Responsive end 0.68 (was 0.55 = 45% raw/frame -> fully raw in 2-3 frames on ANY luma mismatch —
     // "too quick to go fully raw on objects"): pre-structural-rejects, luma-diff carried disocclusion
     // duty and needed to be violent; now the rejects (depth/ghost/center/foreign/feature) own that, and
