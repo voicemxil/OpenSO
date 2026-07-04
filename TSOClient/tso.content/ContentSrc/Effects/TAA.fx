@@ -563,7 +563,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float oscLock = smoothstep(lerp(0.24, 0.32, floorScale), 0.7, osc) * stillGate
                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
                   * (1.0 - featReject);
-    float gammaEff = GAMMA * (1.0 + oscLock); // up to 3 sigma on locked pixels (exonerated by the control build)
+    // Locked widening scales with upscale INTENSITY past 2x (0.33x: up to ~3.9 sigma; <= 0.5x unchanged):
+    // at ratio 3 the box spans ~3 output pixels, a converged thin line is so diluted in its own statistics
+    // that even 3 sigma clips it on some jitter phases — the residual position-wobble at the lowest scale.
+    float gammaEff = GAMMA * (1.0 + oscLock * lerp(1.0, 1.6, saturate(upscaleRatio - 2.0)));
     float3 cmin = m1 - gammaEff * sigma;
     float3 cmax = m1 + gammaEff * sigma;
     float3 history = ClipAABB(cmin, cmax, historyRaw);
@@ -617,10 +620,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // sits below ~0.2, so fine geometry keeps its lock. Ghost-safety backbone is still the oscillation
     // signal itself (monotonic ghosts decay the lock in ~5 frames).
     float oscTrust = oscLock * (1.0 - saturate((diff - 0.25) * 3.5));
-    float oscCeil = min(1.0 - 0.5 * BlendFactor, 0.965); // 0.975+ let slight ghosting linger on locked pixels
+    // EVIDENCE-SCALED ceiling: the residual shimmer on a locked line IS its per-frame current injection
+    // (3.5% at 0.965), so the ceiling deepens toward 0.982 with the STRENGTH of the alternation evidence.
+    // The old flat-0.975 ghost concern predates the foreign-reprojection / stored-motion / feature-level
+    // machinery; the deep end still requires every gate plus sustained evidence a ghost cannot produce.
+    float oscCeil = min(1.0 - 0.5 * BlendFactor, lerp(0.965, 0.982, smoothstep(0.55, 0.85, osc)));
     historyWeight = lerp(historyWeight, oscCeil, oscTrust);
 
-    float motionBoost = saturate(vmag * 20.0) * 0.35; // more current when moving fast (less ghosting)
+    // 0.35 -> 0.22: the pan-time aliasing crawl was this boost force-injecting raw current while history
+    // was perfectly valid (exact reproject). It predates the whole disocclusion machinery — real ghosting
+    // is now handled by the rejects/reactive/feature paths, so motion needs far less raw help.
+    float motionBoost = saturate(vmag * 20.0) * 0.22; // more current when moving fast (less ghosting)
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
     // --- TAAU SAMPLE CONFIDENCE (upscale mode only — the standard temporal-upscaler mechanism). At render
@@ -636,8 +646,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // Floor 0.14 (0.35 -> 0.25 -> 0.18 -> 0.14 as the kernel sharpened): with the output-sized kernel,
         // off-frames carry almost no real information for this pixel — injecting less of them disturbs
         // converged fine geometry less (the residual TAAU-only fizzle), and the motion gate still restores
-        // full responsiveness the moment anything moves.
-        blend *= lerp(lerp(0.14, 1.0, sampleConf), 1.0, moveGate);
+        // full responsiveness the moment anything moves. Drops further toward 0.08 past 2x ratio: at 0.33x
+        // EIGHT of nine frames are interpolation-only — that drip was the last visible thin-line jitter.
+        float confFloor = lerp(0.14, 0.08, saturate(upscaleRatio - 2.0));
+        blend *= lerp(lerp(confFloor, 1.0, sampleConf), 1.0, moveGate);
     }
 
     // WARMUP RAMP (counter-driven): with no accumulated history (fresh clear / off-screen reset) the
