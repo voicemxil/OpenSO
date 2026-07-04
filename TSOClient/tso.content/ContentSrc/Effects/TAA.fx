@@ -468,6 +468,25 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float4 historyPoint = tex2Dlod(historyDepthSampler, float4(histUVDepth, 0, 0)); // OWN-velocity anchor (split reprojection — see above)
     float3 historyRaw = RGB_to_YCoCg(SampleHistoryBicubic(histUV));
 
+    // --- RING-CONTAMINATION SIGNAL (the split-reprojection blind spot). COLOR reprojects with the DILATED
+    //     velocity (histUV) while every structural test reprojects with the pixel's OWN velocity
+    //     (histUVDepth). At a moving silhouette those are DIFFERENT SURFACES: a background ring pixel reads
+    //     FOREGROUND-trail color into historyRaw, yet the depth/ghost/feature tests all inspect the
+    //     own-velocity BACKGROUND history — so they certify "valid" and preserve the contaminated color
+    //     (the residual dilation halo the own-velocity tests are structurally blind to; only the variance
+    //     clamp caught it before). Measure the disagreement DIRECTLY: the own-velocity-anchored history
+    //     color (historyPoint.rgb — already fetched for its depth, free) vs the dilated-anchored blended
+    //     color. GATED BY foreign (zero screen-wide on pans and on mover interiors, where own == dilated),
+    //     so it arms ONLY on genuine ring pixels; the color-diff knee (0.04..0.15) means a CLEAN pan — where
+    //     both reprojections land on the same background — stays silent even though foreign fires there.
+    //     Upscale-only (native has no split-surface ring). Feeds diff + suspicion below like a reject. ---
+    float ringContam = 0.0;
+    if (!debugMeta && upscaleRatio > 1.001)
+    {
+        float3 histOwn = RGB_to_YCoCg(historyPoint.rgb);
+        ringContam = foreign * smoothstep(0.04, 0.15, length(histOwn - historyRaw));
+    }
+
     // Reprojected previous meta: per-pixel accumulation count N (R) + previous frame's dilated velocity (GB).
     // No normal buffer — that MRT is only written by SOME passes, so a normal-based disocclusion test fired
     // inconsistently on exactly the minified content where the buffer aliases frame-to-frame.
@@ -497,7 +516,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // VELOCITYLESS-CONTENT CLASS: the whole 3x3 wrote NO velocity — every motion-evidence system
     // (depth/ghost rejects, reactive, foreign) is structurally silent here. Real scene content always
     // dilates SOME velocity into its neighborhood; this class is the diegetic overlays (headline icons,
-    // speech bubbles — drawn after the velocity MRT unbinds) plus flat sky. They animate and track their
+    // speech bubbles — drawn after the velocity MRT unbinds). (The sky dome DOES write velocity via
+    // SkyVelocity, so it is NOT in this class despite reading flat.) They animate and track their
     // avatars with zero motion signal, so deep trust smeared them badly under TAAU: cap their window
     // (~8 frames, below) and bar them from oscillation locks (their bobbing sign-alternates).
     float noVel = (dmax < dmin) ? 1.0 : 0.0;
@@ -651,7 +671,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // it as full suspicion double-punished exactly the pixels it had just repaired (the L/R-pan edge
     // rejection bands). True reveals at those silhouettes stay covered by the depth/ghost rejects at
     // full weight; foreign keeps its own mild 0.92 trust cap and its lock exclusion.
-    float suspicion = max(max(depthReject, ghostReject), max(foreign * 0.35, reactive));
+    // ringContam joins at full weight (unlike foreign's demoted 0.35): where it fires it is DIRECT evidence
+    // of preserved foreground trail on a background pixel — the exact contamination foreign's reprojection
+    // fix does NOT repair under dilated-color reprojection.
+    float suspicion = max(max(depthReject, ghostReject), max(max(foreign * 0.35, reactive), ringContam));
 
     // --- LUMA-OSCILLATION DETECTOR (Decima-style anti-fizzle), state in meta.A (1 sign bit + 7-bit EMA).
     //     Fizzle = a CONVERGED pixel whose curr-vs-history luma delta ALTERNATES SIGN at frame frequency
@@ -680,7 +703,18 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // is BIASED (no sign flip), so an ungated EMA DECAYED the alternation evidence between real
         // samples — fine geometry hovered half-locked forever at low scale. Off-frames now neither build
         // nor decay evidence (update rate scaled by testify); the lock holds solid between real samples.
-        osc = lerp(prevOsc, flip, 0.15 * testify); // ~6-7 frame EMA on witnessing frames
+        // WITNESS-RATE BOOST at extreme upscale (the tractable, no-encoding-change stand-in for true
+        // phase-bucketed oscillation evidence). At 1/3 render scale an output pixel is witnessed only
+        // ~1 frame in 9, so at the fixed 0.15 rate the alternation EMA needed many real samples to cross
+        // the lock threshold and fine geometry hovered below it forever (the residual low-scale fizzle).
+        // Raise the PER-WITNESS build/decay rate with the upscale ratio so the lock is EARNED in fewer
+        // witnessing frames. The rate is symmetric (flip 0 decays as fast as flip 1 builds), so it only
+        // speeds convergence to the SAME equilibrium — it does not raise the osc floor, and a monotonic
+        // ghost still cannot alternate its way to a lock. Scale-gated past 2x ratio: native and 0.5x keep
+        // the validated 0.15 rate BIT-EXACT (saturate(upscaleRatio-2) = 0 there). Full phase-bucketed
+        // evidence (per-jitter-phase state) is a separate meta-encoding redesign — see the review notes.
+        float oscRate = 0.15 * lerp(1.0, 2.2, saturate(upscaleRatio - 2.0)); // 0.15 <=0.5x -> 0.33 at 0.33x
+        osc = lerp(prevOsc, flip, oscRate * testify); // ~6-7 frame EMA on witnessing frames (faster at >2x)
         // EVIDENCE WIPE (closes the ghost-under-lock hole, user-diagnosed via the debug view: ghost
         // sitting under bright BLUE trust with the RED counter only slowly refilling): the alternation
         // evidence previously SURVIVED history invalidation — a camera turn fired rejects/reactive and
@@ -721,7 +755,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // (interpolation underestimates thin bright detail), so the alternation EMA decays between real samples
     // and fine geometry's protection starved — trees collapsed to low N and the ramp floor re-injected
     // jitter. Collapse 0.75 (was 0.5): a verdict should need a few consistent frames, not two.
-    float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno), smoothstep(0.12, 0.35, osc));
+    // RELATIVE-MOTION CARVE-OUT on the osc branch (matches the one rejAuth/ghostReject already carry): the
+    // sign-alternation branch otherwise let ANY oscillation-proven pixel keep growing/holding N regardless
+    // of a trail crossing it — so a SLOW sim/drag over oscillation-locked ground (sand, canopy) held its
+    // deep N (agreeK -> collapse=1, growK grows) and the ghost sat under the very lock the osc signal
+    // granted. The depth/ghost rejects got relMotion so a trail-over-locked-ground still scrubs; the Kalman
+    // counter's osc protection was the one consumer that DIDN'T, so the two failed together at low relative
+    // speed. Withdraw the osc protection where the pixel's own surface is moving relative to the history
+    // (relMotion) — the innovation branch alone then governs, so a real trail collapses N normally while a
+    // static locked pixel (relMotion 0) keeps full protection.
+    float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno), smoothstep(0.12, 0.35, osc) * (1.0 - relMotion));
     float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
     // GROWTH is witness-gated only once EVIDENCE exists: the witness rule protects CONVERGED history from
     // off-phase false testimony — but it was also throttling REBUILDING to ~0.3/frame under TAAU, so every
@@ -856,7 +899,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // by ANY resolve-side signal (magnitude, motion, even sign-alternation — the texture's noise rides on top
     // of the residue), so the knee always slowed ghost cleanup somewhere (haze around mover silhouettes).
     // Sand detail at low scale is an INPUT-side problem (terrain-noise mip bias), not a trust-side one.
-    diff = max(max(diff, depthReject), max(ghostReject, featReject));
+    diff = max(max(diff, depthReject), max(max(ghostReject, featReject), ringContam));
     // KALMAN-COMPLETE DEEP END (the reference-upscaler convergence model): DLSS/FSR2/TSR converge fine
     // detail because their accumulation approaches an EQUAL-WEIGHT running average on static pixels —
     // each frame contributes ~1/N with N growing large — while a fixed EMA floor (1 - BlendFactor, i.e.
@@ -915,7 +958,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // ghost — the window lands a hair under the 72-frame cycle instead of over it, and Stage-2's input
     // consolidation covers the difference on the content that actually shows the pattern).
     float cycleCeil = clamp(1.0 - 1.0 / (1.2 * JitterPhases), 0.965, 0.99);
-    float oscCeil = min(1.0 - 0.5 * BlendFactor, lerp(0.965, cycleCeil, smoothstep(0.55, 0.85, osc)));
+    // ENTRY ALIGNED WITH THE LOCK (low-scale only): oscLock engages at osc >= lerp(0.24,0.32,floorScale),
+    // but this deep-window ceiling only began at 0.55 — so a PARTIALLY-locked pixel (osc 0.32..0.55, which
+    // is exactly where distant canopy / leaf clutter equilibrates at 1/3 scale) got lock privileges
+    // (floor/clamp bypass) yet only the shallow 0.965 ceiling = a ~28-frame window, far under the 72-frame
+    // Halton cycle at 1/3 -> the residual repeating-jitter pattern on that content. Slide the lower edge
+    // down to the lock band as render scale drops so a locked pixel's window is always >= the cycle it must
+    // hide. NATIVE untouched (floorScale 1 -> edge 0.55, the TV/video partial-trust guard: at native the
+    // 8-frame cycle fits any window, and content-changing screens are killed by diff, not this edge).
+    float ceilLo = lerp(0.32, 0.55, floorScale); // 0.55 native -> 0.32 at <= 0.5x, matching the lock entry
+    float oscCeil = min(1.0 - 0.5 * BlendFactor, lerp(0.965, cycleCeil, smoothstep(ceilLo, 0.85, osc)));
     // RAISE-ONLY: the Kalman deep end (N/(N+1), up to 0.992) can legitimately exceed the lock ceiling —
     // the lock lerp must never pull earned evidence-trust back DOWN.
     historyWeight = max(historyWeight, lerp(historyWeight, oscCeil, oscTrust));
