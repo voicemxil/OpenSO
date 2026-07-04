@@ -776,8 +776,53 @@ namespace FSO.LotView
                 device.SetRenderTarget(null);
             }
 
+            // ---- TEMP VELOCITY PROBE v3 (exact, parallax-free): reconstruct the WORLD POINT the center
+            // pixel actually shows (screen-center ray x view depth from the buffer's own .b), project it
+            // through the SAME matrix pair the writers receive, and compare against the buffer's stored
+            // velocity. ratio=1.0 exonerates the writers exactly; anything else is a real deficit. ----
+            {
+                try
+                {
+                    var velRT = PPXDepthEngine.GetVelocityTarget();
+                    if (velRT != null && Visible && Environment.TickCount - _ProbeLastLog > 500)
+                    {
+                        var one = new Microsoft.Xna.Framework.Graphics.PackedVector.HalfVector4[1];
+                        velRT.GetData(0, new Rectangle(velRT.Width / 2, velRT.Height / 2, 1, 1), one, 0, 1);
+                        var v4 = one[0].ToVector4();
+                        if (v4.W >= 0.5f) // valid velocity written at center
+                        {
+                            float viewDist = v4.Z * 800f; // decode saturate(clip.w/800)
+                            var invView = Matrix.Invert(State.View);
+                            // screen-center ray in view space = forward axis; view-space point (0,0,-viewDist)
+                            // (RH view space looks down -Z in XNA).
+                            var worldPt = Vector4.Transform(new Vector4(0f, 0f, -viewDist, 1f), invView);
+                            var vpNow = State.View * State.ProjectionUnjittered;
+                            var now = Vector4.Transform(worldPt, vpNow);
+                            var prv = Vector4.Transform(worldPt, State.PreviousViewProjection);
+                            if (Math.Abs(now.W) > 1e-4f && Math.Abs(prv.W) > 1e-4f)
+                            {
+                                // expected buffer value: (currNDC - prevNDC) * (0.5, -0.5)
+                                var expected = new Vector2(
+                                    (now.X / now.W - prv.X / prv.W) * 0.5f,
+                                    (now.Y / now.W - prv.Y / prv.W) * -0.5f);
+                                var actual = new Vector2(v4.X, v4.Y);
+                                float el = expected.Length(), al = actual.Length();
+                                if (el > 1e-5f)
+                                {
+                                    _ProbeLastLog = Environment.TickCount;
+                                    System.IO.File.AppendAllText(System.IO.Path.Combine(FSO.Common.FSOEnvironment.UserDir, "vel_probe.log"),
+                                        $"ratio={al / el:F3} dot={(al > 1e-6f ? Vector2.Dot(expected / el, actual / al) : 0):F3} expUV={el:F5} bufUV={al:F5} dist={viewDist:F1}\r\n");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
             return;
         }
+        private static int _ProbeLastLog;
 
         /// <summary>
         /// We will just take over the whole rendering of this scene :)
@@ -822,6 +867,7 @@ namespace FSO.LotView
                 PPXDepthEngine.WithOpacity = State.CameraMode < CameraRenderMode._3D;
                 PPXDepthEngine.DrawBackbuffer(Opacity, BackbufferScale);
             }
+
             return;
         }
 

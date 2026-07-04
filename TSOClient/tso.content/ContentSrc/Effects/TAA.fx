@@ -298,7 +298,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Center velocity tap PRE-FETCHED (the loop re-reads it as its (0,0) plus tap — cached, ~free): the
     // pixel's OWN velocity feeds the foreign-velocity reactive, and its DEPTH anchors the depth-aware
     // reconstruction weights below (must be known before the corner taps are processed).
-    float4 vCen = tex2Dlod(velocitySampler, float4(uv, 0, 0));
+    // JITTER-COMPENSATED (boxUV, the content-stationary position — same treatment the color box taps
+    // received long ago): the velocity buffer is rasterized JITTERED, so raw-uv taps read per-phase-
+    // different fragments on sub-pixel geometry — dmin/dmax/centerDepth churned with the jitter and the
+    // depth tests FLICKERED on tree edges during motion (the last confirmed artifact after the
+    // instrument-bug purge; the buffers themselves simulate honest 12-14px reveal bands).
+    float4 vCen = tex2Dlod(velocitySampler, float4(boxUV, 0, 0));
     float2 centerVel = vCen.rg; // unwritten decodes as zero
     float centerDepth = (vCen.a >= 0.5) ? vCen.b : -1.0; // -1 = no depth anchor (weighting disabled)
     [unroll] for (int dy = -1; dy <= 1; dy++)
@@ -312,8 +317,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // above the loop now, feeding the kernel direction.)
         // Velocity/depth tap — ALL 9 positions now (was plus-only): the corners' DEPTH feeds the
         // depth-aware reconstruction weights; the dilation/range statistics stay on the plus pattern
-        // (validated perf diet — corner contribution to dilation is marginal).
-        float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
+        // (validated perf diet — corner contribution to dilation is marginal). JITTER-COMPENSATED
+        // positions (boxUV — see the vCen note above): content-stationary taps keep the depth tests
+        // phase-stable on sub-pixel geometry.
+        float4 v = tex2Dlod(velocitySampler, float4(boxUV + ofs, 0, 0));
         if (dx == 0 || dy == 0)
         {
             // "No velocity written" -> depth sentinel 2.0 (beyond valid [0,1]) so genuinely-far valid
@@ -443,14 +450,22 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // switch used to prevent is now scrubbed by the LATER machinery (center-depth ghost test, evidence
     // wipe, honest disocclusion). foreign remains as a SIGNAL (suspicion, trust cap, lock exclusion).
     float vmag = length(velocity);
-    // FACTOR EXPERIMENT RECORD (for the investigation log): factors -1, 0.5, 1, and renderScale were
-    // all tested against the displaced depth-phantom; none collapse it — the overshoot k is a constant
-    // > 2 at ALL scales. A C# probe (World.PreDraw "vel_probe.log") now measures k numerically.
+    // ROOT CAUSE (fresh-eyes forensic verdict, after factor experiments -1/0.5/1/renderScale all failed
+    // and probes certified matrices k=1.000 + writers ratio=0.999): the stored history depth is the
+    // DILATED (fattened-foreground) silhouette, and at silhouettes the DILATED velocity is the
+    // FOREGROUND's — so background pixels carried the stored near-band at FOREGROUND speed across a
+    // background that moves slower: the depth phantom literally OUTRUNS the scene (the user's repeated
+    // observation), by a fg/bg velocity RATIO no histUV scalar can touch. SPLIT REPROJECTION fixes it:
+    // COLOR keeps the dilated velocity (edge quality — switching color to own-velocity tore parallax
+    // edges when tried); the DEPTH/STRUCTURE TESTS reproject with the pixel's OWN velocity, so a
+    // background pixel tests its stored depth at the position its own surface actually occupied.
     float2 histUV = uv - velocity + JitterDelta;
+    float2 ownVel = (centerDepth >= 0.0) ? centerVel : velocity;
+    float2 histUVDepth = uv - ownVel + JitterDelta;
     bool reprojectable = (histUV.x >= 0) && (histUV.x <= 1) && (histUV.y >= 0) && (histUV.y <= 1);
 
     // History fetch (bicubic for detail) + a POINT tap for the packed depth in alpha (see sampler comment).
-    float4 historyPoint = tex2Dlod(historyDepthSampler, float4(histUV, 0, 0));
+    float4 historyPoint = tex2Dlod(historyDepthSampler, float4(histUVDepth, 0, 0)); // OWN-velocity anchor (split reprojection — see above)
     float3 historyRaw = RGB_to_YCoCg(SampleHistoryBicubic(histUV));
 
     // Reprojected previous meta: per-pixel accumulation count N (R) + previous frame's dilated velocity (GB).
@@ -508,7 +523,22 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // BOTH comparison sides are render-res lowpassed there, squashing a real trail's measured error
         // under the old knee). Geometric staleness now always keeps >=30% scrub authority (bounded lag,
         // never indefinite), and the lower knee restores full authority for visible trails.
-        rejAuth = lerp(0.3, 1.0, smoothstep(0.02, 0.08, length(m1 - hLow)));
+        // OSC-AWARE FLOOR: on pixels carrying sign-alternation evidence (the sub-pixel-geometry
+        // signature a ghost cannot fake), a COLOR-SILENT depth reject is phase CHURN, not disocclusion —
+        // fragments exist-or-don't per jitter phase on canopy, so the depth taps flip regardless of
+        // sampling position. The 0.3 floor let that churn wipe locks and reset trust every phase (the
+        // flickering tree-edge rejects + motion fizzle). Evidence-proven pixels drop the color-silent
+        // floor to 0.05; any visible contamination still gets full authority through the color knee.
+        float prevOscE = debugMeta ? 0.0 : saturate((pm.a - 0.5 * step(0.5, pm.a)) / 0.498);
+        // RELATIVE-MOTION OVERRIDE (fixes the slow-motion sim ghosting this muting introduced): sand is
+        // ALSO oscillation-proven, so a sim's trail over it was muted along with canopy churn — but a
+        // TRAIL remembers the mover's velocity differing from the pixel's own (relMotion), while canopy
+        // during a pan shares the camera's motion with its surroundings. Relative motion restores
+        // authority regardless of oscillation evidence.
+        float relFgnPxE = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale;
+        float relMotionE = smoothstep(0.75, 2.5, max(velFgnPx, relFgnPxE));
+        float authFloor = max(lerp(0.3, 0.05, smoothstep(0.25, 0.6, prevOscE)), relMotionE * 0.65);
+        rejAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.08, length(m1 - hLow)));
     }
 
     float historyDepth = historyPoint.a;
@@ -569,10 +599,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float featReject = 0.0;
     {
         float3 lw = float3(0.25, 0.5, 0.25); // YCoCg Y from RGB
-        float hE = dot(tex2Dlod(historyDepthSampler, float4(histUV + float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
-        float hW = dot(tex2Dlod(historyDepthSampler, float4(histUV - float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
-        float hS = dot(tex2Dlod(historyDepthSampler, float4(histUV + float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
-        float hN = dot(tex2Dlod(historyDepthSampler, float4(histUV - float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
+        float hE = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth + float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
+        float hW = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth - float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
+        float hS = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth + float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
+        float hN = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth - float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
         float2 gradH = float2(hE - hW, hS - hN);
         float gH = length(gradH);
         float gC = gmag; // current luma gradient magnitude (stationary box taps, render-res)
@@ -1022,6 +1052,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // G = reject strength (depth or ghost), B = EFFECTIVE HISTORY TRUST this frame (1 - blend: the
         // honest "is the blend actually deep here" signal — bright blue = converged), A = 0 (no stale
         // oscillation trust on toggle-off).
+        // Shipping debug encode. INSTRUMENT LAW learned the hard way (a buggy fallback in a diagnostic
+        // variant painted giant false "phantoms" that cost hours of chasing): any diagnostic that
+        // substitutes a fallback value for missing data (e.g. unwritten-velocity centers) MUST mask
+        // those pixels out instead — a diagnostic may show nothing, never a fabrication.
         o.meta = float4(newN / MaxAccum, max(depthReject, ghostReject), 1.0 - blend, 0.0);
     }
     else
