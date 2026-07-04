@@ -339,7 +339,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         if (upscaleRatio > 1.001 && centerDepth >= 0.0)
         {
             float dt = (v.a >= 0.5) ? v.b : centerDepth;
-            w *= max(1.0 - saturate(abs(dt - centerDepth) / max(centerDepth, 0.02) * 8.0), 0.05);
+            // Slope 5 / floor 0.15 (was 8 / 0.05, adversarial-review Fix C): the aggressive rejection
+            // collapsed wsum at interior clothing/limb edges, dropping those pixels to the 3-native-px
+            // point fallback every frame — the blocky moving-edge look. The gentler curve keeps enough
+            // cross-depth coverage for the FILTERED reconstruction while still favoring same-surface taps.
+            w *= max(1.0 - saturate(abs(dt - centerDepth) / max(centerDepth, 0.02) * 5.0), 0.15);
         }
         filt += craw * w;
         wsum += w;
@@ -395,10 +399,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Content that moves without writing velocity is caught by the variance clamp + luma feedback instead.
     float2 velocity = dilatedVel;
     float velPx = length(velocity * texSize) * VelGatePxScale; // NATIVE px (see VelGatePxScale)
-    // 0.35..1.5 (was 0.5..2.0): slow movers are the worst haze producers — they spend the most frames
-    // contaminating each pixel — so the rejects must arm at slow-walk speeds too. Rest (zero velocity,
-    // un-jittered buffer) is still structurally below the gate.
-    float moveGate = smoothstep(0.35, 1.5, velPx);
+    // 0.6..2.0 (was 0.35..1.5): with the rejection machinery now structurally sound (center-depth ghost
+    // test, evidence wipe, honest disocclusion), SLIGHT motion no longer needs to flip the whole blend
+    // regime — sub-pixel drift and slow pans keep their accumulation and reproject through the movement
+    // (the reference behavior; previously ANY motion discarded history to raw). Walking sims (~2-4 px/f)
+    // still arm everything fully; genuine slow-creep contamination is caught by the ungated evidence
+    // paths (Kalman collapse, feature comparison) and the variance clamp.
+    float moveGate = smoothstep(0.6, 2.0, velPx);
     // FOREIGN-VELOCITY REPROJECTION FIX (anti dilation-halo): the nearest-depth dilation gives the RING of
     // background pixels around a mover's silhouette the MOVER's velocity — their (background) history
     // reprojected from the wrong place and passed every depth test, because at a silhouette the 3x3 depth
@@ -455,11 +462,36 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // avatars with zero motion signal, so deep trust smeared them badly under TAAU: cap their window
     // (~8 frames, below) and bar them from oscillation locks (their bobbing sign-alternates).
     float noVel = (dmax < dmin) ? 1.0 : 0.0;
+
+    // REJECTION AUTHORITY (color-evidence proportionality — the pan-time fix): depth evidence proves the
+    // history is geometrically stale; COLOR evidence measures how wrong it actually LOOKS. A camera-
+    // parallax reveal (every silhouette band during lateral pans, at render-texel width = 3 native px at
+    // 0.33x) is stale by a sub-texel sliver — its history still matches the scene, and full-raw rejection
+    // costs far more than the error (the "green over blue" bands). A mover trail is stale by the mover's
+    // entire color -> full authority. Scaled at the SOURCE so every consumer (diff, honest floor, counter
+    // resets, suspicion, evidence wipe) inherits proportionality. The history render-texel average
+    // fetched here is REUSED by the input-resolution rectification below. 1:1 keeps full authority.
+    float3 hLow = historyRaw;
+    float rejAuth = 1.0;
+    if (upscaleRatio > 1.5)
+    {
+        float2 hOfs = InvColorSize * 0.25;
+        hLow = (RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2( hOfs.x,  hOfs.y), 0, 0)).rgb)
+              + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2( hOfs.x, -hOfs.y), 0, 0)).rgb)
+              + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2(-hOfs.x,  hOfs.y), 0, 0)).rgb)
+              + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2(-hOfs.x, -hOfs.y), 0, 0)).rgb)) * 0.25;
+        // Floor 0.3 + knee 0.02..0.08 (was a full mute with knee 0.03..0.15 — ghost returned at 0.33x:
+        // BOTH comparison sides are render-res lowpassed there, squashing a real trail's measured error
+        // under the old knee). Geometric staleness now always keeps >=30% scrub authority (bounded lag,
+        // never indefinite), and the lower knee restores full authority for visible trails.
+        rejAuth = lerp(0.3, 1.0, smoothstep(0.02, 0.08, length(m1 - hLow)));
+    }
+
     float historyDepth = historyPoint.a;
     float outside = max(max(dmin - historyDepth, historyDepth - dmax), 0.0);
     float depthReject = (dmax < dmin) ? 0.0 :
         saturate((outside / max(historyDepth, DepthRejectParams.w)) * DepthRejectParams.y - DepthRejectParams.z);
-    depthReject *= moveGate;
+    depthReject *= moveGate * rejAuth;
 
     // --- GHOST-SIDE REJECTION (the disocclusion centrepiece): fires only on the GHOST side — history depth
     //     NEARER than every valid current tap = the surface that wrote it has left (trailing edge of a mover).
@@ -480,8 +512,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // depth extends a render texel past its silhouette), so this test also brushes a band of clean pixels
     // around every moving edge — at full strength that band re-rawed every frame and read as edge aliasing
     // once the ghost itself was gone. Strong evidence still scrubs; grazing evidence no longer serrates.
+    // RELATIVE-MOTION GATED: depth alone cannot distinguish "the mover left this pixel" from "camera
+    // panning past a static edge" — the stored dilated depth band around EVERY silhouette fired this
+    // test throughout lateral pans (the pan-time rejection bands). A true trailing band has the near
+    // content moving RELATIVE to the background (current foreign velocity, or the REMEMBERED velocity
+    // vs the pixel's own); a static edge shares the camera's motion with its background -> silent.
+    float storedFgnPx = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale;
+    float relMotion = smoothstep(0.75, 2.5, max(velFgnPx, storedFgnPx));
     float nearerC = (centerDepth >= 0.0) ? max(centerDepth - historyDepth - DepthRejectParams.x, 0.0) : 0.0;
-    ghost = max(ghost, saturate(nearerC / max(historyDepth, DepthRejectParams.w) * 8.0) * 0.8); // 8 -> 12: crisper full-strength rejection (partial rejects = partial haze)
+    ghost = max(ghost, saturate(nearerC / max(historyDepth, DepthRejectParams.w) * 8.0) * 0.8 * relMotion);
     // Gated by CURRENT motion OR REMEMBERED motion (the stored meta velocity). Current-only gating had a
     // one-frame timing hole that made mover haze un-scrubbable: the instant the mover exits this pixel's
     // 3x3, dilated velocity drops to zero -> moveGate closes -> the ghost-depth evidence (history depth =
@@ -491,7 +530,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // foliage (the reason the motion gate exists) remembers zero, so it cannot fake this signal.
     float storedMovePx = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1) * texSize) * VelGatePxScale;
     float storedMove = smoothstep(0.35, 1.5, storedMovePx); // matches moveGate's slow-mover arming
-    float ghostReject = max(moveGate, storedMove) * ghost;
+    float ghostReject = max(moveGate, storedMove) * ghost * rejAuth;
 
     // --- FEATURE-LEVEL HISTORY COMPARISON (structure, not value — the DLSS-analogue rectification cue).
     //     A ghost carries STRUCTURE: its own edges, at positions/orientations the current frame does not
@@ -546,6 +585,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // history nor (for the oscillation EMA) build/decay alternation evidence.
     float sampleConf = saturate(wC * lerp(1.2656, 1.125, edgeAniso)); // upscaleRatio hoisted to the kernel block
     float testify = (upscaleRatio > 1.001) ? sampleConf : 1.0;
+
+    // SUSPICION: the union of every contamination/disocclusion detector. THE motion-trust variable —
+    // speed is the wrong regime key (a fast coherent pan reprojects exactly; slow creep can still
+    // contaminate), so the trust-limiting gates below scale their motion response by whether the
+    // evidence actually flags anything. Left/right pans previously went raw purely by exceeding a
+    // velocity threshold while their reprojection was flawless.
+    // FOREIGN demoted to 0.35 weight: lateral pans create PARALLAX, so foreign fires along EVERY object
+    // silhouette during L/R/diagonal camera motion — but foreign's job is to FIX the reprojection (ring
+    // pixels reproject with their OWN velocity; their history is VALID after the correction), so counting
+    // it as full suspicion double-punished exactly the pixels it had just repaired (the L/R-pan edge
+    // rejection bands). True reveals at those silhouettes stay covered by the depth/ghost rejects at
+    // full weight; foreign keeps its own mild 0.92 trust cap and its lock exclusion.
+    float suspicion = max(max(depthReject, ghostReject), max(foreign * 0.35, reactive));
 
     // --- LUMA-OSCILLATION DETECTOR (Decima-style anti-fizzle), state in meta.A (1 sign bit + 7-bit EMA).
     //     Fizzle = a CONVERGED pixel whose curr-vs-history luma delta ALTERNATES SIGN at frame frequency
@@ -650,7 +702,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // velocity, and no disocclusion signals, widen the box so the locked history passes through intact.
     // Ghost-safe by the exact argument that admitted the oscillation trust gate; every gate that breaks a
     // lock in FSR2 (motion, disocclusion, velocity disparity) breaks it here too.
-    float stillGate = 1.0 - smoothstep(0.25, 0.5, velPx);
+    // 0.8..2.0 (was 0.25..0.5 — locks died at HALF A PIXEL of motion): converged locks now survive
+    // sub-pixel drift and slow pans, reprojecting through the movement instead of dumping to raw (the
+    // "fully discards history on slight motion" report). Real movement still breaks locks; ghosts still
+    // can't hold them (monotonic + evidence wipe). SUSPICION-SCALED velocity: coherent motion (no
+    // evidence flags) counts at 40% speed for lock purposes — locks ride through clean pans (left/right
+    // pans previously stripped all locks by raw speed alone); any flagged pixel counts at full speed.
+    float stillGate = 1.0 - smoothstep(0.8, 2.0, velPx * lerp(0.4, 1.0, suspicion));
     // Lock threshold 0.32 (was 0.4): at low render scales the oscillation evidence builds unevenly (real
     // samples land on a given output pixel only on some phases), so fine geometry hovered under the lock
     // forever — the residual low-scale fizzle. TV-static-like content (~0.5 osc equilibrium) gains a bit
@@ -682,11 +740,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float lumaHCmp; // history luma FOR THE DIFF COMPARISON — resolution-matched to m1 (see below)
     if (upscaleRatio > 1.5)
     {
-        float2 hOfs = InvColorSize * 0.25;
-        float3 hLow = (RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2( hOfs.x,  hOfs.y), 0, 0)).rgb)
-                     + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2( hOfs.x, -hOfs.y), 0, 0)).rgb)
-                     + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2(-hOfs.x,  hOfs.y), 0, 0)).rgb)
-                     + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2(-hOfs.x, -hOfs.y), 0, 0)).rgb)) * 0.25;
+        // hLow fetched with the rejection-authority block above (same 4-tap render-texel average).
         float3 hLowC = ClipAABB(cmin, cmax, hLow);
         history = ClipAABB(m1 - 2.0 * gammaEff * sigma, m1 + 2.0 * gammaEff * sigma, historyRaw + (hLowC - hLow));
         // RESOLUTION-MATCHED DIFF (TSR: compare at INPUT resolution): m1 is a render-res mean but the
@@ -742,7 +796,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // lerps toward full responsiveness instantly on top.
     float minN = min(prevN, newN);
     float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), 0.992); // cap matches MaxAccum 128 (1/129)
-    float historyWeight = lerp(deepEnd, 0.55, diff); // responsive end: a full-diff pixel scrubs fast
+    // Responsive end 0.68 (was 0.55 = 45% raw/frame -> fully raw in 2-3 frames on ANY luma mismatch —
+    // "too quick to go fully raw on objects"): pre-structural-rejects, luma-diff carried disocclusion
+    // duty and needed to be violent; now the rejects (depth/ghost/center/foreign/feature) own that, and
+    // they enter this same lerp through the max() above at FULL strength — only pure-luma responsiveness
+    // is gentled (~32%/frame, fully responsive in ~4 frames).
+    float historyWeight = lerp(deepEnd, 0.68, diff);
     // Velocity-disparity reactive caps the history trust directly (soft — 0.88 keeps a moving-content pixel
     // from pulsing aliased when the camera stops; tune toward 0.94 if a screen-wide stop-pulse shows).
     historyWeight = min(historyWeight, lerp(1.0, 0.85, reactive)); // 0.88 -> 0.85 (watch for a screen-wide pulse on camera stop; revert to 0.88 if seen)
@@ -787,9 +846,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // the lock lerp must never pull earned evidence-trust back DOWN.
     historyWeight = max(historyWeight, lerp(historyWeight, oscCeil, oscTrust));
 
-    // 0.35 -> 0.22 (a further cut to 0.15 REGRESSED: paired with motion-time confidence muting it tipped
-    // moving edges into history-lag — ghosting AND edge fizzle. 0.22 is the validated balance).
-    float motionBoost = saturate(vmag * 20.0) * 0.22; // more current when moving fast (less ghosting)
+    // EVIDENCE-GATED (was unconditional 0.22 by speed alone — raw insurance from before the structural
+    // rejects existed): full boost only where something is actually suspicious (a reject, foreign
+    // velocity, or velocity disparity); cleanly-reprojecting moving content keeps ~a third — enough
+    // responsiveness insurance without stripping its AA. (suspicion hoisted above the osc detector.)
+    float motionBoost = saturate(vmag * 20.0) * 0.22 * lerp(0.35, 1.0, suspicion);
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
     // --- TAAU SAMPLE CONFIDENCE (upscale mode only — the standard temporal-upscaler mechanism). At render
@@ -814,7 +875,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float confFloor = lerp(0.14, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
         // LINEAR confidence curve (a squared curve was tried and REVERTED with the 192 deepening — the
         // combination starved converged pixels of correction and read as ghosting at 0.33x).
-        blend *= lerp(lerp(confFloor, 1.0, sampleConf), 1.0, moveGate);
+        // MOTION-SCALED, not motion-DISABLED (the "hard cutoff to raw on movement"): the motion end was a
+        // binary switch to 100% unfiltered injection — the adversarial review identified this regime flip
+        // as THE hard-raw cliff. Under motion, off-phase (information-free) frames now inject at 55% and
+        // lean the rest on reprojected history, which keeps doing AA work while moving; dead-on samples
+        // keep full weight, and every reject path still overrides from below. (An earlier x0.85 variant
+        // regressed ghosting — but that was BEFORE the structural ghost fixes; the rejects now catch what
+        // this retains.)
+        // Regime keyed on SUSPICION-scaled motion: coherent pans (evidence silent) keep most of the
+        // confidence-weighted accumulation — the AA rides through the pan; flagged pixels get the full
+        // motion regime. This is what stops left/right pans from stripping to raw by speed alone.
+        blend *= lerp(lerp(confFloor, 1.0, sampleConf), lerp(0.55, 1.0, sampleConf), moveGate * lerp(0.3, 1.0, suspicion));
     }
 
     // WARMUP RAMP (counter-driven): with no accumulated history (fresh clear / off-screen reset) the
@@ -860,12 +931,26 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // rejects, and foreign velocity, so a bypassed pixel reverts the moment anything real happens.
     blend = max(blend, texDetail * 0.28 * (1.0 - oscLock));
 
+    // RAW-STATE SPATIAL SOFTENING (upscale only; ZERO ghost risk — current-frame data only, the FSR2
+    // treatment of disoccluded/reactive pixels, which output the full FILTERED upsample rather than
+    // point samples): when the floors/rejects legitimately force a pixel mostly-raw (reveals, motion),
+    // display the smooth bilinear current estimate instead of the near-point reconstruction — honest
+    // content with FSR1-smooth edges instead of sharply-upscaled jaggies (the "non anti-aliased mover
+    // edges"). Converged pixels (low blend) keep the crisp reconstruction bit-exactly; the lever CANNOT
+    // re-ghost because it never touches history or trust.
+    float3 dispCurr = curr;
+    if (upscaleRatio > 1.001)
+    {
+        float rawSoften = saturate((blend - 0.3) * 1.6); // 0 while converged; ~1 when fully raw
+        dispCurr = lerp(curr, cboxC, rawSoften * 0.85);
+    }
+
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));
     float wh = (1.0 - blend) * (1.0 / (1.0 + max(lumaH, 0.0)));
-    float3 blended = (curr * wc + history * wh) / max(wc + wh, 1e-5);
+    float3 blended = (dispCurr * wc + history * wh) / max(wc + wh, 1e-5);
 
-    float3 outYCoCg = reprojectable ? blended : curr;
+    float3 outYCoCg = reprojectable ? blended : dispCurr;
 
     // Sentinel 2.0 ("no velocity anywhere in the 3x3") must NOT survive into an fp16 history alpha: next
     // frame it would read as outside every valid depth range and paint a permanent depthReject ring around
