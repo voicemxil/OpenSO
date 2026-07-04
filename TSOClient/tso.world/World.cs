@@ -414,7 +414,13 @@ namespace FSO.LotView
             // scale (2D folds SSAA to 1; 3D restores it), so the 2D world dimensions must be recomputed
             // from the new backbuffer/SSAA pair. Without this, dims computed under the 3D scale (e.g.
             // bb/0.33 = 3x native) survived into 2D mode — the "impossible zoom out" after a 3D->2D switch.
-            GameResized();
+            // ONLY while this world is the active presenter: a hidden world must not touch the shared
+            // engine (same ownership rule as ChangeAAMode). Joining a lot FROM THE MAP configures the new
+            // lot world while the city is still drawing — an immediate GameResized here disposed the
+            // ResolveTargets mid-city-frame (Texture2D.CreateTexture NRE on the disposed bind). Defer to
+            // the visibility-regain in Draw, which runs on the game thread before this world presents.
+            if (Visible) GameResized();
+            else _PendingGameResized = true;
             State.Platform = Platform;
         }
 
@@ -778,6 +784,9 @@ namespace FSO.LotView
         /// </summary>
         /// <param name="device"></param>
         private bool _WasVisibleLastDraw = true;
+        // A SetGraphicsMode arrived while hidden (e.g. lot configured behind the city during a map join);
+        // its GameResized is deferred to the visibility regain below (game thread, before we present).
+        private bool _PendingGameResized;
 
         public override void Draw(GraphicsDevice device){
             if (HasInit == false) { return; }
@@ -791,12 +800,14 @@ namespace FSO.LotView
                 _WasVisibleLastDraw = false;
                 return;
             }
-            if (!_WasVisibleLastDraw)
+            if (!_WasVisibleLastDraw || _PendingGameResized)
             {
                 // Regained visibility: re-apply this world's AA/scale config (the city view owned and
-                // reconfigured the shared engine while we were hidden).
+                // reconfigured the shared engine while we were hidden). A deferred SetGraphicsMode needs
+                // the full GameResized (dims recompute + screen targets); a plain regain only ChangeAAMode.
                 _WasVisibleLastDraw = true;
-                ChangeAAMode(device);
+                if (_PendingGameResized) { _PendingGameResized = false; GameResized(); }
+                else ChangeAAMode(device);
             }
 
             FrameCounter++;

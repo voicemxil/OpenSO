@@ -174,6 +174,9 @@ float3 SampleHistoryBicubic(float2 uv)
     r += tex2Dlod(historySampler, float4(tp0.x,  tp3.y,  0, 0)).rgb * (w0.x  * w3.y);
     r += tex2Dlod(historySampler, float4(tp12.x, tp3.y,  0, 0)).rgb * (w12.x * w3.y);
     r += tex2Dlod(historySampler, float4(tp3.x,  tp3.y,  0, 0)).rgb * (w3.x  * w3.y);
+    // (A hull-clamp "deringing" variant was tried here and reverted with the rest of its batch — it was
+    // stacked with regressing changes and never validated alone; re-audition it in isolation if edge
+    // ring-pulse under motion resurfaces.)
     return clamp(r, 0.0, 8.0); // weights sum to 1 exactly; clamp ringing undershoot / fp16 overflow insurance
 }
 
@@ -347,11 +350,18 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // no in-support sample (wsum ~ 0). Divide-guard + smooth fallback to the stationary bilinear estimate
     // at the content-aligned position (the hoisted box center tap — free). Sample confidence already keeps
     // those pixels history-leaning, so the fallback only ever feeds the small current-frame share.
-    float3 stationaryC = cboxC;
-    // Fallback threshold is KSCALE-AWARE (0.15 tuned at kscale <= 2): at kscale 3 a frame whose kernel
-    // catches only the tail of one sample yields filt/wsum with tiny wsum — one distant sample AMPLIFIED,
-    // a wildly noisy estimate that read as flicker below 0.5x. Such frames lean on the stable bilinear
-    // estimate instead (and the coverage-scaled injection gate keeps their blend share near zero anyway).
+    // Fallback = the NEAREST RAW TEXEL (crawC, point sample), NOT the bilinear box center: bilinear mixes
+    // the mover's color a full render texel (3 native px at 0.33x) across EVERY edge — including interior
+    // clothing/limb edges — so during motion the TAA INPUT itself carried a blocky, blurry, mover-colored
+    // fringe that no history-side rejection could touch (contamination in the current frame, not the
+    // history: the "blocky/blurry trailing + interior edge ghosting" report). The fallback is also the
+    // main input exactly where the depth-aware kernel zeroes mismatched taps (near edges), which made the
+    // depth-blind bilinear doubly wrong there. A point sample is single-surface by construction. At rest
+    // the coverage-scaled injection gate keeps fallback frames near-zero anyway; during motion this swaps
+    // smear for crispness (masked by motion).
+    // Threshold is KSCALE-AWARE (0.15 tuned at kscale <= 2): at kscale 3 a frame whose kernel catches
+    // only the tail of one sample yields filt/wsum with tiny wsum — one distant sample AMPLIFIED.
+    float3 stationaryC = crawC;
     float3 curr = lerp(stationaryC, filt / max(wsum, 1e-4), saturate(wsum / (0.15 * kscale)));
 
     // TEXTURE-DETAIL PRESERVATION: TAA area-averages EVERYWHERE — unlike MSAA, which only supersamples
@@ -438,6 +448,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // WITHOUT motion (cutaway wall toggles, build-mode placement) is caught by the variance clamp + luma
     // responsiveness, as in the original build.
     // (velPx / moveGate / foreign are computed with the reprojection above, before the history fetch.)
+    // VELOCITYLESS-CONTENT CLASS: the whole 3x3 wrote NO velocity — every motion-evidence system
+    // (depth/ghost rejects, reactive, foreign) is structurally silent here. Real scene content always
+    // dilates SOME velocity into its neighborhood; this class is the diegetic overlays (headline icons,
+    // speech bubbles — drawn after the velocity MRT unbinds) plus flat sky. They animate and track their
+    // avatars with zero motion signal, so deep trust smeared them badly under TAAU: cap their window
+    // (~8 frames, below) and bar them from oscillation locks (their bobbing sign-alternates).
+    float noVel = (dmax < dmin) ? 1.0 : 0.0;
     float historyDepth = historyPoint.a;
     float outside = max(max(dmin - historyDepth, historyDepth - dmax), 0.0);
     float depthReject = (dmax < dmin) ? 0.0 :
@@ -448,7 +465,23 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     //     NEARER than every valid current tap = the surface that wrote it has left (trailing edge of a mover).
     //     Dead-zone epsilon (DepthRejectParams.x) keeps storage quantization alone from ever firing it. ---
     float nearer = max(dmin - historyDepth - DepthRejectParams.x, 0.0);
-    float ghost = (dmax < dmin) ? 0.0 : saturate(nearer / max(historyDepth, DepthRejectParams.w) * 12.0); // 8 -> 12: crisper full-strength rejection (partial rejects = partial haze)
+    float ghost = (dmax < dmin) ? 0.0 : saturate(nearer / max(historyDepth, DepthRejectParams.w) * 12.0);
+    // CENTER-DEPTH GHOST TEST (the trailing-band hole): the range test above can NEVER fire while the
+    // mover is still inside the 3x3 — the stale history depth (the mover's) sits exactly at dmin, so the
+    // strip of pixels right behind a continuously-walking mover (3x3 render texels = ~9 NATIVE px at
+    // 0.33x) was permanently exempt from ghost rejection and scrubbed only via the slow diff path: THE
+    // persistent trailing ghost, worse at lower scale. Ask instead: is the history NEARER than the surface
+    // actually at THIS pixel now (the center tap)? The trailing band fires instantly (history = near
+    // mover, center = far background); a pixel still on the mover doesn't (equal depths); pans don't
+    // (same surface after reprojection). Safe where the range test's designers feared edge flips because
+    // it inherits the motion gating (current OR remembered) that did not exist back then — resting
+    // foliage keeps its gates closed. Invalid center (unwritten velocity) falls back to the range test.
+    // Softer than the range test (slope 8, weight 0.8): the stored history depth is DILATED (the mover's
+    // depth extends a render texel past its silhouette), so this test also brushes a band of clean pixels
+    // around every moving edge — at full strength that band re-rawed every frame and read as edge aliasing
+    // once the ghost itself was gone. Strong evidence still scrubs; grazing evidence no longer serrates.
+    float nearerC = (centerDepth >= 0.0) ? max(centerDepth - historyDepth - DepthRejectParams.x, 0.0) : 0.0;
+    ghost = max(ghost, saturate(nearerC / max(historyDepth, DepthRejectParams.w) * 8.0) * 0.8); // 8 -> 12: crisper full-strength rejection (partial rejects = partial haze)
     // Gated by CURRENT motion OR REMEMBERED motion (the stored meta velocity). Current-only gating had a
     // one-frame timing hole that made mover haze un-scrubbable: the instant the mover exits this pixel's
     // 3x3, dilated velocity drops to zero -> moveGate closes -> the ghost-depth evidence (history depth =
@@ -542,6 +575,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // samples — fine geometry hovered half-locked forever at low scale. Off-frames now neither build
         // nor decay evidence (update rate scaled by testify); the lock holds solid between real samples.
         osc = lerp(prevOsc, flip, 0.15 * testify); // ~6-7 frame EMA on witnessing frames
+        // EVIDENCE WIPE (closes the ghost-under-lock hole, user-diagnosed via the debug view: ghost
+        // sitting under bright BLUE trust with the RED counter only slowly refilling): the alternation
+        // evidence previously SURVIVED history invalidation — a camera turn fired rejects/reactive and
+        // reset N, but the stored osc rode along, so the moment motion stopped the locks re-engaged on
+        // CONTAMINATED history, bypassed the warmup floor (lock exemption), widened the clamp, and
+        // trapped the ghost under deep trust. Locks must be RE-EARNED after any invalidation event —
+        // this line is what actually makes "a lock cannot coexist with invalid history" true.
+        // Curved: only MEANINGFUL invalidation wipes (smoothstep knee 0.25) — grazing partial rejects
+        // (noisy, constant near any motion) were nuking locks screen-adjacent to movers every frame,
+        // re-fizzling fine geometry that was never actually invalidated (the post-ghost-fix aliasing).
+        osc *= 1.0 - smoothstep(0.25, 0.75, max(max(depthReject, ghostReject), max(reactive, featReject)));
         float newSgn = lerp(prevSgn, sgn, mag * testify); // hold the sign bit through quiet/blind frames
         packedA = reprojectable ? saturate(newSgn * 0.5 + osc * 0.498) : 0.0; // off-screen = evidence reset
     }
@@ -578,7 +622,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Ghost-side reject now RESETS the counter (was a soft-cap to 2): the surface that wrote the history has
     // provably left, so the honest treatment is the same as off-screen — raw current, then the warmup ramp
     // rebuilds (1 -> 1/2 -> 1/3...). The old cross-fade left a hazy 2-3 frame ghost mix, chunky at low res.
-    newN = lerp(newN, 0.0, ghostReject);
+    newN = lerp(newN, 0.0, ghostReject); // hard reset (a 1.5 "softer reveal" seed REGRESSED — ghost mix returned)
     newN = lerp(newN, min(newN, 6.0), depthReject);
     newN = lerp(newN, min(newN, 8.0), reactive);
 
@@ -617,7 +661,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // entry edge to 0.24 there; native keeps 0.32.
     float oscLock = smoothstep(lerp(0.24, 0.32, floorScale), 0.7, osc) * stillGate
                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
-                  * (1.0 - featReject);
+                  * (1.0 - featReject) * (1.0 - noVel);
     // Locked widening scales with upscale INTENSITY past 2x (0.33x: up to ~3.9 sigma; <= 0.5x unchanged):
     // at ratio 3 the box spans ~3 output pixels, a converged thin line is so diluted in its own statistics
     // that even 3 sigma clips it on some jitter phases — the residual position-wobble at the lowest scale.
@@ -706,6 +750,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // valid background (a hard 0.75 cap here just re-created raw jitter crunch on the ring). This is a
     // safety net for imperfect own-velocity (e.g. unwritten alpha fringes decoding as zero).
     historyWeight = min(historyWeight, lerp(1.0, 0.92, foreign));
+    // Velocityless-overlay cap (see noVel above): headline icons / speech bubbles get an ~8-frame window
+    // — fresh animation, no smear — instead of the deep trust that ghosted them under TAAU.
+    historyWeight = min(historyWeight, lerp(1.0, 0.88, noVel));
 
     // --- OSCILLATION TRUST (anti-fizzle action). Every gate must pass: proven sign-alternation (a ghost
     //     fails osc), ~zero velocity (a mover fails stillGate), no disocclusion signal (a reveal fails the
@@ -740,9 +787,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // the lock lerp must never pull earned evidence-trust back DOWN.
     historyWeight = max(historyWeight, lerp(historyWeight, oscCeil, oscTrust));
 
-    // 0.35 -> 0.22: the pan-time aliasing crawl was this boost force-injecting raw current while history
-    // was perfectly valid (exact reproject). It predates the whole disocclusion machinery — real ghosting
-    // is now handled by the rejects/reactive/feature paths, so motion needs far less raw help.
+    // 0.35 -> 0.22 (a further cut to 0.15 REGRESSED: paired with motion-time confidence muting it tipped
+    // moving edges into history-lag — ghosting AND edge fizzle. 0.22 is the validated balance).
     float motionBoost = saturate(vmag * 20.0) * 0.22; // more current when moving fast (less ghosting)
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
@@ -766,6 +812,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // steady drip that was BOTH a blur and a flicker source (the fallback varies with jitter phase).
         // Pure history hold there; motion (moveGate) and the covering frames carry all responsiveness.
         float confFloor = lerp(0.14, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
+        // LINEAR confidence curve (a squared curve was tried and REVERTED with the 192 deepening — the
+        // combination starved converged pixels of correction and read as ghosting at 0.33x).
         blend *= lerp(lerp(confFloor, 1.0, sampleConf), 1.0, moveGate);
     }
 
@@ -785,13 +833,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     blend = max(blend, (1.0 / (min(prevN, newN) + 1.0)) * (1.0 - oscLock));
 
     // HONEST DISOCCLUSION (reference-upscaler behavior — DLSS/FSR2 discard, not fade): a positively
-    // identified disocclusion means the history is INVALID, and blending any of it is wrong by construction
-    // — the old path bottomed out at ~40% current per frame (the diff floor), cross-fading provably-stale
-    // color over 2-3 frames: the lingering ghost/haze mix on reveals, chunky at low render scale. Reject
-    // strength now buys current-frame weight directly: a full reject shows the raw frame immediately (the
-    // "honest raw" reveal) and the counter reset above makes the next frames rebuild through the warmup
-    // ramp. Placed after the warmup floor so nothing downstream re-attenuates it.
-    blend = max(blend, max(depthReject, ghostReject));
+    // identified disocclusion means the history is INVALID, and blending any of it is wrong by
+    // construction. Full-strength reject = raw frame immediately + the counter reset above rebuilds
+    // through the warmup ramp. Uniformly-SCALED softenings (0.7, then 0.85 with a history seed) were
+    // BOTH user-rejected — retained history on a POSITIVELY-identified reveal reads as ghost mix. But
+    // SHAPING is different from scaling: a confident reject still buys the full raw frame (the honest
+    // reveal that killed the trailing ghost), while grazing partial rejects — constant along every moving
+    // depth edge because the stored depth is dilated — stop injecting fractional raw every frame (the
+    // post-ghost-fix edge aliasing). Placed after the warmup floor.
+    blend = max(blend, smoothstep(0.15, 0.85, max(depthReject, ghostReject)));
 
     // TEXTURE-DETAIL blend floor (pairs with the raw-sample input lean above): even with a raw input, the
     // CONVERGED value is the temporal mean over the jitter footprint, which wipes single-texel texture

@@ -40,6 +40,9 @@ namespace FSO.LotView.Utils
         // frame window on proven-static pixels — long enough to average the FULL 72-phase jitter cycle at
         // 1/3 render scale (a 65-frame window could not, which was the residual TAAU shimmer). 8-bit meta
         // encoding stays exact (2 levels per N). Must match the shader's decode (metaR * MAX_ACCUM).
+        // 128 (~129-frame window): long enough to average the full 72-phase jitter cycle at 1/3 scale.
+        // A 192 deepening was tried and REVERTED — every imperfection the rejects miss lingers longer at
+        // deeper trust, and at 0.33x that read as heavy ghosting. Must match the shader decode.
         private const float MAX_ACCUM = 128f;
 
         // Per-frame jitter delta (UV units), set by World.PreDraw. Added back during history reprojection
