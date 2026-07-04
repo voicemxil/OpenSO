@@ -34,11 +34,13 @@ namespace FSO.LotView.Utils
             return MathHelper.Clamp(BLEND_FACTOR * scale, 0.03f, BLEND_FACTOR);
         }
 
-        // Cap on the per-pixel accumulation counter N (meta.R). The counter drives the WARMUP ramp (raw
-        // image first after a history clear / off-screen reset, detail builds on top) — it does NOT deepen
-        // blend trust past the diff-driven baseline (that direction ghosted in every variant tried). Must
-        // match the shader's decode (metaR * MAX_ACCUM).
-        private const float MAX_ACCUM = 64f;
+        // Cap on the per-pixel accumulation counter N (meta.R). N is EVIDENCE-conditioned in the shader
+        // (Kalman counter: witnessed agreement grows it, disagreement collapses it, disocclusion resets it)
+        // and drives both the warmup ramp and the Kalman-complete deep end N/(N+1). 128 (was 64): a ~129-
+        // frame window on proven-static pixels — long enough to average the FULL 72-phase jitter cycle at
+        // 1/3 render scale (a 65-frame window could not, which was the residual TAAU shimmer). 8-bit meta
+        // encoding stays exact (2 levels per N). Must match the shader's decode (metaR * MAX_ACCUM).
+        private const float MAX_ACCUM = 128f;
 
         // Per-frame jitter delta (UV units), set by World.PreDraw. Added back during history reprojection
         // to cancel the jitter baked into the (jittered-projection) velocity buffer -> jitter-free reproject.
@@ -130,6 +132,11 @@ namespace FSO.LotView.Utils
             // TAAU and native/supersample grids are already native-sized -> scale 1.
             float ss = PPXDepthEngine.SSAA;
             effect.Parameters["VelGatePxScale"]?.SetValue((!upscale && ss < 1f && ss > 0f) ? 1f / ss : 1f);
+            // Jitter cycle length (must agree with the generator — R2Jitter.HaltonCycle is the single
+            // source of truth): the shader's cycle-aware trust ceiling sizes the locked accumulation
+            // window to EXCEED the cycle, otherwise the converged limit cycle shows as a repeating
+            // shimmer (72 frames at 1/3 scale vs a ~55-frame window was exactly that artifact).
+            effect.Parameters["JitterPhases"]?.SetValue((float)R2Jitter.HaltonCycle(ss));
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
             var tech = (DebugAccum ? effect.Techniques["TAADebug"] : null) ?? effect.Techniques["TAA"];

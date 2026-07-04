@@ -58,6 +58,10 @@ float2 SampleJitterUV;
 // oscillation lock survived on moving edges (held ghost -> collapse fizzle). This rescales gate-space to
 // NATIVE pixels: 1/renderScale in pre-upscale mode, 1 everywhere else (TAAU/native grids are already native).
 float  VelGatePxScale;
+// Jitter cycle length (frames), from R2Jitter.HaltonCycle: 8 native, 32 at 0.5x, 72 at 1/3. The locked
+// accumulation window must EXCEED this for the converged limit cycle to be invisible — see the
+// cycle-aware trust ceiling in the blend section.
+float  JitterPhases;
 
 texture colorTex;
 sampler colorSampler = sampler_state {
@@ -224,12 +228,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // image can never exceed a Mitchell blur at render resolution; scaled, only samples genuinely near each
     // output pixel carry weight — per-frame coverage is sparser (sample confidence + the wsum fallback below
     // carry those pixels via history), and over the Halton phase cycle every output pixel accumulates TRUE
-    // output-resolution detail. kscale = 1 at native (bit-identical weights to before); clamped at 2 so
-    // samples stay reachable at extreme scales (0.33x).
-    float kscale = min(InvColorSize.x / InvScreenSize.x, 2.0);
-    // Tap k in {-1,0,1} sits at distance fracd + k; at 1:1, fracd == the jitter shift (old jShiftPx).
-    float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscale), MitchellK(abs(fracd.x) * kscale), MitchellK(abs(fracd.x + 1.0) * kscale));
-    float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscale), MitchellK(abs(fracd.y) * kscale), MitchellK(abs(fracd.y + 1.0) * kscale));
+    // output-resolution detail. kscale = 1 at native (bit-identical weights to before). UNCLAMPED — the
+    // TRUE output-sized kernel at every ratio (render-scale floor 1/3 bounds it at 3): earlier clamps
+    // (2.0, then 2.5) capped converged detail at ~1.5/1.25-output-pixel width at 0.33x — the baseline
+    // "blurry/indistinct" at the lowest scale. A tight kernel means many zero-coverage frames, which is
+    // safe ONLY because zero-information frames inject nothing (coverage-scaled confidence floor in the
+    // blend section) instead of dripping the blurry bilinear fallback; the transient cost is slower
+    // re-sharpening after motion (fewer covering frames), traded for the permanently sharper limit.
+    float upscaleRatio = InvColorSize.x / InvScreenSize.x; // outputRes / renderRes, > 1 under TAAU
+    float kscale = upscaleRatio;
     // VARIANCE BOX (5-tap plus pattern, hoisted out of the loop so the EDGE DIRECTION below is available to
     // the reconstruction weights). Fetched at the content-stationary boxUV: both the clamp statistics and
     // the kernel direction stay stable under jitter (a jitter-wobbling kernel direction would itself be a
@@ -254,15 +261,36 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float edgeAniso = smoothstep(0.15, 0.5, gmag) * saturate(kscale - 1.0);
     float2 en = grad / max(gmag, 1e-5);   // across-edge unit direction
     float2 et = float2(-en.y, en.x);      // along-edge unit direction
+    float3 sigma = sqrt(max(m2 - m1 * m1, 0.0)); // neighborhood stddev (clamp box + clutter test below)
+    // CLUTTER-ADAPTIVE KERNEL WIDTH (leaves "put together"): foliage is isotropic sub-pixel CLUTTER — high
+    // variance but NO coherent gradient direction — so the anisotropic path (built for directed edges)
+    // leaves it as scattered per-pixel fragments, and at ratio 3 the output-sized kernel is so tight that
+    // nothing bridges neighbouring fragments: leaves fizzle instead of consolidating, regardless of trust
+    // (their quasi-random alternation can never earn the full lock, like sand). Widen the kernel toward
+    // 0.78x on directionless high-variance neighbourhoods at extreme upscale: fragments support each other
+    // -> solid clusters, per-frame reconstruction variance drops BEFORE the blend (flicker falls without
+    // touching trust). Lines (dirCoherence -> 1) keep the sharp anisotropic kernel; flat regions (low
+    // sigma) and ratios <= 1.5 are bit-exact unchanged.
+    float dirCoherence = smoothstep(0.15, 0.5, gmag);
+    float clutter = smoothstep(0.10, 0.25, sigma.x) * (1.0 - dirCoherence);
+    float kscaleEff = kscale * lerp(1.0, 0.78, clutter * saturate(upscaleRatio - 1.5));
+    // Tap k in {-1,0,1} sits at distance fracd + k; at 1:1, fracd == the jitter shift (old jShiftPx).
+    float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscaleEff), MitchellK(abs(fracd.x) * kscaleEff), MitchellK(abs(fracd.x + 1.0) * kscaleEff));
+    float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscaleEff), MitchellK(abs(fracd.y) * kscaleEff), MitchellK(abs(fracd.y + 1.0) * kscaleEff));
     float3 filt = 0;
     float wsum = 0;
     float3 crawC = 0; // the raw nearest jittered sample (center recon tap) — see texture-detail lean below
     float wC = 0;     // center tap's actual kernel weight — sample confidence below
     float2 dilatedVel = float2(0, 0);
-    float2 centerVel = float2(0, 0); // this pixel's OWN velocity (un-dilated) — foreign-velocity reactive
     float closestDepth = 1e9;
     float closestMask = 0.0;
     float dmin = 1e9, dmax = -1e9; // valid-tap depth RANGE for the disocclusion test below
+    // Center velocity tap PRE-FETCHED (the loop re-reads it as its (0,0) plus tap — cached, ~free): the
+    // pixel's OWN velocity feeds the foreign-velocity reactive, and its DEPTH anchors the depth-aware
+    // reconstruction weights below (must be known before the corner taps are processed).
+    float4 vCen = tex2Dlod(velocitySampler, float4(uv, 0, 0));
+    float2 centerVel = vCen.rg; // unwritten decodes as zero
+    float centerDepth = (vCen.a >= 0.5) ? vCen.b : -1.0; // -1 = no depth anchor (weighting disabled)
     [unroll] for (int dy = -1; dy <= 1; dy++)
     [unroll] for (int dx = -1; dx <= 1; dx++)
     {
@@ -272,15 +300,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // contribution to the dilation is marginal). The [unroll]'d literal test compiles the corner taps
         // out entirely. The RECONSTRUCTION keeps all 9 taps (kernel quality). (The variance box is hoisted
         // above the loop now, feeding the kernel direction.)
+        // Velocity/depth tap — ALL 9 positions now (was plus-only): the corners' DEPTH feeds the
+        // depth-aware reconstruction weights; the dilation/range statistics stay on the plus pattern
+        // (validated perf diet — corner contribution to dilation is marginal).
+        float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
         if (dx == 0 || dy == 0)
         {
-            float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
             // "No velocity written" -> depth sentinel 2.0 (beyond valid [0,1]) so genuinely-far valid
             // pixels still win the nearest-depth tiebreak over unwritten neighbours.
             float d = (v.a >= 0.5) ? v.b : 2.0;
             if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; closestMask = v.a; }
             if (v.a >= 0.5) { dmin = min(dmin, v.b); dmax = max(dmax, v.b); }
-            if (dx == 0 && dy == 0) centerVel = v.rg; // folds under [unroll]; unwritten decodes as zero
         }
         // Reconstruction tap: RAW texel center (bilinear at an exact center = point fetch) around the
         // nearest jittered sample, weighted by its true distance to the output pixel center. Weight =
@@ -294,20 +324,35 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
             float2 vtap = fracd + float2(dx, dy);
             float dAcross = dot(vtap, en);
             float dAlong = dot(vtap, et);
-            float wAni = MitchellK(sqrt(dAcross * dAcross + dAlong * dAlong * 0.25) * kscale);
+            float wAni = MitchellK(sqrt(dAcross * dAcross + dAlong * dAlong * 0.25) * kscaleEff);
             w = lerp(w, wAni, edgeAniso);
+        }
+        // DEPTH-AWARE KERNEL WEIGHT (FSR2/DLSS upsampling principle, upscale-only): unweighted, the 9
+        // taps mix foreground and background at silhouettes and each jitter phase mixes them DIFFERENTLY
+        // — a per-phase shimmer source at exactly the thin-geometry edges. Weight each tap by depth
+        // similarity to the pixel's OWN surface (the center tap): a line's estimate comes from line
+        // samples, background stays background. Unwritten taps (alpha fringes) count as same-surface;
+        // the 0.05 floor keeps wsum sane under depth noise. Native path untouched (validated).
+        if (upscaleRatio > 1.001 && centerDepth >= 0.0)
+        {
+            float dt = (v.a >= 0.5) ? v.b : centerDepth;
+            w *= max(1.0 - saturate(abs(dt - centerDepth) / max(centerDepth, 0.02) * 8.0), 0.05);
         }
         filt += craw * w;
         wsum += w;
         if (dx == 0 && dy == 0) { crawC = craw; wC = w; } // folds under [unroll]
     }
-    float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
+    // (sigma hoisted above the kernel-width block — it feeds the clutter test now.)
     // Thin-coverage fallback: with the output-sized kernel, some frames leave an output pixel with almost
     // no in-support sample (wsum ~ 0). Divide-guard + smooth fallback to the stationary bilinear estimate
     // at the content-aligned position (the hoisted box center tap — free). Sample confidence already keeps
     // those pixels history-leaning, so the fallback only ever feeds the small current-frame share.
     float3 stationaryC = cboxC;
-    float3 curr = lerp(stationaryC, filt / max(wsum, 1e-4), saturate(wsum / 0.15));
+    // Fallback threshold is KSCALE-AWARE (0.15 tuned at kscale <= 2): at kscale 3 a frame whose kernel
+    // catches only the tail of one sample yields filt/wsum with tiny wsum — one distant sample AMPLIFIED,
+    // a wildly noisy estimate that read as flicker below 0.5x. Such frames lean on the stable bilinear
+    // estimate instead (and the coverage-scaled injection gate keeps their blend share near zero anyway).
+    float3 curr = lerp(stationaryC, filt / max(wsum, 1e-4), saturate(wsum / (0.15 * kscale)));
 
     // TEXTURE-DETAIL PRESERVATION: TAA area-averages EVERYWHERE — unlike MSAA, which only supersamples
     // edges and leaves texture interiors alone — so fine texture detail (sand speckles) converges to a
@@ -321,6 +366,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float floorScale = saturate(BlendFactor / 0.03 - 1.0); // 1 at native, 0 at <= 0.5x render scale
     float texDetail = 1.0 - saturate(sigma.x * 12.0);
     curr = lerp(curr, crawC, texDetail * 0.75 * floorScale);
+
+    // FIREFLY SUPPRESSION at upscale (standard input-side TAA stabilizer): a single bright sub-pixel
+    // sample (specular glint, one bright leaf texel) otherwise strobes its output pixel once per jitter
+    // cycle — an input outlier no accumulation depth can hide, only dilute. Bound the incoming estimate's
+    // LUMA against its spatial neighborhood's upper range (generous 2 sigma — texture crunch and genuine
+    // bright detail pass; only outliers beyond the neighborhood's own statistics are shaved). Input-side:
+    // zero ghost risk. Native path untouched (the raw-lean look there is intentional).
+    if (upscaleRatio > 1.5)
+    {
+        curr.x = min(curr.x, m1.x + 2.0 * sigma.x + 0.02);
+    }
 
     // Reproject with the dilated velocity (+ jitter delta cancels the jitter baked into the velocity buffer).
     // NO velocity-validity gate: the buffer is un-jittered now, so "velocity never written" decodes as zero
@@ -455,8 +511,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // for the WITNESS RULE, used by both the oscillation detector and the Kalman counter below: under
     // TAAU, off-phase frames are interpolation, not observation — they may neither testify against
     // history nor (for the oscillation EMA) build/decay alternation evidence.
-    float upscaleRatio = InvColorSize.x / InvScreenSize.x; // outputRes / renderRes, > 1 under TAAU
-    float sampleConf = saturate(wC * lerp(1.2656, 1.125, edgeAniso));
+    float sampleConf = saturate(wC * lerp(1.2656, 1.125, edgeAniso)); // upscaleRatio hoisted to the kernel block
     float testify = (upscaleRatio > 1.001) ? sampleConf : 1.0;
 
     // --- LUMA-OSCILLATION DETECTOR (Decima-style anti-fizzle), state in meta.A (1 sign bit + 7-bit EMA).
@@ -569,7 +624,41 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float gammaEff = GAMMA * (1.0 + oscLock * lerp(1.0, 1.6, saturate(upscaleRatio - 2.0)));
     float3 cmin = m1 - gammaEff * sigma;
     float3 cmax = m1 + gammaEff * sigma;
-    float3 history = ClipAABB(cmin, cmax, historyRaw);
+    // INPUT-RESOLUTION RECTIFICATION under TAAU (UE TSR mechanism — the last rest-state flicker fix): the
+    // box statistics come from bilinear taps whose mixture changes with jitter phase, so clamping the
+    // NATIVE-res history re-clips converged output-res detail slightly differently every frame on pixels
+    // that can't fully lock (leaf clutter's quasi-random alternation never earns osc >= 0.7). Split the
+    // history into its render-texel AVERAGE (phase-stable low component, ~one render texel of bilinear
+    // taps) + the sub-pixel detail riding on top; clamp only the LOW component and apply that correction
+    // to the full history. A ghost is wrong in its LOW component -> still fully corrected; converged
+    // sub-pixel detail is zero-mean around the low component -> passes untouched, no phase dependence.
+    // A wide safety clip (2x the box) bounds the detail component in the worst case. 1:1 keeps the
+    // classic direct clamp (box and history live at the same resolution there — no domain mismatch).
+    float3 history;
+    float lumaHCmp; // history luma FOR THE DIFF COMPARISON — resolution-matched to m1 (see below)
+    if (upscaleRatio > 1.5)
+    {
+        float2 hOfs = InvColorSize * 0.25;
+        float3 hLow = (RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2( hOfs.x,  hOfs.y), 0, 0)).rgb)
+                     + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2( hOfs.x, -hOfs.y), 0, 0)).rgb)
+                     + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2(-hOfs.x,  hOfs.y), 0, 0)).rgb)
+                     + RGB_to_YCoCg(tex2Dlod(historySampler, float4(histUV + float2(-hOfs.x, -hOfs.y), 0, 0)).rgb)) * 0.25;
+        float3 hLowC = ClipAABB(cmin, cmax, hLow);
+        history = ClipAABB(m1 - 2.0 * gammaEff * sigma, m1 + 2.0 * gammaEff * sigma, historyRaw + (hLowC - hLow));
+        // RESOLUTION-MATCHED DIFF (TSR: compare at INPUT resolution): m1 is a render-res mean but the
+        // sharp history is output-res — for converged thin geometry they disagree FOREVER (the line is
+        // diluted in m1), a permanent phantom "content change" that held every line pixel at a 5-10%
+        // responsive blend and re-injected the alternating line estimate each covering frame — THE
+        // thin-line jitter. Compare against the history's render-texel average instead: a converged
+        // line's low component matches m1 (diff -> 0, deep trust holds, line goes still); a ghost or
+        // real change is wrong in its LOW component too, so diff still fires.
+        lumaHCmp = hLowC.x;
+    }
+    else
+    {
+        history = ClipAABB(cmin, cmax, historyRaw);
+        lumaHCmp = history.x;
+    }
 
     // --- Blend: the original content-adaptive luminance-feedback weight, unmodified — diff-driven, no
     //     counter-based deepening. Same reasoning as the clamp above: letting the accumulation counter push
@@ -586,8 +675,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // depthReject/ghostReject, the actual disocclusion catches, are luma-independent and unaffected). Only
     // this confidence signal changes — the actual displayed blend still uses the sharp `curr` sample below,
     // so this doesn't blur the image, it just stops mistaking supersampling noise for scene change.
-    float lumaH = history.x;
-    float diff = saturate(abs(m1.x - lumaH) / max(0.2, max(m1.x, lumaH)));
+    float lumaH = history.x; // display-side luma (Karis weights); the DIFF uses the resolution-matched lumaHCmp
+    float diff = saturate(abs(m1.x - lumaHCmp) / max(0.2, max(m1.x, lumaHCmp)));
     // NOTE (sand at low scale): a "noise-floor knee" was tried here — subtracting an expected sampling-noise
     // baseline from diff at upscale so converged noisy textures (sand) stop resetting their own accumulation.
     // REVERTED in every variant (raw, reject-split, motion-gated, oscillation-earned): in the small-delta
@@ -596,7 +685,20 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // of the residue), so the knee always slowed ghost cleanup somewhere (haze around mover silhouettes).
     // Sand detail at low scale is an INPUT-side problem (terrain-noise mip bias), not a trust-side one.
     diff = max(max(diff, depthReject), max(ghostReject, featReject));
-    float historyWeight = lerp(1.0 - BlendFactor, 0.55, diff); // responsive end 0.6 -> 0.55: a full-diff pixel scrubs a shade faster
+    // KALMAN-COMPLETE DEEP END (the reference-upscaler convergence model): DLSS/FSR2/TSR converge fine
+    // detail because their accumulation approaches an EQUAL-WEIGHT running average on static pixels —
+    // each frame contributes ~1/N with N growing large — while a fixed EMA floor (1 - BlendFactor, i.e.
+    // never below ~3% current) has a hard ~32-frame memory that can NEVER fully average a high-variance
+    // jitter cycle: the "flickers and won't converge at rest" gap below 0.5x. The deep end now follows
+    // the Kalman gain N/(N+1) once the EVIDENCE counter outgrows the EMA baseline (capped 0.985 off the
+    // freeze asymptote). Counter-driven deepening historically ghosted — when N counted AGE. It now
+    // counts witnessed agreement (sigma-normalized innovation, sign-alternation aware, witness-ruled),
+    // collapses x0.75/frame on disagreement, and is reset/capped by every disocclusion path (ghost reset,
+    // depth cap, reactive cap) — a stale pixel structurally cannot keep a large N. The diff term still
+    // lerps toward full responsiveness instantly on top.
+    float minN = min(prevN, newN);
+    float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), 0.992); // cap matches MaxAccum 128 (1/129)
+    float historyWeight = lerp(deepEnd, 0.55, diff); // responsive end: a full-diff pixel scrubs fast
     // Velocity-disparity reactive caps the history trust directly (soft — 0.88 keeps a moving-content pixel
     // from pulsing aliased when the camera stops; tune toward 0.94 if a screen-wide stop-pulse shows).
     historyWeight = min(historyWeight, lerp(1.0, 0.85, reactive)); // 0.88 -> 0.85 (watch for a screen-wide pulse on camera stop; revert to 0.88 if seen)
@@ -620,12 +722,23 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // sits below ~0.2, so fine geometry keeps its lock. Ghost-safety backbone is still the oscillation
     // signal itself (monotonic ghosts decay the lock in ~5 frames).
     float oscTrust = oscLock * (1.0 - saturate((diff - 0.25) * 3.5));
-    // EVIDENCE-SCALED ceiling: the residual shimmer on a locked line IS its per-frame current injection
-    // (3.5% at 0.965), so the ceiling deepens toward 0.982 with the STRENGTH of the alternation evidence.
-    // The old flat-0.975 ghost concern predates the foreign-reprojection / stored-motion / feature-level
-    // machinery; the deep end still requires every gate plus sustained evidence a ghost cannot produce.
-    float oscCeil = min(1.0 - 0.5 * BlendFactor, lerp(0.965, 0.982, smoothstep(0.55, 0.85, osc)));
-    historyWeight = lerp(historyWeight, oscCeil, oscTrust);
+    // EVIDENCE-SCALED, CYCLE-AWARE ceiling: the residual shimmer on a locked line IS its per-frame current
+    // injection, and the visible "repeating jitter pattern" at extreme upscale is a CYCLE-VS-WINDOW
+    // mismatch — the 72-frame Halton cycle at 1/3 scale exceeded the ~55-frame window a 0.982 ceiling
+    // buys, so the converged limit cycle could never be averaged away (at 0.5x the 32-frame cycle fit
+    // inside the window, which is why it was "barely visible" there). The deep end therefore scales with
+    // the cycle it must hide: 1 - 1/(1.2*cycle), clamped to [0.965 (native baseline), 0.988]. Ghost-safety
+    // gates unchanged: the deep end still needs osc >= 0.85 sustained alternation (a ghost cannot
+    // alternate), stillness, and no reject/foreign/reactive; the Kalman collapse, honest disocclusion and
+    // feature rectification all still override from below.
+    // Clamp 0.985 / BlendFactor cap 0.5 (pulled back from 0.988 / 0.35: that extra depth read as a slight
+    // ghost — the window lands a hair under the 72-frame cycle instead of over it, and Stage-2's input
+    // consolidation covers the difference on the content that actually shows the pattern).
+    float cycleCeil = clamp(1.0 - 1.0 / (1.2 * JitterPhases), 0.965, 0.99);
+    float oscCeil = min(1.0 - 0.5 * BlendFactor, lerp(0.965, cycleCeil, smoothstep(0.55, 0.85, osc)));
+    // RAISE-ONLY: the Kalman deep end (N/(N+1), up to 0.992) can legitimately exceed the lock ceiling —
+    // the lock lerp must never pull earned evidence-trust back DOWN.
+    historyWeight = max(historyWeight, lerp(historyWeight, oscCeil, oscTrust));
 
     // 0.35 -> 0.22: the pan-time aliasing crawl was this boost force-injecting raw current while history
     // was perfectly valid (exact reproject). It predates the whole disocclusion machinery — real ghosting
@@ -648,7 +761,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // converged fine geometry less (the residual TAAU-only fizzle), and the motion gate still restores
         // full responsiveness the moment anything moves. Drops further toward 0.08 past 2x ratio: at 0.33x
         // EIGHT of nine frames are interpolation-only — that drip was the last visible thin-line jitter.
-        float confFloor = lerp(0.14, 0.08, saturate(upscaleRatio - 2.0));
+        // COVERAGE-SCALED (reference-upscaler behavior — a frame with no information contributes NOTHING):
+        // on zero-coverage frames the floor previously injected the blurry bilinear fallback anyway, a
+        // steady drip that was BOTH a blur and a flicker source (the fallback varies with jitter phase).
+        // Pure history hold there; motion (moveGate) and the covering frames carry all responsiveness.
+        float confFloor = lerp(0.14, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
         blend *= lerp(lerp(confFloor, 1.0, sampleConf), 1.0, moveGate);
     }
 
