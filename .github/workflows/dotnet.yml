@@ -11,6 +11,12 @@ on:
   pull_request:
     branches: [ "main" ]
 
+# A newer push to the same branch obsoletes the in-flight run — cancel it instead of queueing a full
+# 7-job matrix behind it. Per-push CI only; release.yml must NEVER cancel (a release build is precious).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # Compile the effect shaders fresh from source on Windows (the only OS where MonoGame's effect compiler
   # works — it needs Wine on linux/osx). Produces both Content/DX (Windows client) and Content/OGL (DesktopGL
@@ -22,7 +28,28 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 9.0.x
+      # Shader compilation is deterministic in its inputs (the .fx sources, the compile script, and the
+      # pinned mgcb tool version), so cache the compiled .xnb output keyed on exactly those. Most pushes
+      # don't touch shaders — on a hit we skip the whole mgcb compile (the slowest part of this job).
+      # NOTE: exact-key only, no restore-keys — a stale partial hit would defeat the "skip compile" check.
+      - name: Cache compiled shaders
+        id: shader-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            TSOClient/tso.content/Content/DX/Effects
+            TSOClient/tso.content/Content/OGL/Effects
+          key: shaders-${{ hashFiles('TSOClient/tso.content/ContentSrc/Effects/**', '.github/scripts/compile-shaders.sh', 'TSOClient/tso.content/.config/dotnet-tools.json') }}
+      # The compile script's `dotnet tool restore` pulls the mgcb tool from NuGet — cache the package
+      # store so that download is skipped too. Only needed when the shader cache misses.
+      - name: Cache NuGet packages (mgcb tool)
+        if: steps.shader-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-tools-${{ hashFiles('**/dotnet-tools.json') }}
       - name: Compile desktop shaders (DX + OGL)
+        if: steps.shader-cache.outputs.cache-hit != 'true'
         shell: bash
         run: bash .github/scripts/compile-shaders.sh
       - uses: actions/upload-artifact@v4
@@ -52,6 +79,16 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 9.0.x
+      # Cache the NuGet package store so restore only downloads what changed. Keyed on every .csproj
+      # (the repo doesn't use packages.lock.json, so setup-dotnet's built-in cache can't be used); the
+      # restore-key falls back to the newest previous cache so a csproj edit still starts ~warm.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       # Overlay the freshly-compiled shaders (from the compile-shaders job) over the committed .xnb so the
       # published client carries shaders built from current source. DX for the Windows client, OGL otherwise.
       - name: Use freshly-compiled shaders
@@ -59,12 +96,30 @@ jobs:
         with:
           name: shaders-${{ matrix.rid == 'win-x64' && 'dx' || 'ogl' }}
           path: TSOClient/tso.content/Content/${{ matrix.rid == 'win-x64' && 'DX' || 'OGL' }}/Effects
+      # PublishReadyToRun=false: FSO.IDE opts into ReadyToRun in its csproj, which roughly triples the
+      # Windows publish time for an AOT-precompile that only speeds up end-user startup. Per-push CI just
+      # verifies the build compiles, so skip it here. release.yml keeps R2R on — shipped builds want it.
       - name: Publish client
-        run: dotnet publish ${{ matrix.project }} -c Release -r ${{ matrix.rid }} --self-contained -o Artifacts/Client
+        run: dotnet publish ${{ matrix.project }} -c Release -r ${{ matrix.rid }} --self-contained -p:PublishReadyToRun=false -o Artifacts/Client
+      # Zip before upload: upload-artifact uploads file-by-file, and a self-contained publish is thousands
+      # of loose files — one zip cuts the upload from minutes to seconds. (upload-artifact zips its content
+      # anyway, so downloaders were always getting a zip; this just adds one inner layer.)
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          ( cd Artifacts/Client && zip -qr "../../dist/${{ matrix.asset }}.zip" . )
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path Artifacts/Client/* -DestinationPath "dist/${{ matrix.asset }}.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.asset }}
-          path: Artifacts/Client
+          path: dist/*
 
   # Server: FSO.Server.Core supports win-x64 + linux-x64 (linux-x64 is the docker/Hetzner deploy target).
   build-server:
@@ -80,9 +135,30 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: 9.0.x
+      # Same NuGet cache as build-client (no packages.lock.json in the repo, so actions/cache it is).
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Publish server
         run: dotnet publish TSOClient/FSO.Server.Core -c Release -r ${{ matrix.rid }} --self-contained -o Artifacts/Server
+      # Zip before upload — same rationale as build-client (thousands of loose self-contained files).
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          ( cd Artifacts/Server && zip -qr "../../dist/OpenSO-server-${{ matrix.rid }}.zip" . )
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path Artifacts/Server/* -DestinationPath "dist/OpenSO-server-${{ matrix.rid }}.zip" -Force
       - uses: actions/upload-artifact@v4
         with:
           name: OpenSO-server-${{ matrix.rid }}
-          path: Artifacts/Server
+          path: dist/*
