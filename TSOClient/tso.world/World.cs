@@ -1287,13 +1287,22 @@ namespace FSO.LotView
             bool autoSharpen = !sharpen && taaReady && WorldContent.FSR != null;
             if (autoSharpen)
             {
-                float bbH = PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height;
+                // SHARPEN IS SCALED BY THE GRID THE IMAGE ACTUALLY LIVES ON. Under TAAU the resolve
+                // outputs NATIVE-res detail (history IS the output grid), so the auto-sharpen must key
+                // off the OUTPUT height — keying it off the render-res backbuffer treated a 1080p TAAU
+                // image as "356p-soft" at 1/3 scale and drove RCAS to its ceiling: ~3x over-sharpening
+                // of an already output-res image. THAT overdose was the primary residual "edge ringing
+                // + dither" at low scale — RCAS halos bright fine detail (ringing added AFTER the
+                // resolve, which no resolve-side dering could remove) and amplifies whatever small
+                // temporal alternation the resolve leaves (dither). The low-res ramp remains correct
+                // for the FSR1 path, whose final image really is a soft EASU upscale of a render-res
+                // frame. The 0.62 TAAU ceiling is retired with this — it was tuned against the wrong-
+                // height formula and only ever raised the overdose.
+                float bbH = PPXDepthEngine.TAAUEnabled
+                    ? gd.Viewport.Height
+                    : (PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height);
                 // 0.25 at 1080p (the config default), ramping to 0.5 by 540p; floor 0.2 at high res.
-                // Ceiling raised to 0.62 under TAAU past 2x ratio: the deep temporal average at 1/3 scale
-                // is inherently softer, and the resolve's own confidence machinery now suppresses the
-                // shimmer that used to make strong sharpening at low res look noisy ("solidity" pass).
-                float sharpCap = (PPXDepthEngine.TAAUEnabled && scale > 0f && scale < 0.5f) ? 0.62f : 0.5f;
-                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, sharpCap);
+                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, 0.5f);
             }
             else RCASSharpen.OverrideAmount = null;
             PPXDepthEngine.SharpenFunc = (sharpen || autoSharpen) ? RCASSharpen.Draw : null;
@@ -1392,8 +1401,10 @@ namespace FSO.LotView
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
             // RCAS sharpen — user-controlled, available at any render scale (the downscale resolve uses the
-            // box/tent, not FSR, so this is just optional sharpening). No TAA in this path, so clear any
-            // TAA-coupled auto-sharpen override left over from the 3D path.
+            // box/tent, not FSR, so this is just optional sharpening). NOTE: city TAA IS wired now (below),
+            // but the TAA-coupled AUTO-sharpen is deliberately NOT mirrored here yet — the city look was
+            // tuned without it, and adding it should be its own validated change. Clear any override left
+            // over from the lot path so lot auto-sharpen doesn't leak into the city.
             RCASSharpen.OverrideAmount = null;
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
