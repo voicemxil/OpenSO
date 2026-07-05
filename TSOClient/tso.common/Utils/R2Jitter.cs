@@ -53,10 +53,27 @@ namespace FSO.Common.Utils
         /// <param name="renderScale">PPXDepthEngine.SSAA — &lt;1 upscale, 1 native, &gt;1 supersample.</param>
         public static Vector2 SampleHalton(int n, float renderScale)
         {
-            float upscale = (renderScale > 0f && renderScale < 1f) ? (1f / renderScale) : 1f;
-            int cycle = 8 * Math.Max(1, (int)Math.Ceiling(upscale * upscale));
+            int cycle = HaltonCycle(renderScale);
             int i = (n % cycle) + 1; // skip the degenerate 0th sample (origin)
             return new Vector2(HaltonValue(i, 2) - 0.5f, HaltonValue(i, 3) - 0.5f);
+        }
+
+        /// <summary>
+        /// The jitter cycle length for a render scale — the DLSS/FSR2 phase-count formula,
+        /// 8 * ceil((1/renderScale)^2): 8 at native/supersample, 32 at 0.5x, 72 at 1/3.
+        /// Single source of truth: the TAA resolve's cycle-aware trust ceiling (TAAResolve.Draw ->
+        /// JitterPhases uniform) must agree with the jitter generator on this number — the accumulation
+        /// window has to EXCEED the cycle for the converged limit cycle to be invisible.
+        /// </summary>
+        public static int HaltonCycle(float renderScale)
+        {
+            float upscale = (renderScale > 0f && renderScale < 1f) ? (1f / renderScale) : 1f;
+            // Full DLSS/FSR2 spec count, uncapped (a 32 cap was tried when the accumulation window was
+            // ~65 frames and could not hide the 72-frame cycle at 1/3 scale — but the shorter cycle also
+            // left only ~3.5 distinct sample positions per output pixel at ratio 3, too few to actually
+            // super-resolve. With MaxAccum 128 the window exceeds 1.5x the full cycle, so the spec count
+            // is both hideable AND supplies the detail).
+            return 8 * Math.Max(1, (int)Math.Ceiling(upscale * upscale));
         }
 
         // Radical-inverse (van der Corput) in the given base — the standard Halton component.

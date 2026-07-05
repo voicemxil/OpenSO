@@ -23,6 +23,25 @@ sampler TexSampler = sampler_state {
 	AddressV = Clamp;
 };
 
+// Anisotropic view of MeshTex for the velocity (TAA) path's mip-biased sampling (SM4 only — the
+// GrassShader AnisoTexSampler pattern). The DLSS/FSR2-spec negative mip bias assumes ANISOTROPIC
+// filtering on the biased samplers: under trilinear, the sharper mip re-aliases on minified/oblique
+// content (tree leaves especially) at a per-frame rate the temporal resolve cannot fully integrate —
+// the reason the bias floor was blunted to -1.0 (World.ChangeAAMode). With aniso + footprint-correct
+// gradient sampling (exactly how the wall path below already samples) the full spec bias is stable,
+// restoring object-texture distinctness below 0.5x render scale.
+#if SM4
+sampler MeshAnisoSampler = sampler_state {
+	texture = <MeshTex>;
+	MinFilter = Anisotropic;
+	MagFilter = Anisotropic;
+	MipFilter = Anisotropic;
+	AddressU = Clamp;
+	AddressV = Clamp;
+	MaxAnisotropy = 16;
+};
+#endif
+
 texture AnisoTex;
 sampler AnisoSampler = sampler_state {
 	texture = <AnisoTex>;
@@ -308,7 +327,7 @@ float2 ComputeVelocity(float4 curr, float4 prev)
 	float2 currNDC = curr.xy / currW - JitterNDC;
 	float2 prevNDC = prev.xy / prevW;
 	float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
-	return clamp(v, -0.05, 0.05);
+	return clamp(v, -0.5, 0.5); // was +/-0.05 (fit the meta byte encode) — 0.05 UV = ~64px/frame, routinely EXCEEDED by fast drags/rotation at 30fps: every writer saturated and reprojection undershot by the excess = the displaced-silhouette / motion-ghosting saga. fp16 buffer holds +/-0.5 losslessly; the meta encode still saturates itself on store (desirable: the reactive fires during ultra-fast motion).
 }
 
 // velocity.b = normalized LINEAR view distance (clip.w / farPlane), clamped to [0,1] (0=near .. 1=far).
@@ -324,7 +343,13 @@ float PackDepth(float4 clip) { return saturate(clip.w / 800.0); }
 PSOutputV psRCV(VertexOutV v)
 {
 	PSOutputV o;
-	float4 color = gammaMul(tex2Dbias(TexSampler, float4(v.texCoord, 0, MipBias)), lightProcess(v.modelPos));
+	// SM4: aniso + gradient sampling so the full spec MipBias is per-frame-stable (see MeshAnisoSampler).
+#if SM4
+	float4 tex = tex2Dgrad(MeshAnisoSampler, v.texCoord, ddx(v.texCoord) * exp2(MipBias), ddy(v.texCoord) * exp2(MipBias));
+#else
+	float4 tex = tex2Dbias(TexSampler, float4(v.texCoord, 0, MipBias));
+#endif
+	float4 color = gammaMul(tex, lightProcess(v.modelPos));
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
@@ -337,7 +362,13 @@ PSOutputV psDirRCV(VertexOutV v)
 {
 	PSOutputV o;
 	float3 n = normalize(v.normal);
-	float4 color = gammaMul(tex2Dbias(TexSampler, float4(v.texCoord, 0, MipBias)), lightProcessDirection(v.modelPos, n));
+	// SM4: aniso + gradient sampling (see psRCV / MeshAnisoSampler).
+#if SM4
+	float4 tex = tex2Dgrad(MeshAnisoSampler, v.texCoord, ddx(v.texCoord) * exp2(MipBias), ddy(v.texCoord) * exp2(MipBias));
+#else
+	float4 tex = tex2Dbias(TexSampler, float4(v.texCoord, 0, MipBias));
+#endif
+	float4 color = gammaMul(tex, lightProcessDirection(v.modelPos, n));
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);

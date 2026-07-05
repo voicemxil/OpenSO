@@ -410,7 +410,17 @@ namespace FSO.LotView
                     State.Zoom = WorldZoom.Near;
                     break;
             }
-            ChangeAAMode(m_Device);
+            // GameResized (not just ChangeAAMode): switching graphics mode changes the EFFECTIVE render
+            // scale (2D folds SSAA to 1; 3D restores it), so the 2D world dimensions must be recomputed
+            // from the new backbuffer/SSAA pair. Without this, dims computed under the 3D scale (e.g.
+            // bb/0.33 = 3x native) survived into 2D mode — the "impossible zoom out" after a 3D->2D switch.
+            // ONLY while this world is the active presenter: a hidden world must not touch the shared
+            // engine (same ownership rule as ChangeAAMode). Joining a lot FROM THE MAP configures the new
+            // lot world while the city is still drawing — an immediate GameResized here disposed the
+            // ResolveTargets mid-city-frame (Texture2D.CreateTexture NRE on the disposed bind). Defer to
+            // the visibility-regain in Draw, which runs on the game thread before this world presents.
+            if (Visible) GameResized();
+            else _PendingGameResized = true;
             State.Platform = Platform;
         }
 
@@ -766,15 +776,84 @@ namespace FSO.LotView
                 device.SetRenderTarget(null);
             }
 
+            // ---- TEMP VELOCITY PROBE v3 (exact, parallax-free): reconstruct the WORLD POINT the center
+            // pixel actually shows (screen-center ray x view depth from the buffer's own .b), project it
+            // through the SAME matrix pair the writers receive, and compare against the buffer's stored
+            // velocity. ratio=1.0 exonerates the writers exactly; anything else is a real deficit. ----
+            {
+                try
+                {
+                    var velRT = PPXDepthEngine.GetVelocityTarget();
+                    if (velRT != null && Visible && Environment.TickCount - _ProbeLastLog > 500)
+                    {
+                        var one = new Microsoft.Xna.Framework.Graphics.PackedVector.HalfVector4[1];
+                        velRT.GetData(0, new Rectangle(velRT.Width / 2, velRT.Height / 2, 1, 1), one, 0, 1);
+                        var v4 = one[0].ToVector4();
+                        if (v4.W >= 0.5f) // valid velocity written at center
+                        {
+                            float viewDist = v4.Z * 800f; // decode saturate(clip.w/800)
+                            var invView = Matrix.Invert(State.View);
+                            // screen-center ray in view space = forward axis; view-space point (0,0,-viewDist)
+                            // (RH view space looks down -Z in XNA).
+                            var worldPt = Vector4.Transform(new Vector4(0f, 0f, -viewDist, 1f), invView);
+                            var vpNow = State.View * State.ProjectionUnjittered;
+                            var now = Vector4.Transform(worldPt, vpNow);
+                            var prv = Vector4.Transform(worldPt, State.PreviousViewProjection);
+                            if (Math.Abs(now.W) > 1e-4f && Math.Abs(prv.W) > 1e-4f)
+                            {
+                                // expected buffer value: (currNDC - prevNDC) * (0.5, -0.5)
+                                var expected = new Vector2(
+                                    (now.X / now.W - prv.X / prv.W) * 0.5f,
+                                    (now.Y / now.W - prv.Y / prv.W) * -0.5f);
+                                var actual = new Vector2(v4.X, v4.Y);
+                                float el = expected.Length(), al = actual.Length();
+                                if (el > 1e-5f)
+                                {
+                                    _ProbeLastLog = Environment.TickCount;
+                                    System.IO.File.AppendAllText(System.IO.Path.Combine(FSO.Common.FSOEnvironment.UserDir, "vel_probe.log"),
+                                        $"ratio={al / el:F3} dot={(al > 1e-6f ? Vector2.Dot(expected / el, actual / al) : 0):F3} expUV={el:F5} bufUV={al:F5} dist={viewDist:F1}\r\n");
+                                }
+                            }
+                        }
+                    }
+                }
+                catch { }
+            }
+
             return;
         }
+        private static int _ProbeLastLog;
 
         /// <summary>
         /// We will just take over the whole rendering of this scene :)
         /// </summary>
         /// <param name="device"></param>
+        private bool _WasVisibleLastDraw = true;
+        // A SetGraphicsMode arrived while hidden (e.g. lot configured behind the city during a map join);
+        // its GameResized is deferred to the visibility regain below (game thread, before we present).
+        private bool _PendingGameResized;
+
         public override void Draw(GraphicsDevice device){
             if (HasInit == false) { return; }
+
+            // ENGINE OWNERSHIP: a world that isn't the active presenter must NOT resolve to the screen.
+            // In the city view, the paused lot world behind it kept running its post chain every frame —
+            // painting its (stale/empty) backbuffer OVER the city output (the "city map black under TAAU"
+            // bug) while its config fought the city's over the shared PPXDepthEngine state.
+            if (!Visible)
+            {
+                _WasVisibleLastDraw = false;
+                return;
+            }
+            if (!_WasVisibleLastDraw || _PendingGameResized)
+            {
+                // Regained visibility: re-apply this world's AA/scale config (the city view owned and
+                // reconfigured the shared engine while we were hidden). A deferred SetGraphicsMode needs
+                // the full GameResized (dims recompute + screen targets); a plain regain only ChangeAAMode.
+                _WasVisibleLastDraw = true;
+                if (_PendingGameResized) { _PendingGameResized = false; GameResized(); }
+                else ChangeAAMode(device);
+            }
 
             FrameCounter++;
             if (FrameCounter < LastCacheClear + 60*60)
@@ -788,6 +867,7 @@ namespace FSO.LotView
                 PPXDepthEngine.WithOpacity = State.CameraMode < CameraRenderMode._3D;
                 PPXDepthEngine.DrawBackbuffer(Opacity, BackbufferScale);
             }
+
             return;
         }
 
@@ -1109,6 +1189,11 @@ namespace FSO.LotView
 
         public void ChangeAAMode(GraphicsDevice gd)
         {
+            // ENGINE OWNERSHIP: a hidden world (e.g. the paused lot behind the city view) must not
+            // reconfigure the shared PPXDepthEngine — its settings (2D SSAA fold, TAAU off, history
+            // teardown) fought the city's config every frame, thrashing the backbuffer size and destroying
+            // the city's TAA history. Draw() re-applies our config when we become visible again.
+            if (!Visible) return;
             var lastm = PPXDepthEngine.MSAA;
             var lasts = PPXDepthEngine.SSAA;
             var cfg = WorldConfig.Current;
@@ -1139,7 +1224,14 @@ namespace FSO.LotView
             // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
             // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
             PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1;
-            // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias).
+            // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias). Floor RESTORED to the
+            // full spec -2.0 (log2(scale) = -1.58 at 1/3 passes): the -1.0 blunting existed because the
+            // DLSS-spec bias assumes ANISOTROPIC filtering and the OBJECT path sampled trilinear (leaves
+            // re-aliased per frame). Objects now use aniso + footprint-correct gradient sampling under
+            // SM4 (RCObject MeshAnisoSampler), same as walls/terrain always did — the spec bias is
+            // per-frame-stable again, and the half-octave of texture softness the blunting cost below
+            // 0.5x scale ("indistinct past 0.5x") comes back. SM3 fallback keeps trilinear tex2Dbias;
+            // if a non-SM4 target ever shows leaf flicker again, re-blunt THERE, not globally.
             PPXDepthEngine.TAAMipBias = (taaOn && scale < 0.999f && scale > 0f)
                 ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
@@ -1198,7 +1290,20 @@ namespace FSO.LotView
             bool autoSharpen = !sharpen && taaReady && WorldContent.FSR != null;
             if (autoSharpen)
             {
-                float bbH = PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height;
+                // SHARPEN IS SCALED BY THE GRID THE IMAGE ACTUALLY LIVES ON. Under TAAU the resolve
+                // outputs NATIVE-res detail (history IS the output grid), so the auto-sharpen must key
+                // off the OUTPUT height — keying it off the render-res backbuffer treated a 1080p TAAU
+                // image as "356p-soft" at 1/3 scale and drove RCAS to its ceiling: ~3x over-sharpening
+                // of an already output-res image. THAT overdose was the primary residual "edge ringing
+                // + dither" at low scale — RCAS halos bright fine detail (ringing added AFTER the
+                // resolve, which no resolve-side dering could remove) and amplifies whatever small
+                // temporal alternation the resolve leaves (dither). The low-res ramp remains correct
+                // for the FSR1 path, whose final image really is a soft EASU upscale of a render-res
+                // frame. The 0.62 TAAU ceiling is retired with this — it was tuned against the wrong-
+                // height formula and only ever raised the overdose.
+                float bbH = PPXDepthEngine.TAAUEnabled
+                    ? gd.Viewport.Height
+                    : (PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height);
                 // 0.25 at 1080p (the config default), ramping to 0.5 by 540p; floor 0.2 at high res.
                 RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, 0.5f);
             }
@@ -1279,7 +1384,8 @@ namespace FSO.LotView
             // reconstruction valid sample positions here. Mirrors ChangeAAMode; set before
             // EnableHistoryTargets below (history sizes to the native grid in TAAU mode).
             PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1;
-            // Content-shader mip bias under TAA (mirrors ChangeAAMode).
+            // Content-shader mip bias under TAA (mirrors ChangeAAMode, incl. the restored -2.0 spec floor
+            // — see that site's aniso-sampling rationale).
             PPXDepthEngine.TAAMipBias = (cityTaaOn && scale < 0.999f && scale > 0f)
                 ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
@@ -1299,8 +1405,10 @@ namespace FSO.LotView
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
             // RCAS sharpen — user-controlled, available at any render scale (the downscale resolve uses the
-            // box/tent, not FSR, so this is just optional sharpening). No TAA in this path, so clear any
-            // TAA-coupled auto-sharpen override left over from the 3D path.
+            // box/tent, not FSR, so this is just optional sharpening). NOTE: city TAA IS wired now (below),
+            // but the TAA-coupled AUTO-sharpen is deliberately NOT mirrored here yet — the city look was
+            // tuned without it, and adding it should be its own validated change. Clear any override left
+            // over from the lot path so lot auto-sharpen doesn't leak into the city.
             RCASSharpen.OverrideAmount = null;
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;

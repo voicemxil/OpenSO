@@ -57,6 +57,10 @@ namespace FSO.LotView
             // Sky dome shader with velocity output (replaces BasicEffect when velocity is active).
             try { SkyVelocity = ContentManager.Load<Effect>("Effects/SkyVelocity"); }
             catch { SkyVelocity = null; }
+            // Headline/speech-bubble billboard shader with velocity output (replaces BasicEffect when
+            // velocity is active — without it the TAA smears the velocityless animated billboards).
+            try { BillboardVelocity = ContentManager.Load<Effect>("Effects/BillboardVelocity"); }
+            catch { BillboardVelocity = null; }
             // Bloom (threshold + Kawase dual-filter + composite).
             try { Bloom = ContentManager.Load<Effect>("Effects/Bloom"); }
             catch { Bloom = null; }
@@ -110,6 +114,7 @@ namespace FSO.LotView
         public static Effect TAA;
         public static Effect VelocityViz;
         public static Effect SkyVelocity;
+        public static Effect BillboardVelocity;
         public static Effect Bloom;
         public static Effect GTAO;
 

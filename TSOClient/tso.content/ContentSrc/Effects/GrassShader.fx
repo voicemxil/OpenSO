@@ -850,7 +850,7 @@ float2 ComputeGrassVelocity(float4 curr, float4 prev)
     float2 currNDC = curr.xy / currW - JitterNDC;
     float2 prevNDC = prev.xy / prevW;
     float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
-    return clamp(v, -0.05, 0.05);
+    return clamp(v, -0.5, 0.5); // was +/-0.05 (fit the meta byte encode) — 0.05 UV = ~64px/frame, routinely EXCEEDED by fast drags/rotation at 30fps: every writer saturated and reprojection undershot by the excess = the displaced-silhouette / motion-ghosting saga. fp16 buffer holds +/-0.5 losslessly; the meta encode still saturates itself on store (desirable: the reactive fires during ultra-fast motion).
 }
 
 // Same color logic as BasePS3D — duplicated rather than refactored to avoid touching the existing PS.

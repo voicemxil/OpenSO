@@ -543,8 +543,6 @@ namespace FSO.Common.Utils
                 // the last active stage targets the screen. TAA runs AFTER FXAA/SMAA (temporal pass over the
                 // spatially-AA'd frame), not in their place.
                 RenderTarget2D src = Backbuffer;
-                int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + (doTAA ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
-                int pong = 0;
 
                 // UPSCALING (+TAA), two modes:
                 //  * Cosmic TAAU (taau): the TAA resolve IS the upscaler — it runs in the nonNative stage
@@ -554,6 +552,15 @@ namespace FSO.Common.Utils
                 //    remaining stays >= 1 here (nonNative still pending), so TAA never targets the screen.
                 bool taau = doTAA && SSAA < 0.999f && TAAUEnabled;
                 bool taaFirst = doTAA && SSAA < 0.999f && !taau;
+
+                // STAGE COUNT: under TAAU, doTAA's own slot never runs (the resolve occupies the nonNative
+                // slot), so it must NOT be counted — counting it left `remaining` stuck above zero and the
+                // LAST real stage drew into a ping-pong target instead of the screen: with sharpen off,
+                // NOTHING painted the screen (the city-map-black-under-TAAU bug; sharpen masked it elsewhere
+                // because it targets the screen unconditionally). This is verbatim the adversarial-review
+                // verdict fix ("remaining count uses (nonNative && !taau)") originally dismissed as benign.
+                int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + ((doTAA && !taau) ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
+                int pong = 0;
 
                 // UPSCALING: spatial AA (FXAA/SMAA) runs FIRST, at RENDER resolution — before the TAA stage
                 // (same relative order as the native chain: spatial then temporal) and before the upscaler
@@ -668,6 +675,7 @@ namespace FSO.Common.Utils
                     GD.SetRenderTarget(null);
                     SharpenFunc(GD, src);
                 }
+
                 return;
             }
 

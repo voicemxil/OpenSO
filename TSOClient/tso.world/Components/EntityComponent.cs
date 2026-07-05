@@ -204,14 +204,15 @@ namespace FSO.LotView.Components
             return 1f;
         }
 
+        // Previous frame's billboard transform — velocity for the headline quad (see the velocity path
+        // in DrawHeadline3D). Invalidated whenever the velocity path doesn't run (prev would be stale).
+        private Matrix _PrevHeadlineWorld;
+        private bool _PrevHeadlineWorldValid;
+
         public void DrawHeadline3D(GraphicsDevice device, WorldState world)
         {
             if (Headline == null || Headline.IsDisposed) return;
             var gd = world.Device;
-            var effect = WorldContent.GetBE(gd);
-
-            effect.TextureEnabled = true;
-            effect.VertexColorEnabled = false;
 
             Vector3 scale;
             Quaternion rotation;
@@ -220,6 +221,49 @@ namespace FSO.LotView.Components
             var tHead1 = GetHeadlinePos();
             var hScale = GetHeadlineScale();
             var newWorld = Matrix.CreateScale(hScale*Headline.Width / 64f, hScale*Headline.Height / -64f, 1) * Matrix.Invert(Matrix.CreateFromQuaternion(rotation)) * Matrix.CreateTranslation(new Vector3(tHead1.X * 3, 1.6f + tHead1.Z * 3, tHead1.Y * 3)) * this.World;
+
+            // Velocity path (TAA / motion blur active): draw with the BillboardVelocity shader so the
+            // billboard writes true per-frame velocity (avatar tracking + bob) and depth to MRT1. Without
+            // this the temporal resolve has NO motion evidence for the bubbles — they animate over a
+            // zero-velocity signal and the accumulation smears them ("very ghosted" under TAAU).
+            var velRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
+            var bbVel = WorldContent.BillboardVelocity;
+            if (velRT != null && bbVel != null)
+            {
+                var mvp = newWorld * world.View * world.Projection; // jittered (TAA sampling)
+                // Previous transform x previous UN-jittered ViewProjection; subworld ModelTranslation
+                // correction mirrors WorldEntities.DrawAvatars.
+                var prevVP = world.PreviousViewProjection;
+                if (world.Cameras.ModelTranslation.HasValue)
+                    prevVP = Matrix.CreateTranslation(-world.Cameras.ModelTranslation.Value) * prevVP;
+                var prevMVP = (_PrevHeadlineWorldValid ? _PrevHeadlineWorld : newWorld) * prevVP;
+
+                var savedRTs = gd.GetRenderTargets();
+                var savedBlend = gd.BlendState;
+                FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velRT);
+                // Color keeps its alpha blend; velocity (MRT1) must OVERWRITE (independent blend, with
+                // plain-alpha fallback on old GPUs) — same treatment as the sky dome's velocity path.
+                gd.BlendState = FSO.Common.Utils.PPXDepthEngine.VelocityColorBlend(gd, BlendState.NonPremultiplied);
+                bbVel.Parameters["MVP"]?.SetValue(mvp);
+                bbVel.Parameters["PrevMVP"]?.SetValue(prevMVP);
+                bbVel.Parameters["JitterNDC"]?.SetValue(world.TAAJitter);
+                bbVel.Parameters["BillboardTex"]?.SetValue(Headline);
+                bbVel.CurrentTechnique = bbVel.Techniques["DrawBillboard"];
+                bbVel.CurrentTechnique.Passes[0].Apply();
+                gd.SetVertexBuffer(WorldContent.GetTextureVerts(gd));
+                gd.DrawPrimitives(PrimitiveType.TriangleStrip, 0, 2);
+                gd.SetRenderTargets(savedRTs);
+                gd.BlendState = savedBlend;
+                _PrevHeadlineWorld = newWorld;
+                _PrevHeadlineWorldValid = true;
+                return;
+            }
+            _PrevHeadlineWorldValid = false;
+
+            var effect = WorldContent.GetBE(gd);
+
+            effect.TextureEnabled = true;
+            effect.VertexColorEnabled = false;
 
             effect.DiffuseColor = Color.White.ToVector3();
             effect.World = newWorld;
