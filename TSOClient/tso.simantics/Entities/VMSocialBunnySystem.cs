@@ -63,7 +63,8 @@ namespace FSO.SimAntics.Entities
                 if (!(ent is VMAvatar bunny) || bunny.Dead || bunny.PrivateToPersistID == null) continue;
 
                 var targetId = bunny.PrivateToPersistID.Value;
-                if (bunniesByTarget.ContainsKey(targetId) || FindRealPlayer(avatars, targetId) == null)
+                var bunnyTarget = FindRealPlayer(avatars, targetId);
+                if (bunniesByTarget.ContainsKey(targetId) || bunnyTarget == null)
                 {
                     bunny.Delete(true, context);
                     continue;
@@ -75,6 +76,9 @@ namespace FSO.SimAntics.Entities
                     bunny.Name = BUNNY_NAME;
                     VMSocialBunnySuits.ApplyBunnyCostume(bunny);
                 }
+                // Re-asserted every sim-minute: keeps the bunny accepting socials even after
+                // interactions drain its motives, and heals bunnies from older saves.
+                SetupBunnyPsyche(bunny, bunnyTarget);
             }
 
             // Pass 2 - per real player: despawn a no-longer-needed bunny, or spawn one.
@@ -171,6 +175,7 @@ namespace FSO.SimAntics.Entities
             bunny.PrivateToPersistID = target.PersistID;
             bunny.Name = BUNNY_NAME;
             VMSocialBunnySuits.ApplyBunnyCostume(bunny);
+            SetupBunnyPsyche(bunny, target);
 
             if (!VMFindLocationFor.FindLocationFor(bunny, target, context, VMPlaceRequestFlags.Default))
             {
@@ -187,6 +192,43 @@ namespace FSO.SimAntics.Entities
             {
                 target.PushUserInteraction(talk.Value.index, bunny, context, talk.Value.global);
             }
+        }
+
+        // Make the bunny accept any social the player initiates (dance, play, etc.).
+        // Acceptance check trees in the stock social BHAVs weigh the RECEIVER's relationship
+        // to the asker, their mood, and their personality - so give the bunny a maxed
+        // opinion of its player, a permanently great mood (Cheats=1 also freezes motive
+        // decay, see VMAvatarMotiveDecay.Tick), and a maximally friendly/playful
+        // personality. All synced simulation state, applied identically on every VM
+        // instance. Only the bunny's own relationship map is touched - writing to the
+        // player's map would leak ephemeral bunny ids into their DB relationship rows.
+        private static void SetupBunnyPsyche(VMAvatar bunny, VMAvatar target)
+        {
+            if (!bunny.MeToPersist.TryGetValue(target.PersistID, out var rel))
+            {
+                rel = new List<short>();
+                bunny.MeToPersist[target.PersistID] = rel;
+            }
+            while (rel.Count < 2) rel.Add(0);
+            rel[0] = 100; // short-term relationship
+            rel[1] = 100; // long-term relationship
+
+            bunny.SetPersonData(VMPersonDataVariable.Cheats, 1);
+            bunny.SetPersonData(VMPersonDataVariable.Gender, 1); // matches the female costume set
+            bunny.SetPersonData(VMPersonDataVariable.NicePersonality, 1000);
+            bunny.SetPersonData(VMPersonDataVariable.OutgoingPersonality, 1000);
+            bunny.SetPersonData(VMPersonDataVariable.PlayfulPersonality, 1000);
+            bunny.SetPersonData(VMPersonDataVariable.ActivePersonality, 1000);
+            bunny.SetPersonData(VMPersonDataVariable.GenerousPersonality, 1000);
+
+            bunny.SetMotiveData(VMMotive.Mood, 100);
+            bunny.SetMotiveData(VMMotive.Energy, 100);
+            bunny.SetMotiveData(VMMotive.Comfort, 100);
+            bunny.SetMotiveData(VMMotive.Hunger, 100);
+            bunny.SetMotiveData(VMMotive.Hygiene, 100);
+            bunny.SetMotiveData(VMMotive.Bladder, 100);
+            bunny.SetMotiveData(VMMotive.Fun, 100);
+            bunny.SetMotiveData(VMMotive.Social, 100);
         }
 
         private static uint AllocateEphemeralPersistID(List<VMEntity> avatars)
