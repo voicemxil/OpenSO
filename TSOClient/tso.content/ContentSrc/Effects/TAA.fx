@@ -742,8 +742,18 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // ghost still cannot alternate its way to a lock. Scale-gated past 2x ratio: native and 0.5x keep
         // the validated 0.15 rate BIT-EXACT (saturate(upscaleRatio-2) = 0 there). Full phase-bucketed
         // evidence (per-jitter-phase state) is a separate meta-encoding redesign — see the review notes.
-        float oscRate = 0.15 * lerp(1.0, 2.2, saturate(upscaleRatio - 2.0)); // 0.15 <=0.5x -> 0.33 at 0.33x
-        osc = lerp(prevOsc, flip, oscRate * testify); // ~6-7 frame EMA on witnessing frames (faster at >2x)
+        // ASYMMETRIC rates (the lock-chatter fix): the symmetric boost also DECAYED at 2.2x on witnessed
+        // frames whose sign pair legitimately agrees — a converged limit cycle is not strictly
+        // alternating — so on borderline clutter (alpha-cutout leaves) osc chattered across the lock
+        // thresholds and the pixel's TREATMENT flickered locked<->floored every few frames: the
+        // "dithery/indecisive" leaf look. Evidence FOR alternation builds at the boosted rate (locks
+        // still earned fast at 1/3 scale); absence-of-flip decays at the base rate (a lock is lost no
+        // faster than native). Ghost-safety unchanged: a monotonic ghost emits flip=0 STREAMS, which
+        // still decay to zero (just at native speed), and the evidence wipe / off-screen reset bypass
+        // the EMA entirely on any real invalidation.
+        float oscRateUp = 0.15 * lerp(1.0, 2.2, saturate(upscaleRatio - 2.0)); // 0.15 <=0.5x -> 0.33 at 0.33x
+        float oscRate = lerp(0.15, oscRateUp, flip); // build boosted, decay base
+        osc = lerp(prevOsc, flip, oscRate * testify); // ~6-7 frame EMA on witnessing frames (faster build at >2x)
         // EVIDENCE WIPE (closes the ghost-under-lock hole, user-diagnosed via the debug view: ghost
         // sitting under bright BLUE trust with the RED counter only slowly refilling): the alternation
         // evidence previously SURVIVED history invalidation — a camera turn fired rejects/reactive and
@@ -814,9 +824,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // deep history lingers = ghost). Restrict it to velPx ~ 0 (its real domain: the static tail; a
     // just-revealed background pixel reads ~zero dilated velocity), fully off by ~0.35 native px so any real
     // drift keeps its accumulation and reprojects through the motion instead of collapsing to raw.
+    // TRULY-FLAT GATE (the edge-halo fizz fix): at rest, a pixel 1-2px from a hard edge / thin feature
+    // (a cord on a wall, a door silhouette) ALSO sits in the low-osc + mid-inno band — the jitter
+    // modulates the feature's energy in its neighborhood every phase, but not sign-alternately enough to
+    // clear the osc gate — so the penalty fired PERMANENTLY there, pinning N at a shallow equilibrium
+    // (~7 -> the ramp floor injects ~12% raw/frame): a fizzy ring around every edge on flat surfaces.
+    // The discriminator: a slight GHOST's defining venue is a genuinely FLAT surface (low sigma — that
+    // is exactly why its small innovation is meaningful), while an edge halo has the edge in its own
+    // box statistics (high sigma). Gate to low sigma: the anti-tail keeps its whole domain, the halo
+    // ring is exempt.
     float biasPenalty = (1.0 - smoothstep(0.12, 0.35, osc))
                       * smoothstep(0.25, 0.7, inno) * (1.0 - smoothstep(1.0, 2.0, inno))
                       * (1.0 - smoothstep(0.05, 0.35, velPx))
+                      * (1.0 - smoothstep(0.04, 0.12, sigma.x))
                       * saturate(upscaleRatio - 1.0);
     agreeK = min(agreeK, 1.0 - 0.35 * biasPenalty);
     float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
