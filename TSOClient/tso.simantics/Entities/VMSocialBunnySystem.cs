@@ -213,6 +213,14 @@ namespace FSO.SimAntics.Entities
             rel[0] = 100; // short-term relationship
             rel[1] = 100; // long-term relationship
 
+            // NPC person type (>=254): excluded from visitor counting/greet logic, the
+            // person-grid toolbar, and shown with the object cursor. Engine-side
+            // interaction permissions use AvatarState.Permissions (not PersonType), so
+            // socials still work. GreetStatus 2 = "greeted", in case any content still
+            // runs visitor-greet checks against it.
+            bunny.SetPersonData(VMPersonDataVariable.PersonType, 254);
+            bunny.SetPersonData(VMPersonDataVariable.GreetStatus, 2);
+
             bunny.SetPersonData(VMPersonDataVariable.Cheats, 1);
             bunny.SetPersonData(VMPersonDataVariable.Gender, 1); // matches the female costume set
             bunny.SetPersonData(VMPersonDataVariable.NicePersonality, 1000);
