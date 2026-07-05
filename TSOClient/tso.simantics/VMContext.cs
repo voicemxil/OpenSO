@@ -53,6 +53,7 @@ namespace FSO.SimAntics
         
         public VM VM;
         public bool DisableRouteInvalidation;
+        public VMSocialBunnySystem SocialBunnySystem = new VMSocialBunnySystem();
 
         public HashSet<ushort> DeferredLightingRefresh = new HashSet<ushort>();
 

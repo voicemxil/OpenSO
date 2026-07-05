@@ -39,6 +39,11 @@ namespace FSO.LotView
         public ProjectDelegate ProjectTilePos;
         public float FramePerDraw;
         public int FramesSinceLastDraw;
+
+        // The local player's own persist id, mirrored from the owning VM each frame. Used
+        // only to decide whether a per-client-private entity (VMEntity.PrivateToPersistID)
+        // should be drawn/picked/listed for this client - never consulted by simulation code.
+        public uint? PrivacyUID;
         private System.Diagnostics.Stopwatch _InterpClock; // real-time clock for wall-clock render interpolation
 
         private bool _DisableSmoothRotation;

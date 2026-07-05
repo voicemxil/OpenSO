@@ -15,6 +15,16 @@ namespace FSO.LotView.Components
     {
         public Avatar Avatar;
         public bool IsPet;
+
+        // Mirrors VMEntity.PrivateToPersistID. If set, only the client whose
+        // WorldState.PrivacyUID matches this persist id should draw/pick this avatar.
+        public uint? PrivateToPersistID;
+
+        public bool VisibleToLocalPlayer(WorldState state)
+        {
+            return PrivateToPersistID == null || PrivateToPersistID == state.PrivacyUID;
+        }
+
         public short Gender;
         public float Scale = 1;
         public int ALevel = 0;
@@ -230,7 +240,7 @@ namespace FSO.LotView.Components
             var tHead1 = Vector3.Transform(new Vector3(headpos.X, headpos.Z, headpos.Y), Matrix.CreateRotationZ((float)(RadianDirection + Math.PI)));
             var transhead = tHead1 + pos - new Vector3(0.5f, 0.5f, 0f);
 
-            if (!Visible) return;
+            if (!Visible || !VisibleToLocalPlayer(world)) return;
 
             if (Avatar != null){
 

@@ -175,7 +175,7 @@ namespace FSO.LotView
             {
                 foreach (var avatar in Blueprint.Avatars)
                 {
-                    if (avatar.Level <= state.Level) avatar.DrawHeadline3D(gd, state);
+                    if (avatar.Level <= state.Level && avatar.VisibleToLocalPlayer(state)) avatar.DrawHeadline3D(gd, state);
                 }
             }
         }
