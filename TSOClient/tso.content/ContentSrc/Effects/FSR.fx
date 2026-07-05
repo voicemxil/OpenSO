@@ -176,6 +176,22 @@ float4 RCAS_PS(VSOut input) : COLOR0
     float3 hitMax = (1.0 - max(mx4, e)) / (4.0 * mn4 - 4.0 - 1e-4);
     float3 lobeRGB = max(-hitMin, hitMax);
     float lobe = max(-(0.25 - 1.0 / 16.0), min(max(max(lobeRGB.r, lobeRGB.g), lobeRGB.b), 0.0)) * Sharpness;
+    // FSR_RCAS_DENOISE (AMD ffx_fsr1.h, previously omitted from this port): scale the sharpen lobe down
+    // where the center pixel deviates from its neighbour average relative to the local range — i.e. on
+    // GRAIN/ALTERNATION rather than a coherent edge. Sharpening is what turns the temporal resolve's
+    // small residual frame-to-frame alternation into visible ring/dither at low render scale; a clean
+    // edge (center consistent with its neighbours along the edge) keeps the full lobe, so genuine edge
+    // sharpness is unchanged. AMD's luma-times-2 approximation, verbatim.
+    float bL = b.b * 0.5 + (b.r * 0.5 + b.g);
+    float dL = d.b * 0.5 + (d.r * 0.5 + d.g);
+    float eL = e.b * 0.5 + (e.r * 0.5 + e.g);
+    float fL = f.b * 0.5 + (f.r * 0.5 + f.g);
+    float hL = h.b * 0.5 + (h.r * 0.5 + h.g);
+    float nz = 0.25 * (bL + dL + fL + hL) - eL;
+    float rangeL = max(max(max(bL, dL), max(eL, fL)), hL) - min(min(min(bL, dL), min(eL, fL)), hL);
+    nz = saturate(abs(nz) / max(rangeL, 1e-4));
+    nz = -0.5 * nz + 1.0;
+    lobe *= nz;
     float rcpL = 1.0 / (4.0 * lobe + 1.0);
     float3 pix = (lobe * (b + d + h + f) + e) * rcpL;
     return float4(pix, 1.0);
