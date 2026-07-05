@@ -164,6 +164,18 @@ float3 SampleHistoryBicubic(float2 uv)
     // renormalized onto the axis taps, which low-passed DIAGONAL detail slightly on every reprojection —
     // a real resampling-sharpness cost once the reconstruction kernel got anisotropic (diagonal thin
     // geometry is exactly what it now resolves). +4 fetches; still under the pre-diet fetch budget.
+#if SM4
+    // DERINGING HULL CLAMP (re-auditioned IN ISOLATION per the note that used to sit here — the earlier
+    // variant was reverted only because it shipped stacked with regressing changes): Catmull-Rom's negative
+    // lobes (w0/w3) overshoot around high-contrast content — a dark/bright halo ringing on fine BRIGHT
+    // detail, amplified once the sharper low-scale locks let converged thin lines reach full contrast in
+    // the history (every reprojection resample re-rings them, and RCAS then sharpens the halo). Overshoot
+    // is definitionally OUTSIDE the local tap hull; faithful interpolation is inside it — clamping to the
+    // 9-tap min/max removes the ring exactly without softening the reconstruction (this is the standard
+    // TAA bicubic dering, UE-style). ALU-only, no extra fetches. The old global clamp(0,8) kept only its
+    // fp16-overflow role (the hull is data-bounded, so it subsumes the undershoot half).
+    // SM4-ONLY: naming all 9 taps for the hull overflows ps_3_0's 32 temp registers (CI X4505 on the
+    // OGL/MojoShader targets); SM3 keeps the accumulate-and-globally-clamp form below (pre-hull behavior).
     float3 t00 = tex2Dlod(historySampler, float4(tp0.x,  tp0.y,  0, 0)).rgb;
     float3 t10 = tex2Dlod(historySampler, float4(tp12.x, tp0.y,  0, 0)).rgb;
     float3 t20 = tex2Dlod(historySampler, float4(tp3.x,  tp0.y,  0, 0)).rgb;
@@ -176,18 +188,23 @@ float3 SampleHistoryBicubic(float2 uv)
     float3 r = t00 * (w0.x  * w0.y) + t10 * (w12.x * w0.y) + t20 * (w3.x  * w0.y)
              + t01 * (w0.x  * w12.y) + t11 * (w12.x * w12.y) + t21 * (w3.x  * w12.y)
              + t02 * (w0.x  * w3.y) + t12 * (w12.x * w3.y) + t22 * (w3.x  * w3.y);
-    // DERINGING HULL CLAMP (re-auditioned IN ISOLATION per the note that used to sit here — the earlier
-    // variant was reverted only because it shipped stacked with regressing changes): Catmull-Rom's negative
-    // lobes (w0/w3) overshoot around high-contrast content — a dark/bright halo ringing on fine BRIGHT
-    // detail, amplified once the sharper low-scale locks let converged thin lines reach full contrast in
-    // the history (every reprojection resample re-rings them, and RCAS then sharpens the halo). Overshoot
-    // is definitionally OUTSIDE the local tap hull; faithful interpolation is inside it — clamping to the
-    // 9-tap min/max removes the ring exactly without softening the reconstruction (this is the standard
-    // TAA bicubic dering, UE-style). ALU-only, no extra fetches. The old global clamp(0,8) kept only its
-    // fp16-overflow role (the hull is data-bounded, so it subsumes the undershoot half).
     float3 hullMin = min(min(min(min(t00, t10), min(t20, t01)), min(min(t11, t21), min(t02, t12))), t22);
     float3 hullMax = max(max(max(max(t00, t10), max(t20, t01)), max(max(t11, t21), max(t02, t12))), t22);
     return clamp(r, hullMin, hullMax); // weights sum to 1 exactly; hull bounds also cover fp16 insurance
+#else
+    // ps_3_0 (OGL/MojoShader) register-budget form: accumulate without naming taps, global clamp only.
+    float3 r = float3(0, 0, 0);
+    r += tex2Dlod(historySampler, float4(tp0.x,  tp0.y,  0, 0)).rgb * (w0.x  * w0.y);
+    r += tex2Dlod(historySampler, float4(tp12.x, tp0.y,  0, 0)).rgb * (w12.x * w0.y);
+    r += tex2Dlod(historySampler, float4(tp3.x,  tp0.y,  0, 0)).rgb * (w3.x  * w0.y);
+    r += tex2Dlod(historySampler, float4(tp0.x,  tp12.y, 0, 0)).rgb * (w0.x  * w12.y);
+    r += tex2Dlod(historySampler, float4(tp12.x, tp12.y, 0, 0)).rgb * (w12.x * w12.y);
+    r += tex2Dlod(historySampler, float4(tp3.x,  tp12.y, 0, 0)).rgb * (w3.x  * w12.y);
+    r += tex2Dlod(historySampler, float4(tp0.x,  tp3.y,  0, 0)).rgb * (w0.x  * w3.y);
+    r += tex2Dlod(historySampler, float4(tp12.x, tp3.y,  0, 0)).rgb * (w12.x * w3.y);
+    r += tex2Dlod(historySampler, float4(tp3.x,  tp3.y,  0, 0)).rgb * (w3.x  * w3.y);
+    return clamp(r, 0.0, 8.0);
+#endif
 }
 
 struct TAAOut
@@ -293,10 +310,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscaleEff), MitchellK(abs(fracd.x) * kscaleEff), MitchellK(abs(fracd.x + 1.0) * kscaleEff));
     float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscaleEff), MitchellK(abs(fracd.y) * kscaleEff), MitchellK(abs(fracd.y + 1.0) * kscaleEff));
     // Render-texel-scale weights (kscale 1) for the SOFT display reconstruction (see loop).
+    // SM4-ONLY (ps_3_0 temp-register budget — CI X4505 on OGL): the soft display path and several other
+    // register-heavy quality features below are gated to SM4. SM3/OGL runs the lean "classic" resolve —
+    // the pre-worktree behavior those platforms always shipped.
+#if SM4
     float3 kx1 = float3(MitchellK(abs(fracd.x - 1.0)), MitchellK(abs(fracd.x)), MitchellK(abs(fracd.x + 1.0)));
     float3 ky1 = float3(MitchellK(abs(fracd.y - 1.0)), MitchellK(abs(fracd.y)), MitchellK(abs(fracd.y + 1.0)));
     float3 filtSoft = 0;
     float wsumSoft = 0;
+#endif
     float3 filt = 0;
     float wsum = 0;
     float3 crawC = 0; // the raw nearest jittered sample (center recon tap) — see texture-detail lean below
@@ -349,9 +371,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // for legitimately-rejected pixels (big reveals during rotation/pans). A proper smooth upscale of
         // the current frame — the reference response to disocclusion — instead of near-raw. Same taps,
         // ALU only.
+#if SM4
         float wSoft = kx1[dx + 1] * ky1[dy + 1];
         filtSoft += craw * wSoft;
         wsumSoft += wSoft;
+#endif
         float w = kx3[dx + 1] * ky3[dy + 1];
         if (edgeAniso > 0.001)
         {
@@ -510,11 +534,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     //     both reprojections land on the same background — stays silent even though foreign fires there.
     //     Upscale-only (native has no split-surface ring). Feeds diff + suspicion below like a reject. ---
     float ringContam = 0.0;
+#if SM4 // ps_3_0 temp-register budget (CI X4505 on OGL) — SM3 runs without this signal
     if (!debugMeta && upscaleRatio > 1.001)
     {
         float3 histOwn = RGB_to_YCoCg(historyPoint.rgb);
         ringContam = foreign * smoothstep(0.04, 0.15, length(histOwn - historyRaw));
     }
+#endif
 
     // Reprojected previous meta: per-pixel accumulation count N (R) + previous frame's dilated velocity (GB).
     // No normal buffer — that MRT is only written by SOME passes, so a normal-based disocclusion test fired
@@ -561,6 +587,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // fetched here is REUSED by the input-resolution rectification below. 1:1 keeps full authority.
     float3 hLow = historyRaw;
     float rejAuth = 1.0;
+#if SM4 // ps_3_0 temp-register budget (CI X4505 on OGL) — SM3 keeps full rejection authority, direct clamp
     if (upscaleRatio > 1.5)
     {
         float2 hOfs = InvColorSize * 0.25;
@@ -589,6 +616,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float authFloor = max(lerp(0.3, 0.05, smoothstep(0.25, 0.6, prevOscE)), relMotionE * 0.65);
         rejAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.08, length(m1 - hLow)));
     }
+#endif
 
     float historyDepth = historyPoint.a;
     float outside = max(max(dmin - historyDepth, historyDepth - dmax), 0.0);
@@ -646,6 +674,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     //     out-details the render-res current gradient — ungated, this would re-fizzle exactly what the
     //     locks stabilize. Cost: 4 point history taps. ---
     float featReject = 0.0;
+#if SM4 // ps_3_0 temp-register budget (CI X4505 on OGL) — SM3 relies on the depth/ghost/reactive rejects
     {
         float3 lw = float3(0.25, 0.5, 0.25); // YCoCg Y from RGB
         float hE = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth + float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
@@ -663,6 +692,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float structGhost = smoothstep(0.1, 0.25, gH) * (1.0 - smoothstep(0.03, 0.1, gC));
         featReject = max(moveGate, storedMove) * saturate(max(dirMismatch, structGhost)) * 0.6;
     }
+#endif
 
     // --- VELOCITY-DISPARITY REACTIVE (FSR2 lock-break analogue): compare this frame's dilated velocity with
     //     the velocity stored alongside the history. A mismatch means the history was written by content
@@ -929,6 +959,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // classic direct clamp (box and history live at the same resolution there — no domain mismatch).
     float3 history;
     float lumaHCmp; // history luma FOR THE DIFF COMPARISON — resolution-matched to m1 (see below)
+#if SM4 // ps_3_0 temp-register budget (CI X4505 on OGL) — SM3 always takes the direct-clamp else path
     if (upscaleRatio > 1.5)
     {
         // hLow fetched with the rejection-authority block above (same 4-tap render-texel average).
@@ -944,6 +975,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         lumaHCmp = hLowC.x;
     }
     else
+#endif
     {
         history = ClipAABB(cmin, cmax, historyRaw);
         lumaHCmp = history.x;
@@ -1156,6 +1188,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // edges"). Converged pixels (low blend) keep the crisp reconstruction bit-exactly; the lever CANNOT
     // re-ghost because it never touches history or trust.
     float3 dispCurr = curr;
+#if SM4 // ps_3_0 temp-register budget (CI X4505 on OGL) — SM3 displays the sharp reconstruction as-is
     if (upscaleRatio > 1.001)
     {
         float rawSoften = saturate((blend - 0.22) * 1.6); // earlier onset: reject-driven raw is covered sooner
@@ -1166,6 +1199,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // Full-strength lerp: the soft reconstruction is sharper than bilinear was at 0.7.
         dispCurr = lerp(curr, filtSoft / max(wsumSoft, 1e-4), rawSoften);
     }
+#endif
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));
