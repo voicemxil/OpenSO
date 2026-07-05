@@ -776,53 +776,8 @@ namespace FSO.LotView
                 device.SetRenderTarget(null);
             }
 
-            // ---- TEMP VELOCITY PROBE v3 (exact, parallax-free): reconstruct the WORLD POINT the center
-            // pixel actually shows (screen-center ray x view depth from the buffer's own .b), project it
-            // through the SAME matrix pair the writers receive, and compare against the buffer's stored
-            // velocity. ratio=1.0 exonerates the writers exactly; anything else is a real deficit. ----
-            {
-                try
-                {
-                    var velRT = PPXDepthEngine.GetVelocityTarget();
-                    if (velRT != null && Visible && Environment.TickCount - _ProbeLastLog > 500)
-                    {
-                        var one = new Microsoft.Xna.Framework.Graphics.PackedVector.HalfVector4[1];
-                        velRT.GetData(0, new Rectangle(velRT.Width / 2, velRT.Height / 2, 1, 1), one, 0, 1);
-                        var v4 = one[0].ToVector4();
-                        if (v4.W >= 0.5f) // valid velocity written at center
-                        {
-                            float viewDist = v4.Z * 800f; // decode saturate(clip.w/800)
-                            var invView = Matrix.Invert(State.View);
-                            // screen-center ray in view space = forward axis; view-space point (0,0,-viewDist)
-                            // (RH view space looks down -Z in XNA).
-                            var worldPt = Vector4.Transform(new Vector4(0f, 0f, -viewDist, 1f), invView);
-                            var vpNow = State.View * State.ProjectionUnjittered;
-                            var now = Vector4.Transform(worldPt, vpNow);
-                            var prv = Vector4.Transform(worldPt, State.PreviousViewProjection);
-                            if (Math.Abs(now.W) > 1e-4f && Math.Abs(prv.W) > 1e-4f)
-                            {
-                                // expected buffer value: (currNDC - prevNDC) * (0.5, -0.5)
-                                var expected = new Vector2(
-                                    (now.X / now.W - prv.X / prv.W) * 0.5f,
-                                    (now.Y / now.W - prv.Y / prv.W) * -0.5f);
-                                var actual = new Vector2(v4.X, v4.Y);
-                                float el = expected.Length(), al = actual.Length();
-                                if (el > 1e-5f)
-                                {
-                                    _ProbeLastLog = Environment.TickCount;
-                                    System.IO.File.AppendAllText(System.IO.Path.Combine(FSO.Common.FSOEnvironment.UserDir, "vel_probe.log"),
-                                        $"ratio={al / el:F3} dot={(al > 1e-6f ? Vector2.Dot(expected / el, actual / al) : 0):F3} expUV={el:F5} bufUV={al:F5} dist={viewDist:F1}\r\n");
-                                }
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-
             return;
         }
-        private static int _ProbeLastLog;
 
         /// <summary>
         /// We will just take over the whole rendering of this scene :)
@@ -1218,17 +1173,22 @@ namespace FSO.LotView
             // velocity/depth/mask at exactly the silhouettes TAA's dilation + disocclusion depend on (mixed
             // motion vectors = edge ghosting). Uses the FULL taaReady predicate (incl. MotionBlur content)
             // so a missing shader can't strip MSAA while TAA never actually runs.
-            // TAA is DirectX-only. The temporal resolve compiles to ps_3_0 on the OpenGL backend
-            // (MonoGame DesktopGL / MojoShader), where it produces a persistent reprojection "warble"
-            // that extensive diagnosis could not pin to the inputs (velocity + packed depth were both
-            // verified correct on GL) — it lives somewhere in the ps_3_0 resolve itself. Rather than ship
-            // a warbling image to macOS/Linux, gate TAA to DirectX and fall back to FXAA on GL (below).
-            bool taaOn = cfg.TAA && FSOEnvironment.DirectX && State.CameraMode == CameraRenderMode._3D
+            // TAA now runs on both backends: the full Cosmic TAA/TAAU technique on DirectX, and the
+            // simpler TAALite technique on OpenGL (TAAResolve.cs picks the technique by backend). GL's
+            // ps_3_0 resolve previously produced a persistent reprojection "warble" that extensive
+            // diagnosis could not pin to the inputs (velocity + packed depth were both verified correct
+            // on GL) — the pragmatic fix is TAALite, a low-branching port of this project's pre-R2/
+            // pre-TAAU baseline TAA that sidesteps the suspected MojoShader branch-misevaluation bug
+            // class behind the warble (see TAA.fx for the full writeup).
+            bool taaOn = cfg.TAA && State.CameraMode == CameraRenderMode._3D
                          && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             if (taaOn) msaa = 0;
             // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
             // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
-            PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1;
+            // DirectX-only: TAAU's upscale reconstruction is not implemented by the GL TAALite technique
+            // (which assumes native 1:1 rendering), so it must stay off there even though plain TAA no
+            // longer is.
+            PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1 && FSOEnvironment.DirectX;
             // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias). Floor RESTORED to the
             // full spec -2.0 (log2(scale) = -1.58 at 1/3 passes): the -1.0 blunting existed because the
             // DLSS-spec bias assumes ANISOTROPIC filtering and the OBJECT path sampled trilinear (leaves
@@ -1274,10 +1234,10 @@ namespace FSO.LotView
                 postFn = SMAAResolve.Draw;
             else if (cfg.PostAA >= 1 && WorldContent.FXAA != null)
                 postFn = PostProcessAA.Draw;
-            // GL TAA fallback: TAA is gated to DirectX (see taaOn above). A user who selected TAA on the
-            // OpenGL backend would otherwise get NO anti-aliasing, so substitute FXAA when no spatial pass
-            // is already chosen. DirectX is unaffected (it runs the real TAA).
-            if (postFn == null && cfg.TAA && !FSOEnvironment.DirectX && WorldContent.FXAA != null)
+            // TAA fallback: only substitute FXAA if the TAA effect genuinely failed to load (missing
+            // content), not because of backend — GL now runs TAALite via TAAResolve.cs same as DirectX
+            // runs the full TAA technique, so backend alone is no longer a reason to fall back.
+            if (postFn == null && cfg.TAA && WorldContent.TAA == null && WorldContent.FXAA != null)
                 postFn = PostProcessAA.Draw;
             PPXDepthEngine.PostProcessFunc = postFn;
 
@@ -1387,14 +1347,16 @@ namespace FSO.LotView
             // TAA supersedes MSAA — same rationale as ChangeAAMode: a multisampled velocity MRT resolve
             // averages edge velocity/depth/mask and corrupts TAA's dilation/disocclusion. Force the LOCAL
             // msaa (not just the engine field) so the _CityLastMSAA change-detect cache below stays coherent.
-            // DirectX-only (see ChangeAAMode): the OpenGL ps_3_0 TAA resolve warbles, so gate it off here too.
-            bool cityTaaOn = cfg.TAA && FSOEnvironment.DirectX && WorldContent.TAA != null && WorldContent.MotionBlur != null;
+            // Runs on both backends now (see ChangeAAMode): DirectX uses the full Cosmic TAA/TAAU
+            // technique, GL uses the simpler TAALite technique (picked by TAAResolve.cs).
+            bool cityTaaOn = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             if (cityTaaOn) msaa = 0;
             // Cosmic TAAU in the city: enabled now that Terrain.Draw publishes the city's jitter to
             // PPXDepthEngine.TAAJitterNDC each frame (same M31/M32 convention as the lot), giving the TAAU
             // reconstruction valid sample positions here. Mirrors ChangeAAMode; set before
             // EnableHistoryTargets below (history sizes to the native grid in TAAU mode).
-            PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1;
+            // DirectX-only: see ChangeAAMode — TAALite (GL) has no upscale reconstruction.
+            PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1 && FSOEnvironment.DirectX;
             // Content-shader mip bias under TAA (mirrors ChangeAAMode, incl. the restored -2.0 spec floor
             // — see that site's aniso-sampling rationale).
             PPXDepthEngine.TAAMipBias = (cityTaaOn && scale < 0.999f && scale > 0f)
@@ -1453,7 +1415,7 @@ namespace FSO.LotView
             // TAA: resolve-chain stage applied after the spatial AA. Needs the velocity buffer + history
             // (enabled above when cfg.TAA) and the shaders. Terrain.Draw applies the matching sub-pixel
             // projection jitter each frame whenever TAAFunc is set. AO stays disabled (as in ChangeAAMode).
-            bool taaReady = cfg.TAA && FSOEnvironment.DirectX && WorldContent.TAA != null && WorldContent.MotionBlur != null
+            bool taaReady = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null
                             && PPXDepthEngine.GetVelocityTarget() != null && PPXDepthEngine.GetHistoryPrev() != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
             PPXDepthEngine.AOFunc = null;

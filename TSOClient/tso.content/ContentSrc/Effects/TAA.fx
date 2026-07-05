@@ -1247,6 +1247,136 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 TAAOut TAA_PS(VSOut input)      { return TAA_Core(input, false); }
 TAAOut TAA_DebugPS(VSOut input) { return TAA_Core(input, true); }
 
+// ============================================================================================
+// TAALite — a deliberately SIMPLE fallback TAA for the OpenGL/DesktopGL backend.
+//
+// WHY THIS EXISTS: the full TAA_Core above (Cosmic TAA / Cosmic TAAU) has a persistent
+// reprojection "warble" on this project's GL path (ps_3_0 via MojoShader) that extensive
+// investigation could not root-cause. Velocity and packed-depth buffers were confirmed correct
+// on GL; jitter-sign, MRT-binding, and comparison-mis-evaluation hypotheses were all tried and
+// refuted. What WAS confirmed during that investigation is a MojoShader ps_3_0 compiler bug
+// class: certain uniform-value comparisons (`if (someUniform > 0.5)`-style branches) silently
+// always took one branch (fixed in VelocityViz.fx's debug view by replacing such a branch with
+// lerp/saturate arithmetic instead of an `if`). TAA_Core's "SM3" path is NOT free of this risk —
+// the `#if SM4` gates above exist ONLY for ps_3_0 TEMP-REGISTER BUDGET, not for comparison
+// correctness, so the scalar-ALU logic with its many uniform-keyed `if`s (upscaleRatio,
+// edgeAniso, centerDepth, moveGate thresholds, etc.) still runs, unedited, on ps_3_0/GL. It is
+// plausible the warble comes from one (or several) of those branches silently misevaluating
+// under MojoShader — but finding which one, inside ~800 lines of tuned heuristics, has already
+// consumed significant effort without success.
+//
+// Rather than keep hunting inside that complexity, TAALite is a straight port of this project's
+// OWN much simpler ORIGINAL TAA implementation, from BEFORE the R2-jitter/TAAU/Kalman-counter
+// work landed (git commit 218c3d5f). That algorithm has almost no data-dependent branching: one
+// loop-local `if (d < closestDepth)` inside an [unroll]ed 3x3 (a completely ordinary nearest-wins
+// reduction, not a uniform-threshold compare) and one final ternary select. It sidesteps the
+// entire suspected MojoShader bug class BY CONSTRUCTION, at the cost of the fancier features
+// (TAAU upscaling, Kalman accumulation, oscillation anti-fizzle lock, ring-contamination/feature
+// rejection, anisotropic reconstruction) that TAA_Core layers on for DirectX.
+//
+// SCOPE: TAALite assumes native 1:1 rendering (InvScreenSize == InvColorSize) — it does NOT
+// implement TAAU upscaling; that stays DirectX-only (see World.cs / PPXDepthEngine.TAAUEnabled).
+// It is self-contained frame-to-frame: unlike TAA_Core it never reads its own meta history (no
+// accumulation counter, no oscillation state), so o.meta is a dummy zero — nothing downstream
+// depends on it for this technique. It also has no depth-disocclusion test (the 218c3d5f
+// baseline didn't have one either — it predates the history-alpha depth packing); ghosting on
+// hard disocclusions is instead bounded the way that baseline always bounded it: the YCoCg
+// variance-AABB clip plus the luma-diff/motion blend below.
+//
+// This technique is intentionally NOT gated by #if SM4 internally — it is written as ONE simple
+// body that compiles the same for both vs_3_0/ps_3_0 and vs_4_0/ps_4_0. The C# side (TAAResolve)
+// only selects it on non-DirectX backends; nothing stops it from also compiling for DX (it's
+// simply unused there), which keeps this file simpler than adding a parallel #if fork.
+// ============================================================================================
+TAAOut TAALite_PS(VSOut input)
+{
+    TAAOut o;
+    float2 uv = input.Coord;
+
+    // SHARP current sample — single center tap (no pre-filtering; accumulation across jittered
+    // history is what resolves detail, so the per-frame input should stay crisp).
+    float3 curr = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv, 0, 0)).rgb);
+
+    // 3x3 neighborhood pass — does double duty: (1) variance stats (m1/m2) for the history clamp
+    // AABB, (2) VELOCITY DILATION: pick the velocity of the CLOSEST-depth pixel in the 3x3 (depth
+    // packed in velocity.b, 0=near..1=far) so thin/edge foreground movers don't ghost.
+    float3 m1 = 0, m2 = 0;
+    float2 dilatedVel = float2(0, 0);
+    float closestDepth = 1e9; // smaller = nearer; init far beyond any valid depth
+    float closestMask = 0.0;
+    [unroll] for (int dy = -1; dy <= 1; dy++)
+    [unroll] for (int dx = -1; dx <= 1; dx++)
+    {
+        float2 ofs = float2(dx, dy) * InvScreenSize;
+        float3 c = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv + ofs, 0, 0)).rgb);
+        m1 += c;
+        m2 += c * c;
+
+        float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
+        // Unwritten velocity pushed to sentinel depth 2.0 (beyond valid [0,1]) so a genuinely-far
+        // valid pixel still wins the nearest-depth tiebreak over an unwritten neighbour.
+        float d = (v.a >= 0.5) ? v.b : 2.0;
+        if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; closestMask = v.a; }
+    }
+    m1 *= (1.0 / 9.0);
+    m2 *= (1.0 / 9.0);
+    float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
+    // 1.5-sigma box: tight enough to reject ghosting, loose enough that high-frequency content
+    // (foliage) still accumulates instead of clipping to raw jitter every frame.
+    const float GAMMA = 1.5;
+    float3 cmin = m1 - GAMMA * sigma;
+    float3 cmax = m1 + GAMMA * sigma;
+
+    // Reproject with the dilated velocity; JitterDelta cancels the jitter baked into the velocity
+    // buffer (which is computed from the jittered projection) for an exact reprojection.
+    float2 velocity = dilatedVel;
+    float2 histUV = uv - velocity + JitterDelta;
+    bool valid = (histUV.x >= 0) && (histUV.x <= 1) && (histUV.y >= 0) && (histUV.y <= 1);
+    bool reprojectable = closestMask >= 0.5;
+
+    // Bicubic (Catmull-Rom) history fetch for detail preservation, then clip to the YCoCg
+    // neighborhood AABB to reject ghosting/disocclusion.
+    float3 history = RGB_to_YCoCg(SampleHistoryBicubic(histUV));
+    history = ClipAABB(cmin, cmax, history);
+
+    // Luminance feedback: stable pixels (history matches current luma) keep deep accumulation;
+    // changed pixels drop toward current so edges/disocclusions stay responsive.
+    float lumaC = curr.x;
+    float lumaH = history.x;
+    float diff = saturate(abs(lumaC - lumaH) / max(0.2, max(lumaC, lumaH)));
+    float historyWeight = lerp(1.0 - BlendFactor, 0.6, diff);
+
+    // Motion-adaptive: lean more on current when moving fast (less lag/ghosting under motion).
+    float vmag = length(velocity);
+    float motionBoost = saturate(vmag * 20.0) * 0.35;
+    float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
+
+    // Anti-flicker (Karis) inverse-luma weighting so bright sub-pixel samples don't dominate.
+    float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));
+    float wh = (1.0 - blend) * (1.0 / (1.0 + max(lumaH, 0.0)));
+    float3 blended = (curr * wc + history * wh) / max(wc + wh, 1e-5);
+
+    float3 outYCoCg = (valid && reprojectable) ? blended : curr;
+
+    o.color = float4(saturate(YCoCg_to_RGB(outYCoCg)), 1.0); // alpha dummy: no depth-disocclusion test here
+    o.meta  = float4(0, 0, 0, 0); // dummy: TAALite never reads its own meta history (self-contained)
+    return o;
+}
+
+technique TAALite
+{
+    pass MainPass
+    {
+#if SM4
+        VertexShader = compile vs_4_0 VS();
+        PixelShader  = compile ps_4_0 TAALite_PS();
+#else
+        VertexShader = compile vs_3_0 VS();
+        PixelShader  = compile ps_3_0 TAALite_PS();
+#endif
+    }
+}
+
 technique TAA
 {
     pass MainPass

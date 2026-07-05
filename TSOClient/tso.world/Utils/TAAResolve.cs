@@ -1,5 +1,6 @@
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using FSO.Common;
 using FSO.Common.Utils;
 
 namespace FSO.LotView.Utils
@@ -142,7 +143,13 @@ namespace FSO.LotView.Utils
             effect.Parameters["JitterPhases"]?.SetValue((float)R2Jitter.HaltonCycle(ss));
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
-            var tech = (DebugAccum ? effect.Techniques["TAADebug"] : null) ?? effect.Techniques["TAA"];
+            // Debug view is a DX-only diagnostic (no need to support it for the lite path). On non-DirectX
+            // backends prefer TAALite — a simpler, low-risk algorithm ported from the pre-R2/pre-TAAU
+            // baseline (see TAA.fx) that sidesteps the suspected MojoShader ps_3_0 branch-misevaluation bug
+            // class behind the GL "warble". DirectX keeps the full Cosmic TAA/TAAU technique.
+            var tech = (DebugAccum ? effect.Techniques["TAADebug"] : null)
+                       ?? (!FSOEnvironment.DirectX ? effect.Techniques["TAALite"] : null)
+                       ?? effect.Techniques["TAA"];
             if (tech == null) { gd.SetRenderTargets(finalTarget); return; }
             effect.CurrentTechnique = tech;
             effect.CurrentTechnique.Passes[0].Apply();
