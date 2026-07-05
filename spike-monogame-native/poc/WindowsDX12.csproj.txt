@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <TieredCompilation>false</TieredCompilation>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../MgcbSpike.Core/Assets/Icon.ico</ApplicationIcon>
+    <AssemblyName>MgcbSpike</AssemblyName>
+    <MonoGamePlatform>WindowsDX12</MonoGamePlatform>
+    <DisableFastUpToDateCheck>true</DisableFastUpToDateCheck>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MgcbSpike.Core\MgcbSpike.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.Native" Version="3.8.5-preview.*" />
+    <PackageReference Include="MonoGame.Runtime.Windows.DX12" Version="3.8.5-preview.*" />
+  </ItemGroup>
+  <Import Project="..\MgcbSpike.Content\BuildContent.targets" />
+</Project>
