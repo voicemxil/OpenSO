@@ -251,7 +251,8 @@ namespace FSO.Client.UI.Panels
         private int LastVisitorCount = 0;
         private void UpdateChatTitle()
         {
-            var visitors = vm.Context.ObjectQueries.Avatars.Count(x => x.PersistID != 0);
+            var visitors = vm.Context.ObjectQueries.Avatars.Count(x => x.PersistID != 0
+                && (x.PrivateToPersistID == null || x.PrivateToPersistID == vm.MyUID));
             if (LastVisitorCount != visitors)
             {
                 ChatPanel.SetVisitorCount(visitors);
@@ -975,6 +976,8 @@ namespace FSO.Client.UI.Panels
             base.Update(state);
 
             if (!vm.Ready || vm.Context.Architecture == null) return;
+
+            World.State.PrivacyUID = vm.MyUID;
 
             //handling smooth scaled zoom
             var camType = World.State.Cameras.ActiveType;

@@ -50,7 +50,8 @@ namespace FSO.Client.UI.Panels
 
             foreach (var sim in vm.Context.ObjectQueries.Avatars)
             {
-                if (!Display.Contains(sim) && sim.PersistID != vm.MyUID && (sim as VMAvatar)?.GetPersonData(SimAntics.Model.VMPersonDataVariable.PersonType) < 254)
+                if (!Display.Contains(sim) && sim.PersistID != vm.MyUID && (sim as VMAvatar)?.GetPersonData(SimAntics.Model.VMPersonDataVariable.PersonType) < 254
+                    && (sim.PrivateToPersistID == null || sim.PrivateToPersistID == vm.MyUID))
                 {
                     Display.Add((VMAvatar)sim);
                     change = true;

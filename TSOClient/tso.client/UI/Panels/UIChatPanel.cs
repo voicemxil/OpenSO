@@ -212,7 +212,11 @@ namespace FSO.Client.UI.Panels
 
             InvalidAreas[3] = botRect;
 
-            var avatars = vm.Context.ObjectQueries.Avatars;
+            var avatars = new List<FSO.SimAntics.VMEntity>();
+            foreach (var a in vm.Context.ObjectQueries.Avatars)
+            {
+                if (a.PrivateToPersistID == null || a.PrivateToPersistID == vm.MyUID) avatars.Add(a);
+            }
             while (avatars.Count < Labels.Count)
             {
                 Remove(Labels[Labels.Count - 1]);

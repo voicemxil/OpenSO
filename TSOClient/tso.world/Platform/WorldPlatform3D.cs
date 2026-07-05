@@ -194,7 +194,7 @@ namespace FSO.LotView.Platform
 
             foreach (var sim in bp.Avatars)
             {
-                if (!sim.Visible) continue;
+                if (!sim.Visible || !sim.VisibleToLocalPlayer(state)) continue;
                 var pos = sim.GetPelvisPosition() * 3;
                 pos = new Vector3(pos.X, pos.Z, pos.Y);
                 float height = sim == fpAvatar ? 0.5f : 2f;
