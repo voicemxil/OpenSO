@@ -9,102 +9,116 @@ namespace FSO.SimAntics.Entities
     /// <summary>
     /// Deterministic per-tick system: spawns a private "Social Bunny" NPC next to a Sim whose
     /// Social motive is low and who has no other real player nearby, so they always have
-    /// someone to talk to. This runs as ordinary simulation code inside VM.InternalTick, so it
-    /// executes identically and independently on the dedicated server's VM instance and every
-    /// connected client's VM instance - the spawn/despawn decision is never made unilaterally
-    /// by a client, it falls out of the same synced deterministic state everyone already has.
+    /// someone to talk to. Runs as ordinary simulation code inside VM.InternalTick, executing
+    /// identically on the server's VM and every client's VM.
     ///
-    /// The bunny is a real VMAvatar (full pathing/pie-menu/BHAV interactions), hidden from all
-    /// clients except the target via VMEntity.PrivateToPersistID, which is consulted only by
-    /// the client-side render/pick/UI layer - never by simulation logic - so it introduces no
-    /// determinism risk.
+    /// This system is deliberately STATELESS: every decision derives from the shared entity
+    /// list (bunnies are identified by VMEntity.PrivateToPersistID) and the synced tick
+    /// counter. It holds no fields. Any private state here (tracking dicts, cooldown timers,
+    /// cached interaction ids) would NOT be marshalled with the VM, so a lot reload or a
+    /// late-joining client would start with different state than the server and make
+    /// different spawn decisions - duplicating bunnies and desyncing the simulation.
+    /// The scan-based approach also self-heals: orphaned or duplicate bunnies from older
+    /// saves are deleted, and bunnies missing their name/costume are re-dressed.
+    ///
+    /// There is no explicit re-spawn cooldown: the spawn (-50) / despawn (+20) hysteresis is
+    /// the cooldown, since Social has to decay all the way back down before a new bunny is
+    /// considered - and motive state is shared/deterministic, unlike a local timer.
     /// </summary>
     public class VMSocialBunnySystem
     {
+        public const string BUNNY_NAME = "Social Bunny";
+
         // Motive scale in this codebase runs roughly -100 (starving) to 100 (fully satisfied).
         private const short SOCIAL_LOW_THRESHOLD = -50;
         private const short SOCIAL_SATISFIED_THRESHOLD = 20;
         private const int NEARBY_PLAYER_RADIUS_TILES = 20;
-        private const int COOLDOWN_SIM_MINUTES = 30; // session-only, not persisted
 
         // Reserved above any real (DB-assigned) player persist id range, so ephemeral bunny
         // ids can never collide with a real avatar's persist id.
         private const uint EPHEMERAL_PERSIST_BASE = 0xF0000000;
 
-        private int LastMinute = -1;
-        private uint NextEphemeralPersist = EPHEMERAL_PERSIST_BASE;
-
-        // target avatar persist id -> the bunny currently assigned to them
-        private readonly Dictionary<uint, VMAvatar> ActiveBunnies = new Dictionary<uint, VMAvatar>();
-        // target avatar persist id -> sim-minutes remaining before eligible for another bunny
-        private readonly Dictionary<uint, int> Cooldowns = new Dictionary<uint, int>();
-
         // Candidate stock interaction names to try, in order, since content is fully
-        // data-driven (no hardcoded interaction ids exist anywhere in this engine). Cached
-        // once resolved, on the assumption that all Person-type avatars share the same
-        // tree table content.
+        // data-driven (no hardcoded interaction ids exist anywhere in this engine).
+        // NOT cached: resolving runs the pie menu check trees, which can consume the shared
+        // random stream - so every VM instance must run it at the same tick (spawn time),
+        // not just the instances that happen to have an empty cache.
         private static readonly string[] TalkInteractionNames = { "Talk", "Chat", "Introduce" };
-        private int? CachedTalkInteractionIndex;
-        private bool CachedTalkInteractionGlobal;
 
-        public void Tick(VM vm)
+        public void Tick(VM vm, uint tickID)
         {
             var context = vm.Context;
-            if (context.Clock.Minutes == LastMinute) return;
-            LastMinute = context.Clock.Minutes;
+            var ticksPerMinute = context.Clock.TicksPerMinute;
+            if (ticksPerMinute <= 0 || tickID % (uint)ticksPerMinute != 0) return; // once per sim-minute, synced via tickID
 
-            TickCooldowns();
-
-            // Snapshot: spawning/despawning below mutates ObjectQueries.Avatars, so iterate a
-            // copy rather than the live collection.
+            // Snapshot: spawning/despawning below mutates ObjectQueries.Avatars.
             var avatars = new List<VMEntity>(context.ObjectQueries.Avatars);
 
+            // Pass 1 - rebuild the authoritative bunny map from shared state. Delete orphans
+            // (target no longer on the lot) and duplicates (from pre-stateless saves), and
+            // re-dress any bunny that lost its identity (loaded from an old save).
+            var bunniesByTarget = new Dictionary<uint, VMAvatar>();
             foreach (var ent in avatars)
             {
-                if (!(ent is VMAvatar avatar)) continue;
-                if (avatar.PersistID == 0 || avatar.IsPet) continue;
-                if (avatar.PrivateToPersistID != null) continue; // this is a bunny (or other private npc)
-                if (avatar.GetPersonData(VMPersonDataVariable.PersonType) >= 254) continue; // not a real player
+                if (!(ent is VMAvatar bunny) || bunny.Dead || bunny.PrivateToPersistID == null) continue;
 
-                if (ActiveBunnies.TryGetValue(avatar.PersistID, out var bunny))
+                var targetId = bunny.PrivateToPersistID.Value;
+                if (bunniesByTarget.ContainsKey(targetId) || FindRealPlayer(avatars, targetId) == null)
                 {
-                    if (ShouldDespawn(avatar, bunny, context))
-                    {
-                        DespawnBunny(avatar.PersistID, bunny, context);
-                    }
+                    bunny.Delete(true, context);
                     continue;
                 }
 
-                if (Cooldowns.ContainsKey(avatar.PersistID)) continue;
+                bunniesByTarget[targetId] = bunny;
+                if (bunny.Name != BUNNY_NAME)
+                {
+                    bunny.Name = BUNNY_NAME;
+                    VMSocialBunnySuits.ApplyBunnyCostume(bunny);
+                }
+            }
+
+            // Pass 2 - per real player: despawn a no-longer-needed bunny, or spawn one.
+            foreach (var ent in avatars)
+            {
+                if (!(ent is VMAvatar avatar) || !IsRealPlayer(avatar)) continue;
+
+                if (bunniesByTarget.TryGetValue(avatar.PersistID, out var bunny))
+                {
+                    if (ShouldDespawn(avatar, bunny, avatars)) bunny.Delete(true, context);
+                    continue;
+                }
+
+                if (avatar.Position == LotTilePos.OUT_OF_WORLD) continue;
                 if (avatar.GetMotiveData(VMMotive.Social) > SOCIAL_LOW_THRESHOLD) continue;
                 if (IsAnyOtherRealPlayerNearby(avatar, avatars)) continue;
 
-                SpawnBunny(avatar, context);
+                SpawnBunny(avatar, avatars, context);
             }
         }
 
-        private void TickCooldowns()
+        private static bool IsRealPlayer(VMAvatar avatar)
         {
-            if (Cooldowns.Count == 0) return;
-            var expired = new List<uint>();
-            foreach (var kv in Cooldowns)
-            {
-                var remaining = kv.Value - 1;
-                if (remaining <= 0) expired.Add(kv.Key);
-                else Cooldowns[kv.Key] = remaining;
-            }
-            foreach (var id in expired) Cooldowns.Remove(id);
+            return !avatar.Dead && avatar.PersistID != 0 && !avatar.IsPet
+                && avatar.PrivateToPersistID == null
+                && avatar.GetPersonData(VMPersonDataVariable.PersonType) < 254;
         }
 
-        private bool IsAnyOtherRealPlayerNearby(VMAvatar target, List<VMEntity> avatars)
+        private static VMAvatar FindRealPlayer(List<VMEntity> avatars, uint persistID)
         {
             foreach (var ent in avatars)
             {
-                if (!(ent is VMAvatar other) || other == target) continue;
-                if (other.PersistID == 0 || other.IsPet) continue;
-                if (other.PrivateToPersistID != null) continue; // ignore other bunnies
-                if (other.GetPersonData(VMPersonDataVariable.PersonType) >= 254) continue;
-                if (other.Position == LotTilePos.OUT_OF_WORLD || target.Position == LotTilePos.OUT_OF_WORLD) continue;
+                if (ent is VMAvatar avatar && avatar.PersistID == persistID && IsRealPlayer(avatar)) return avatar;
+            }
+            return null;
+        }
+
+        private static bool IsAnyOtherRealPlayerNearby(VMAvatar target, List<VMEntity> avatars)
+        {
+            if (target.Position == LotTilePos.OUT_OF_WORLD) return false;
+            foreach (var ent in avatars)
+            {
+                if (!(ent is VMAvatar other) || other == target || !IsRealPlayer(other)) continue;
+                if (other.Position == LotTilePos.OUT_OF_WORLD) continue;
                 if (other.Position.Level != target.Position.Level) continue;
 
                 var dx = other.Position.TileX - target.Position.TileX;
@@ -114,26 +128,48 @@ namespace FSO.SimAntics.Entities
             return false;
         }
 
-        private bool ShouldDespawn(VMAvatar target, VMAvatar bunny, VMContext context)
+        // True while the bunny and its target are engaged with each other (either one has the
+        // other queued/active) - don't yank the bunny away mid-social.
+        private static bool BusyWithEachOther(VMAvatar target, VMAvatar bunny)
+        {
+            if (bunny.Thread != null)
+            {
+                foreach (var action in bunny.Thread.Queue)
+                {
+                    if (action.Callee == target || action.StackObject == target) return true;
+                }
+            }
+            if (target.Thread != null)
+            {
+                foreach (var action in target.Thread.Queue)
+                {
+                    if (action.Callee == bunny || action.StackObject == bunny) return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool ShouldDespawn(VMAvatar target, VMAvatar bunny, List<VMEntity> avatars)
         {
             if (target.Dead || target.Position == LotTilePos.OUT_OF_WORLD) return true; // target left the lot
-            if (bunny.Dead) return true;
-            if (target.GetMotiveData(VMMotive.Social) >= SOCIAL_SATISFIED_THRESHOLD) return true;
+            if (bunny.Dead) return false; // already gone, nothing to do
+            if (BusyWithEachOther(target, bunny)) return false;
 
-            var avatars = new List<VMEntity>(context.ObjectQueries.Avatars);
+            if (target.GetMotiveData(VMMotive.Social) >= SOCIAL_SATISFIED_THRESHOLD) return true;
             if (IsAnyOtherRealPlayerNearby(target, avatars)) return true;
 
             return false;
         }
 
-        private void SpawnBunny(VMAvatar target, VMContext context)
+        private static void SpawnBunny(VMAvatar target, List<VMEntity> avatars, VMContext context)
         {
             var group = context.CreateObjectInstance(VMAvatar.TEMPLATE_PERSON, LotTilePos.OUT_OF_WORLD, Direction.NORTH);
             if (group == null || group.Objects.Count == 0) return;
 
             var bunny = (VMAvatar)group.Objects[0];
-            bunny.PersistID = NextEphemeralPersist++;
+            bunny.PersistID = AllocateEphemeralPersistID(avatars);
             bunny.PrivateToPersistID = target.PersistID;
+            bunny.Name = BUNNY_NAME;
             VMSocialBunnySuits.ApplyBunnyCostume(bunny);
 
             if (!VMFindLocationFor.FindLocationFor(bunny, target, context, VMPlaceRequestFlags.Default))
@@ -144,26 +180,29 @@ namespace FSO.SimAntics.Entities
                 return;
             }
 
-            ActiveBunnies[target.PersistID] = bunny;
-
+            // Greet the target once: the bunny initiates a stock social. After this the bunny
+            // is a normal pie-menu target - the player interacts with it like any Sim.
             var talk = ResolveTalkInteraction(target, bunny, context);
             if (talk != null)
             {
-                target.PushUserInteraction(talk.Value, bunny, context, CachedTalkInteractionGlobal);
+                target.PushUserInteraction(talk.Value.index, bunny, context, talk.Value.global);
             }
         }
 
-        private void DespawnBunny(uint targetPersistID, VMAvatar bunny, VMContext context)
+        private static uint AllocateEphemeralPersistID(List<VMEntity> avatars)
         {
-            if (!bunny.Dead) bunny.Delete(true, context);
-            ActiveBunnies.Remove(targetPersistID);
-            Cooldowns[targetPersistID] = COOLDOWN_SIM_MINUTES;
+            // Derived from shared state so it's identical on every VM instance, and never
+            // reuses the id of a bunny still present from an earlier save.
+            uint id = EPHEMERAL_PERSIST_BASE;
+            foreach (var ent in avatars)
+            {
+                if (ent.PersistID >= id) id = ent.PersistID + 1;
+            }
+            return id;
         }
 
-        private int? ResolveTalkInteraction(VMAvatar target, VMAvatar bunny, VMContext context)
+        private static (int index, bool global)? ResolveTalkInteraction(VMAvatar target, VMAvatar bunny, VMContext context)
         {
-            if (CachedTalkInteractionIndex != null) return CachedTalkInteractionIndex;
-
             var pie = target.GetPieMenu(context.VM, bunny, false, true);
             foreach (var name in TalkInteractionNames)
             {
@@ -171,13 +210,10 @@ namespace FSO.SimAntics.Entities
                 {
                     if (entry.Name != null && entry.Name.Equals(name, System.StringComparison.OrdinalIgnoreCase))
                     {
-                        CachedTalkInteractionIndex = entry.ID;
-                        CachedTalkInteractionGlobal = entry.Global;
-                        return CachedTalkInteractionIndex;
+                        return (entry.ID, entry.Global);
                     }
                 }
             }
-
             return null;
         }
     }

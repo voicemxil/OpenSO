@@ -452,7 +452,7 @@ namespace FSO.SimAntics
                 Scheduler.RunTick();
             }
 
-            if (SpeedMultiplier > 0) Context.SocialBunnySystem.Tick(this);
+            if (SpeedMultiplier > 0) Context.SocialBunnySystem.Tick(this, tickID);
 
             if (tickID % Math.Max(1, SpeedMultiplier) == 0) Context.ProcessLightingChanges();
             //Context.SetToNextCache.VerifyPositions(); use only for debug!

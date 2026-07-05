@@ -1,6 +1,6 @@
-using FSO.Content;
-using FSO.SimAntics;
+using FSO.Content.Framework;
 using FSO.SimAntics.Model;
+using FSO.Vitaboy;
 
 namespace FSO.SimAntics.Engine
 {
@@ -32,13 +32,22 @@ namespace FSO.SimAntics.Engine
 
         /// <summary>
         /// Applies the full Social Bunny costume (body, head, and bunny ear/tail/slipper
-        /// accessories) to a freshly spawned avatar. Only affects rendering - safe to call
-        /// on both the server (where it's a no-op, since VM.UseWorld is false) and clients.
+        /// accessories) to an avatar. The decorations are stored in the avatar's marshalled
+        /// Decoration slots (by content id) so they survive lot save/load and reach
+        /// late-joining clients via the entity snapshot - VMAvatar's marshal-load path
+        /// re-applies Decoration ids to the renderer. The direct Avatar.Decoration*
+        /// assignments below cover the client(s) that witness the spawn live.
         /// </summary>
         public static void ApplyBunnyCostume(VMAvatar bunny)
         {
             bunny.BodyOutfit = GetBodyOutfit();
             bunny.HeadOutfit = GetHeadOutfit();
+
+            // Synced/marshalled state: identical on server + all clients (ids resolve from
+            // the same content archives everywhere).
+            bunny.Decoration.Head = ResolveOutfitID(EarsDecorationName);
+            bunny.Decoration.Shoes = ResolveOutfitID(SlippersDecorationName);
+            bunny.Decoration.Tail = ResolveOutfitID(TailDecorationName);
 
             if (!VMEntity.UseWorld || bunny.Avatar == null) return;
 
@@ -48,6 +57,17 @@ namespace FSO.SimAntics.Engine
             bunny.Avatar.DecorationHead = outfits.Get(EarsDecorationName);
             bunny.Avatar.DecorationShoes = outfits.Get(SlippersDecorationName);
             bunny.Avatar.DecorationTail = outfits.Get(TailDecorationName);
+        }
+
+        private static ulong ResolveOutfitID(string name)
+        {
+            var provider = Content.Content.Get().AvatarOutfits as TSOAvatarContentProvider<Outfit>;
+            if (provider?.FAR?.EntriesByName != null
+                && provider.FAR.EntriesByName.TryGetValue(name, out var entry))
+            {
+                return entry.ID;
+            }
+            return 0;
         }
     }
 }
