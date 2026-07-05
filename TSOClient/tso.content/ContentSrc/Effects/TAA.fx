@@ -164,20 +164,30 @@ float3 SampleHistoryBicubic(float2 uv)
     // renormalized onto the axis taps, which low-passed DIAGONAL detail slightly on every reprojection —
     // a real resampling-sharpness cost once the reconstruction kernel got anisotropic (diagonal thin
     // geometry is exactly what it now resolves). +4 fetches; still under the pre-diet fetch budget.
-    float3 r = float3(0, 0, 0);
-    r += tex2Dlod(historySampler, float4(tp0.x,  tp0.y,  0, 0)).rgb * (w0.x  * w0.y);
-    r += tex2Dlod(historySampler, float4(tp12.x, tp0.y,  0, 0)).rgb * (w12.x * w0.y);
-    r += tex2Dlod(historySampler, float4(tp3.x,  tp0.y,  0, 0)).rgb * (w3.x  * w0.y);
-    r += tex2Dlod(historySampler, float4(tp0.x,  tp12.y, 0, 0)).rgb * (w0.x  * w12.y);
-    r += tex2Dlod(historySampler, float4(tp12.x, tp12.y, 0, 0)).rgb * (w12.x * w12.y);
-    r += tex2Dlod(historySampler, float4(tp3.x,  tp12.y, 0, 0)).rgb * (w3.x  * w12.y);
-    r += tex2Dlod(historySampler, float4(tp0.x,  tp3.y,  0, 0)).rgb * (w0.x  * w3.y);
-    r += tex2Dlod(historySampler, float4(tp12.x, tp3.y,  0, 0)).rgb * (w12.x * w3.y);
-    r += tex2Dlod(historySampler, float4(tp3.x,  tp3.y,  0, 0)).rgb * (w3.x  * w3.y);
-    // (A hull-clamp "deringing" variant was tried here and reverted with the rest of its batch — it was
-    // stacked with regressing changes and never validated alone; re-audition it in isolation if edge
-    // ring-pulse under motion resurfaces.)
-    return clamp(r, 0.0, 8.0); // weights sum to 1 exactly; clamp ringing undershoot / fp16 overflow insurance
+    float3 t00 = tex2Dlod(historySampler, float4(tp0.x,  tp0.y,  0, 0)).rgb;
+    float3 t10 = tex2Dlod(historySampler, float4(tp12.x, tp0.y,  0, 0)).rgb;
+    float3 t20 = tex2Dlod(historySampler, float4(tp3.x,  tp0.y,  0, 0)).rgb;
+    float3 t01 = tex2Dlod(historySampler, float4(tp0.x,  tp12.y, 0, 0)).rgb;
+    float3 t11 = tex2Dlod(historySampler, float4(tp12.x, tp12.y, 0, 0)).rgb;
+    float3 t21 = tex2Dlod(historySampler, float4(tp3.x,  tp12.y, 0, 0)).rgb;
+    float3 t02 = tex2Dlod(historySampler, float4(tp0.x,  tp3.y,  0, 0)).rgb;
+    float3 t12 = tex2Dlod(historySampler, float4(tp12.x, tp3.y,  0, 0)).rgb;
+    float3 t22 = tex2Dlod(historySampler, float4(tp3.x,  tp3.y,  0, 0)).rgb;
+    float3 r = t00 * (w0.x  * w0.y) + t10 * (w12.x * w0.y) + t20 * (w3.x  * w0.y)
+             + t01 * (w0.x  * w12.y) + t11 * (w12.x * w12.y) + t21 * (w3.x  * w12.y)
+             + t02 * (w0.x  * w3.y) + t12 * (w12.x * w3.y) + t22 * (w3.x  * w3.y);
+    // DERINGING HULL CLAMP (re-auditioned IN ISOLATION per the note that used to sit here — the earlier
+    // variant was reverted only because it shipped stacked with regressing changes): Catmull-Rom's negative
+    // lobes (w0/w3) overshoot around high-contrast content — a dark/bright halo ringing on fine BRIGHT
+    // detail, amplified once the sharper low-scale locks let converged thin lines reach full contrast in
+    // the history (every reprojection resample re-rings them, and RCAS then sharpens the halo). Overshoot
+    // is definitionally OUTSIDE the local tap hull; faithful interpolation is inside it — clamping to the
+    // 9-tap min/max removes the ring exactly without softening the reconstruction (this is the standard
+    // TAA bicubic dering, UE-style). ALU-only, no extra fetches. The old global clamp(0,8) kept only its
+    // fp16-overflow role (the hull is data-bounded, so it subsumes the undershoot half).
+    float3 hullMin = min(min(min(min(t00, t10), min(t20, t01)), min(min(t11, t21), min(t02, t12))), t22);
+    float3 hullMax = max(max(max(max(t00, t10), max(t20, t01)), max(max(t11, t21), max(t02, t12))), t22);
+    return clamp(r, hullMin, hullMax); // weights sum to 1 exactly; hull bounds also cover fp16 insurance
 }
 
 struct TAAOut
