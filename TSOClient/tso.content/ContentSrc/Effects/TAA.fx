@@ -434,9 +434,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // a sample). LINES ARE PROTECTED by construction: dirCoherence -> clutter = 0 on directed edges,
         // so thin geometry keeps the sharp anisotropic reconstruction bit-exactly; flat regions have
         // ~zero sigma so the lean is a no-op there. Extreme-upscale only (saturate(ratio-1.5): 0 at
-        // <= 1.5x, full at >= 2.5x). Lever if canopy still dithers: raise 0.4 toward 0.6 (costs canopy
-        // sharpness, not line sharpness); if canopy goes MUSHY, lower toward 0.25.
-        curr = lerp(curr, m1, 0.4 * clutter * saturate(upscaleRatio - 1.5));
+        // <= 1.5x, full at >= 2.5x). Lever if canopy still dithers: raise toward 0.6 (costs canopy
+        // sharpness, not line sharpness); if canopy goes MUSHY, lower toward 0.2.
+        // 0.4 -> 0.28: the 0.4 dose was tuned while the RCAS auto-sharpen overdose (wrong-height keying,
+        // since fixed) was AMPLIFYING the dither ~3x — with the amplifier gone, less consolidation buys
+        // the same visual stability and returns some clutter distinctness ("indistinct past 0.5x").
+        curr = lerp(curr, m1, 0.28 * clutter * saturate(upscaleRatio - 1.5));
     }
 
     // Reproject with the dilated velocity (+ jitter delta cancels the jitter baked into the velocity buffer).

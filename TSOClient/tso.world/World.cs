@@ -1224,13 +1224,16 @@ namespace FSO.LotView
             // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
             // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
             PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1;
-            // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias). Floor -1.0 (was -2.0,
-            // which passed the full spec log2(scale) = -1.58 at 1/3 scale): the DLSS-spec bias assumes
-            // ANISOTROPIC filtering on the biased samplers — ours are trilinear, so the full bias makes
-            // minified textures (tree leaves especially) re-alias PER FRAME at the input, a flicker no
-            // resolve can fully integrate. -1.0 = exactly the 0.5x bias; scales >= 0.5x are unchanged.
+            // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias). Floor RESTORED to the
+            // full spec -2.0 (log2(scale) = -1.58 at 1/3 passes): the -1.0 blunting existed because the
+            // DLSS-spec bias assumes ANISOTROPIC filtering and the OBJECT path sampled trilinear (leaves
+            // re-aliased per frame). Objects now use aniso + footprint-correct gradient sampling under
+            // SM4 (RCObject MeshAnisoSampler), same as walls/terrain always did — the spec bias is
+            // per-frame-stable again, and the half-octave of texture softness the blunting cost below
+            // 0.5x scale ("indistinct past 0.5x") comes back. SM3 fallback keeps trilinear tex2Dbias;
+            // if a non-SM4 target ever shows leaf flicker again, re-blunt THERE, not globally.
             PPXDepthEngine.TAAMipBias = (taaOn && scale < 0.999f && scale > 0f)
-                ? System.Math.Max(-1f, (float)System.Math.Log(scale, 2.0)) : 0f;
+                ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
@@ -1381,9 +1384,10 @@ namespace FSO.LotView
             // reconstruction valid sample positions here. Mirrors ChangeAAMode; set before
             // EnableHistoryTargets below (history sizes to the native grid in TAAU mode).
             PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1;
-            // Content-shader mip bias under TAA (mirrors ChangeAAMode, incl. the -1.0 no-aniso floor).
+            // Content-shader mip bias under TAA (mirrors ChangeAAMode, incl. the restored -2.0 spec floor
+            // — see that site's aniso-sampling rationale).
             PPXDepthEngine.TAAMipBias = (cityTaaOn && scale < 0.999f && scale > 0f)
-                ? System.Math.Max(-1f, (float)System.Math.Log(scale, 2.0)) : 0f;
+                ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
