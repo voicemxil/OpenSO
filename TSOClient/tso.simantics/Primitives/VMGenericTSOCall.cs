@@ -66,7 +66,12 @@ namespace FSO.SimAntics.Primitives
                 // 16. Change Normal Output
                 case VMGenericTSOCallMode.GetInteractionResult: //17
                     //if our current interaction result is -1, then we need to start the process.
-                    if (context.ActionTree && context.Caller is VMAvatar && ((VMAvatar)context.Caller).PersistID != 0)
+                    //Private NPCs (e.g. the Social Bunny) have an ephemeral persist id but no
+                    //owning client to send a VMNetInteractionResultCmd, so they'd wait out the
+                    //10s ResultCheckCounter and return 3 (timeout = refuse). Treat them like a
+                    //no-persist NPC and auto-accept (2). Deterministic: keyed on synced state.
+                    if (context.ActionTree && context.Caller is VMAvatar callerAva
+                        && callerAva.PersistID != 0 && callerAva.PrivateToPersistID == null)
                     {
                         var interaction = context.Thread.ActiveAction;
                         if (interaction.InteractionResult == -1) interaction.InteractionResult = 0;
