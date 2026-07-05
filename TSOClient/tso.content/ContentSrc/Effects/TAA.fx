@@ -420,7 +420,23 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // zero ghost risk. Native path untouched (the raw-lean look there is intentional).
     if (upscaleRatio > 1.5)
     {
-        curr.x = min(curr.x, m1.x + 2.0 * sigma.x + 0.02);
+        // SYMMETRIC (was upper-bound only): a DARK speckle — a ground/sky sample landing on a pixel that
+        // usually shows leaf — dithers exactly like a bright one on clutter, and was unbounded.
+        curr.x = clamp(curr.x, m1.x - 2.0 * sigma.x - 0.02, m1.x + 2.0 * sigma.x + 0.02);
+        // SPECKLE CONSOLIDATION on directionless clutter (the distant-canopy "dither instead of solid"):
+        // sub-render-pixel fragments exist-or-don't per jitter phase, their quasi-random alternation never
+        // earns the full lock (by design — see the clutter kernel-width note), so every covering frame
+        // re-injects a DIFFERENT fragment pattern and the converged limit cycle reads as dithering. The
+        // law from the reverted trust-side attempts: reduce the per-frame variance of the INPUT, don't
+        // deepen trust. Lean curr toward the stationary neighborhood mean (m1 — phase-stable box taps) by
+        // clutter strength: fragments consolidate into their local average BEFORE the blend, so the
+        // injection variance drops with zero ghost risk (current-frame data only; a mean is as honest as
+        // a sample). LINES ARE PROTECTED by construction: dirCoherence -> clutter = 0 on directed edges,
+        // so thin geometry keeps the sharp anisotropic reconstruction bit-exactly; flat regions have
+        // ~zero sigma so the lean is a no-op there. Extreme-upscale only (saturate(ratio-1.5): 0 at
+        // <= 1.5x, full at >= 2.5x). Lever if canopy still dithers: raise 0.4 toward 0.6 (costs canopy
+        // sharpness, not line sharpness); if canopy goes MUSHY, lower toward 0.25.
+        curr = lerp(curr, m1, 0.4 * clutter * saturate(upscaleRatio - 1.5));
     }
 
     // Reproject with the dilated velocity (+ jitter delta cancels the jitter baked into the velocity buffer).
