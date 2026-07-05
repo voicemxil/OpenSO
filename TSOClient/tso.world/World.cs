@@ -1319,6 +1319,7 @@ namespace FSO.LotView
             // debug view lives on the TAA dropdown ("On + Debug" -> cfg.TAADebug); if both are enabled the
             // velocity visualizer wins (it bypasses the whole chain, TAA included).
             Utils.TAAResolve.DebugAccum = cfg.TAADebug && taaReady;
+            Utils.TAAResolve.LiteMode = cfg.TAALite;
             bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }
@@ -1422,6 +1423,7 @@ namespace FSO.LotView
             // Debug selection mirrors ChangeAAMode: TAA meta/trust view from the TAA dropdown (cfg.TAADebug),
             // velocity/depth visualizer from the motion-blur combo — independent; velocity view wins if both.
             Utils.TAAResolve.DebugAccum = cfg.TAADebug && taaReady;
+            Utils.TAAResolve.LiteMode = cfg.TAALite;
             bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }

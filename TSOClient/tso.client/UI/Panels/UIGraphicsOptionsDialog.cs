@@ -80,7 +80,9 @@ namespace FSO.Client.UI.Panels
         // never enabled together. The dropdown value is the index into this table. MSAA tiers above the GPU's
         // FSOEnvironment.MaxMSAA are filtered out when the dropdown is built (so 8× is hidden on Apple Silicon).
         // PostAA: 0=none, 1=FXAA, 3=SMAA (high). (PostAA 2 "SMAA Low" was dropped — it hit the same shader.)
-        // taa: 0=off, 1=Cosmic TAA (our temporal AA; enables the Upscaler row's Cosmic TAAU), 2=+debug view.
+        // taa: 0=off, 1=Cosmic TAA (our temporal AA; enables the Upscaler row's Cosmic TAAU), 2=Cosmic TAA
+        // Lite (same pipeline — jitter/velocity/history/TAAU all identical — but the lighter TAALite resolve
+        // technique: fewer fetches, no lock/evidence machinery; for weaker GPUs).
         // Mutually exclusive with the other modes here (the engine composes spatial+temporal internally, but
         // the menu presents one AA choice; TAA forces MSAA off anyway — multisampled velocity corrupts it).
         private static readonly (string label, int msaa, int postAA, int taa)[] AAModes =
@@ -89,6 +91,7 @@ namespace FSO.Client.UI.Panels
             ("FXAA",                0, 1, 0),
             ("SMAA",                0, 3, 0),
             ("Cosmic TAA",          0, 0, 1),
+            ("Cosmic TAA Lite",     0, 0, 2),
             ("MSAA 2×",             2, 0, 0),
             ("MSAA 4×",             4, 0, 0),
             ("MSAA 8×",             8, 0, 0),
@@ -464,6 +467,7 @@ namespace FSO.Client.UI.Panels
                 RenderScale = settings.RenderScale,
                 PostAA = settings.PostAA,
                 TAA = settings.TAA,
+                TAALite = settings.TAALite,
                 MotionBlur = settings.MotionBlur,
                 MotionBlurAmount = settings.MotionBlurAmount,
                 Bloom = settings.Bloom,
@@ -832,6 +836,7 @@ namespace FSO.Client.UI.Panels
             s.MSAALevel = AAModes[index].msaa;
             s.PostAA = AAModes[index].postAA;
             s.TAA = AAModes[index].taa >= 1;
+            s.TAALite = AAModes[index].taa == 2; // lighter resolve technique; false for all other AA modes
             if (!s.TAA) s.TAADebug = false; // debug rides on TAA; its own row (visible while TAA on) sets it
             // Enabling Cosmic TAA auto-selects Cosmic TAAU as the upscaler (the Upscaler row's Cosmic entry
             // un-grays); disabling leaves the stored preference (engine falls back to FSR 1 without TAA).
@@ -847,7 +852,7 @@ namespace FSO.Client.UI.Panels
             var s = GlobalSettings.Default;
             if (s.TAA)
                 for (int i = 0; i < AAModes.Length; i++)
-                    if (AAModes[i].taa == 1) return i;
+                    if (AAModes[i].taa == (s.TAALite ? 2 : 1)) return i;
             for (int i = 0; i < AAModes.Length; i++)
                 if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == s.PostAA && AAModes[i].taa == 0) return i;
             if (s.MSAALevel > 0)
@@ -884,6 +889,7 @@ namespace FSO.Client.UI.Panels
                 RenderScale = s.RenderScale,
                 PostAA = s.PostAA,
                 TAA = s.TAA,
+                TAALite = s.TAALite,
                 MotionBlur = s.MotionBlur,
                 MotionBlurAmount = s.MotionBlurAmount,
                 Bloom = s.Bloom,

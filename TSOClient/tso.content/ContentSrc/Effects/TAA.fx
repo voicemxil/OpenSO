@@ -1258,9 +1258,11 @@ TAAOut TAA_PS(VSOut input)      { return TAA_Core(input, false); }
 TAAOut TAA_DebugPS(VSOut input) { return TAA_Core(input, true); }
 
 // ============================================================================================
-// TAALite — the GL TAA + TAAU resolve: ONE upscale-general path; native 1:1 is the degenerate case.
+// TAALite — the user-selectable "Cosmic TAA Lite" tier: a lighter TAA + TAAU resolve for weaker
+// GPUs, offered on BOTH backends via the AA dropdown (in addition to its history as the GL
+// fallback below). ONE upscale-general path; native 1:1 is the degenerate case.
 //
-// WHY THIS EXISTS: the full TAA_Core above (Cosmic TAA / Cosmic TAAU) has a persistent
+// WHY THIS EXISTS (historically): the full TAA_Core above (Cosmic TAA / Cosmic TAAU) had a persistent
 // reprojection "warble" on this project's GL path (ps_3_0 via MojoShader) that extensive
 // investigation could not root-cause. Velocity and packed-depth buffers were confirmed correct
 // on GL; jitter-sign, MRT-binding, and comparison-mis-evaluation hypotheses were all tried and
@@ -1301,8 +1303,8 @@ TAAOut TAA_DebugPS(VSOut input) { return TAA_Core(input, true); }
 // zero = identity reproject — correct for static content; actual motion is caught by the
 // variance clamp + luma feedback (same reasoning as TAA_Core's reprojection comment).
 //
-// Compiles identically for ps_3_0 and ps_4_0 (no internal #if SM4 forks); C# selects it on
-// non-DirectX backends only.
+// Compiles identically for ps_3_0 and ps_4_0 (no internal #if SM4 forks); C# (TAAResolve.cs)
+// selects it on any backend when the user picks "Cosmic TAA Lite" (TAAResolve.LiteMode).
 // ============================================================================================
 TAAOut TAALite_PS(VSOut input)
 {

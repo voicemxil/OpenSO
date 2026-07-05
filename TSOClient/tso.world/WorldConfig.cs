@@ -57,6 +57,7 @@ namespace FSO.LotView
         // Temporal / motion effects. TAA + per-pixel motion blur are 3D-mode-only (need a velocity buffer);
         // MotionBlur=1 is a 2D camera-derived blur during smooth zoom/pan, no velocity needed.
         public bool TAA = false;
+        public bool TAALite = false;        //with TAA on: run the lighter "Cosmic TAA Lite" resolve technique
         public int MotionBlur = 0;          //0=Off, 1=Camera (2D), 2=PerPixel (3D)
         public float MotionBlurAmount = 0.5f;
         public bool Bloom = false;          //threshold bright-pass bloom (post-process)

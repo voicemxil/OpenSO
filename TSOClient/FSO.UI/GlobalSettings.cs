@@ -91,6 +91,7 @@ namespace FSO.Client
             { "Sharpen", "0"},           //resolve sharpening: 0=Bilinear, 1=FSR (EASU+RCAS) (shader pass; built on Windows)
             { "SharpenAmount", "0.25"},  //RCAS sharpening strength, 0..1
             { "TAA", "false"},           //temporal AA (3D mode only; needs velocity buffer)
+            { "TAALite", "false"},       //with TAA on: use the lighter "Cosmic TAA Lite" resolve technique
             { "MotionBlur", "0"},        //0=Off, 1=Camera (2D zoom/pan), 2=PerPixel (3D, needs velocity)
             { "MotionBlurAmount", "0.5"},//motion blur strength 0..1
             { "Bloom", "false"},         //threshold bright-pass bloom (post-process)
@@ -185,6 +186,7 @@ namespace FSO.Client
         public int Sharpen { get; set; } //0=Bilinear, 1=FSR (EASU+RCAS)
         public float SharpenAmount { get; set; } //RCAS strength 0..1
         public bool TAA { get; set; } //temporal anti-aliasing (3D, needs velocity buffer)
+        public bool TAALite { get; set; } //with TAA on: lighter "Cosmic TAA Lite" resolve technique (fewer fetches)
         public int MotionBlur { get; set; } //0=Off, 1=Camera (2D), 2=PerPixel (3D)
         public float MotionBlurAmount { get; set; } //motion blur strength 0..1
         public bool Bloom { get; set; } //threshold bright-pass bloom

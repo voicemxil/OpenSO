@@ -56,6 +56,10 @@ namespace FSO.LotView.Utils
         // accumulation), GREEN = depth/ghost reject strength, BLUE = non-reprojectable. The resolve itself
         // runs untouched underneath; this only changes the meta encode + which texture hits the screen.
         public static bool DebugAccum;
+        // User-selected "Cosmic TAA Lite" resolve tier (cfg.TAALite): run the lighter TAALite technique
+        // instead of the full Cosmic TAA/TAAU. Same I/O contract and TAAU support; fewer fetches, no
+        // lock/evidence machinery. Set by World.ChangeAAMode / World.ConfigureCityAA alongside DebugAccum.
+        public static bool LiteMode;
 
         public static void Draw(GraphicsDevice gd, RenderTarget2D src)
         {
@@ -143,13 +147,13 @@ namespace FSO.LotView.Utils
             effect.Parameters["JitterPhases"]?.SetValue((float)R2Jitter.HaltonCycle(ss));
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
-            // IN-TEST (user-directed): the GL warble root cause was the aliased POINT historyDepthSampler
-            // (now removed shader-wide — every point history fetch goes through FetchHistoryPoint's
-            // texel-center snap). With the aliasing gone, trial the FULL Cosmic TAA/TAAU on GL too (its
-            // SM3-lean tier). If GL shows warble or MojoShader branch-misevaluation artifacts in this
-            // build, revert to: `?? (!FSOEnvironment.DirectX ? effect.Techniques["TAALite"] : null)`
-            // between the two lines below — TAALite remains in the effect as the validated GL fallback.
-            var tech = (DebugAccum && FSOEnvironment.DirectX ? effect.Techniques["TAADebug"] : null)
+            // Technique selection. TAALite is now a user-facing lighter option on ALL backends ("Cosmic
+            // TAA Lite" in the AA dropdown — fewer fetches, no lock/evidence machinery), no longer only a
+            // GL fallback (the GL warble root cause — the aliased POINT historyDepthSampler — was fixed
+            // shader-wide via FetchHistoryPoint's texel-center snap, so the full technique runs on GL too).
+            // TAADebug diagnoses TAA_Core's meta encode — meaningless under lite, hence the !LiteMode.
+            var tech = (DebugAccum && FSOEnvironment.DirectX && !LiteMode ? effect.Techniques["TAADebug"] : null)
+                       ?? (LiteMode ? effect.Techniques["TAALite"] : null)
                        ?? effect.Techniques["TAA"];
             if (tech == null) { gd.SetRenderTargets(finalTarget); return; }
             effect.CurrentTechnique = tech;

@@ -166,6 +166,7 @@ namespace FSO.Client.UI.Screens
                         RenderScale = settings.RenderScale,
                         PostAA = settings.PostAA,
                         TAA = settings.TAA,
+                        TAALite = settings.TAALite,
                         MotionBlur = settings.MotionBlur,
                         MotionBlurAmount = settings.MotionBlurAmount,
                         Bloom = settings.Bloom,
