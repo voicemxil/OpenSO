@@ -40,7 +40,28 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "9.0.315"
+      # Shader compilation is deterministic in its inputs (the .fx sources, the compile script, and the
+      # pinned mgcb tool version), so cache the compiled .xnb output keyed on exactly those — shared with
+      # dotnet.yml's identical job, so a release usually hits the cache the per-push CI already filled.
+      # NOTE: exact-key only, no restore-keys — a stale partial hit would defeat the "skip compile" check.
+      - name: Cache compiled shaders
+        id: shader-cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            TSOClient/tso.content/Content/DX/Effects
+            TSOClient/tso.content/Content/OGL/Effects
+          key: shaders-${{ hashFiles('TSOClient/tso.content/ContentSrc/Effects/**', '.github/scripts/compile-shaders.sh', 'TSOClient/tso.content/.config/dotnet-tools.json') }}
+      # The compile script's `dotnet tool restore` pulls the mgcb tool from NuGet — cache the package
+      # store so that download is skipped too. Only needed when the shader cache misses.
+      - name: Cache NuGet packages (mgcb tool)
+        if: steps.shader-cache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-tools-${{ hashFiles('**/dotnet-tools.json') }}
       - name: Compile desktop shaders (DX + OGL)
+        if: steps.shader-cache.outputs.cache-hit != 'true'
         shell: bash
         run: bash .github/scripts/compile-shaders.sh
       - uses: actions/upload-artifact@v4
@@ -87,6 +108,17 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "9.0.315"
+
+      # Cache the NuGet package store so restore only downloads what changed. Keyed on every .csproj
+      # (the repo doesn't use packages.lock.json, so setup-dotnet's built-in cache can't be used); the
+      # restore-key falls back to the newest previous cache so a csproj edit still starts ~warm.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
 
       # Overlay the freshly-compiled shaders (from the compile-shaders job) over the committed .xnb so the
       # packaged client can't ship a stale shader. DX for the Windows client, OGL for linux/osx.
@@ -226,6 +258,14 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "9.0.315"
+      # Same NuGet cache as build-client (no packages.lock.json in the repo, so actions/cache it is).
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Publish server
         run: dotnet publish TSOClient/FSO.Server.Core -c Release -r ${{ matrix.rid }} --self-contained -o publish
       - name: Stamp version.txt
@@ -339,6 +379,14 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: "9.0.315"
+      # Same NuGet cache as the build jobs — `dotnet run` on FSO.DeltaGen restores packages too.
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
       - name: Resolve this + previous version
         id: ver
         env:
