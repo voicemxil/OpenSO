@@ -143,12 +143,13 @@ namespace FSO.LotView.Utils
             effect.Parameters["JitterPhases"]?.SetValue((float)R2Jitter.HaltonCycle(ss));
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
-            // Debug view is a DX-only diagnostic (it belongs to TAA_Core). On non-DirectX backends ALWAYS
-            // TAALite — the branch-free upscale-general resolve (see TAA.fx) that sidesteps the confirmed
-            // MojoShader ps_3_0 branch-misevaluation bug class behind the GL "warble"; it now handles both
-            // native and TAAU (native is its degenerate case). DirectX keeps the full Cosmic TAA/TAAU.
+            // IN-TEST (user-directed): the GL warble root cause was the aliased POINT historyDepthSampler
+            // (now removed shader-wide — every point history fetch goes through FetchHistoryPoint's
+            // texel-center snap). With the aliasing gone, trial the FULL Cosmic TAA/TAAU on GL too (its
+            // SM3-lean tier). If GL shows warble or MojoShader branch-misevaluation artifacts in this
+            // build, revert to: `?? (!FSOEnvironment.DirectX ? effect.Techniques["TAALite"] : null)`
+            // between the two lines below — TAALite remains in the effect as the validated GL fallback.
             var tech = (DebugAccum && FSOEnvironment.DirectX ? effect.Techniques["TAADebug"] : null)
-                       ?? (!FSOEnvironment.DirectX ? effect.Techniques["TAALite"] : null)
                        ?? effect.Techniques["TAA"];
             if (tech == null) { gd.SetRenderTargets(finalTarget); return; }
             effect.CurrentTechnique = tech;

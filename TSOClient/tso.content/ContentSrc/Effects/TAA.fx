@@ -76,15 +76,16 @@ sampler historySampler = sampler_state {
     AddressU = CLAMP; AddressV = CLAMP;
     MIPFILTER = NONE; MINFILTER = LINEAR; MAGFILTER = LINEAR;
 };
-// POINT-filtered view of the history for the packed DEPTH in alpha. Depth must never be bilinearly
-// interpolated: at an edge, LINEAR mixes the two surfaces' depths into a value that belongs to neither, and
-// the sub-pixel jitter shifts the mixture every frame — the disocclusion test then sees a spurious "outside
-// the neighbourhood range" depth at every silhouette and permanently resets accumulation there.
-sampler historyDepthSampler = sampler_state {
-    texture = <historyTex>;
-    AddressU = CLAMP; AddressV = CLAMP;
-    MIPFILTER = NONE; MINFILTER = POINT; MAGFILTER = POINT;
-};
+// POINT history fetches (packed DEPTH in alpha + featReject structure taps) are EMULATED through the
+// LINEAR sampler by snapping the UV to the exact texel center — see FetchHistoryPoint below. There used
+// to be a second POINT sampler_state aliasing historyTex here; that WAS the GL warble (bisect-convicted
+// 2026-07-05): on OpenGL filter state is a glTexParameter property of the TEXTURE object, so one of the
+// two aliased states silently won for both samplers and the "point" depth fetch was really BILINEAR — at
+// silhouettes it mixed two surfaces' depths, jitter shifted the mixture every frame, and depthReject
+// fired rhythmically along every edge. DX honored both states, which is why only GL warbled. LAW: never
+// alias one texture with two differently-filtered sampler_states in this engine; point-emulate instead
+// (bilinear at an exact texel center IS a point fetch, on every backend). Depth must never be bilinearly
+// interpolated: at an edge, LINEAR mixes the two surfaces' depths into a value belonging to neither.
 
 texture metaHistoryTex;
 sampler metaHistorySampler = sampler_state {
@@ -205,6 +206,15 @@ float3 SampleHistoryBicubic(float2 uv)
     r += tex2Dlod(historySampler, float4(tp3.x,  tp3.y,  0, 0)).rgb * (w3.x  * w3.y);
     return clamp(r, 0.0, 8.0);
 #endif
+}
+
+// POINT-emulated history fetch through the LINEAR sampler (the GL sampler-aliasing fix — see the
+// comment where historyDepthSampler used to be declared): snap to the exact texel center, where
+// bilinear degenerates to a point fetch on every backend.
+float4 FetchHistoryPoint(float2 uv)
+{
+    float2 t = (floor(uv / InvScreenSize) + 0.5) * InvScreenSize;
+    return tex2Dlod(historySampler, float4(t, 0, 0));
 }
 
 struct TAAOut
@@ -518,7 +528,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     bool reprojectable = (histUV.x >= 0) && (histUV.x <= 1) && (histUV.y >= 0) && (histUV.y <= 1);
 
     // History fetch (bicubic for detail) + a POINT tap for the packed depth in alpha (see sampler comment).
-    float4 historyPoint = tex2Dlod(historyDepthSampler, float4(histUVDepth, 0, 0)); // OWN-velocity anchor (split reprojection — see above)
+    float4 historyPoint = FetchHistoryPoint(histUVDepth); // OWN-velocity anchor (split reprojection — see above)
     float3 historyRaw = RGB_to_YCoCg(SampleHistoryBicubic(histUV));
 
     // --- RING-CONTAMINATION SIGNAL (the split-reprojection blind spot). COLOR reprojects with the DILATED
@@ -677,10 +687,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #if SM4 // ps_3_0 temp-register budget (CI X4505 on OGL) — SM3 relies on the depth/ghost/reactive rejects
     {
         float3 lw = float3(0.25, 0.5, 0.25); // YCoCg Y from RGB
-        float hE = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth + float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
-        float hW = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth - float2(InvScreenSize.x, 0), 0, 0)).rgb, lw);
-        float hS = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth + float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
-        float hN = dot(tex2Dlod(historyDepthSampler, float4(histUVDepth - float2(0, InvScreenSize.y), 0, 0)).rgb, lw);
+        float hE = dot(FetchHistoryPoint(histUVDepth + float2(InvScreenSize.x, 0)).rgb, lw);
+        float hW = dot(FetchHistoryPoint(histUVDepth - float2(InvScreenSize.x, 0)).rgb, lw);
+        float hS = dot(FetchHistoryPoint(histUVDepth + float2(0, InvScreenSize.y)).rgb, lw);
+        float hN = dot(FetchHistoryPoint(histUVDepth - float2(0, InvScreenSize.y)).rgb, lw);
         float2 gradH = float2(hE - hW, hS - hN);
         float gH = length(gradH);
         float gC = gmag; // current luma gradient magnitude (stationary box taps, render-res)
@@ -1401,16 +1411,9 @@ TAAOut TAALite_PS(VSOut input)
     // comment) and the meta counter.
     float3 history = RGB_to_YCoCg(SampleHistoryBicubic(histUV));
     history = ClipAABB(cmin, cmax, history);
-    // POINT-EMULATED depth fetch (THE GL warble root cause, bisect-convicted): historyDepthSampler
-    // is a second sampler_state aliasing the SAME texture as the LINEAR historySampler. On DX the
-    // two coexist; on OpenGL filter state is a glTexParameter property of the TEXTURE object, so
-    // one of the two states silently wins for both samplers — the "point" depth read was really
-    // BILINEAR. At silhouettes that mixes two surfaces' depths into a value belonging to neither,
-    // the jitter shifts the mixture every frame, and depthReject fired rhythmically along every
-    // edge: the warble. Fix: snap the UV to the exact texel center and fetch through the ordinary
-    // linear sampler — bilinear at an exact texel center IS a point fetch, on every backend.
-    float2 histTexel = (floor(histUV / InvScreenSize) + 0.5) * InvScreenSize;
-    float historyDepth = tex2Dlod(historySampler, float4(histTexel, 0, 0)).a;
+    // POINT-EMULATED depth fetch (THE GL warble root cause, bisect-convicted here first — see the
+    // full writeup at the top of the file where historyDepthSampler used to be declared).
+    float historyDepth = FetchHistoryPoint(histUV).a;
     float prevN = tex2Dlod(metaHistorySampler, float4(histUV, 0, 0)).r * MaxAccum;
 
     // DEPTH RANGE DISOCCLUSION (TAA_Core's test, radically simplified, branch-free): history
