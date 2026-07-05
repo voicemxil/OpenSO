@@ -29,9 +29,13 @@ namespace FSO.SimAntics.Entities
     {
         public const string BUNNY_NAME = "Social Bunny";
 
-        // Motive scale in this codebase runs roughly -100 (starving) to 100 (fully satisfied).
-        private const short SOCIAL_LOW_THRESHOLD = -50;
-        private const short SOCIAL_SATISFIED_THRESHOLD = 20;
+        // Motive scale runs -100 (empty, 0%) to +100 (full, 100%); percent = (motive+100)/2.
+        // The two thresholds form the spawn/despawn hysteresis: the bunny only appears when the
+        // owner's Social is CRITICALLY low, helps until it recovers into the 30-50% band, then
+        // leaves and stays gone until Social decays back down to critical. The gap between them
+        // is what stops the bunny flickering in and out around a single point.
+        private const short SOCIAL_LOW_THRESHOLD = -60;       // spawn/return: ~20% (critically low)
+        private const short SOCIAL_SATISFIED_THRESHOLD = -20; // despawn/leave: ~40% (middle of 30-50%)
         private const int NEARBY_PLAYER_RADIUS_TILES = 20;
 
         // Reserved above any real (DB-assigned) player persist id range, so ephemeral bunny
