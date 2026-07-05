@@ -776,8 +776,18 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // low osc = non-textured surfaces (where the discriminator is valid — high-osc churn is untouched, so no
     // conflict with the anti-fizzle lock), and to upscale (native bit-exact). Never deepens (min()).
     // Lever to push if ghosting persists: raise the 0.35 dock toward 0.55.
+    // NEAR-STATIC GATE (the slow-motion fizzle fix): this penalty targets the post-motion tail on a pixel
+    // that is now STATIONARY (the mover has gone). During SLOW MOTION the same low-osc + mid-inno signature
+    // appears for an INNOCENT reason — a slowly-drifting pixel's sub-pixel reproject error is small,
+    // one-sided (a drift doesn't sign-alternate -> low osc), and lands in the mid-inno band — so UNGATED this
+    // docked agreeK on moving pixels, collapsed their N, and injected point-sampled current: exactly the
+    // fizzle/speckle-ghosting seen during slow motion (shallow N -> raw current = speckle, while the residual
+    // deep history lingers = ghost). Restrict it to velPx ~ 0 (its real domain: the static tail; a
+    // just-revealed background pixel reads ~zero dilated velocity), fully off by ~0.35 native px so any real
+    // drift keeps its accumulation and reprojects through the motion instead of collapsing to raw.
     float biasPenalty = (1.0 - smoothstep(0.12, 0.35, osc))
                       * smoothstep(0.25, 0.7, inno) * (1.0 - smoothstep(1.0, 2.0, inno))
+                      * (1.0 - smoothstep(0.05, 0.35, velPx))
                       * saturate(upscaleRatio - 1.0);
     agreeK = min(agreeK, 1.0 - 0.35 * biasPenalty);
     float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
