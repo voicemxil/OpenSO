@@ -35,6 +35,25 @@ namespace FSO.SimAntics.Primitives
                 //we cannot pause the rest of the tick as soon as we hit a blocking dialog, and we cannot show more than one blocking dialog.
                 //so additional blocking dialogs must wait.
                 if (context.VM.TS1 && context.VM.GlobalBlockingDialog != null) return VMPrimitiveExitCode.CONTINUE_NEXT_TICK;
+
+                // Private NPCs (e.g. the Social Bunny) have no owning client to answer a
+                // blocking dialog - the answer would only ever arrive via the 60s timeout.
+                // Don't show the dialog anywhere; answer immediately with response code 0
+                // ("yes"/ok) so ask-style socials (dance, play, ...) are accepted instantly.
+                // Deterministic: PrivateToPersistID is synced simulation state.
+                if (!context.VM.TS1 && context.Caller.PrivateToPersistID != null)
+                {
+                    if ((operand.Flags & VMDialogFlags.Continue) != 0) return VMPrimitiveExitCode.GOTO_TRUE;
+                    context.Thread.BlockingState = new VMDialogResult
+                    {
+                        Type = operand.Type,
+                        HasDisplayed = true,
+                        Responded = true,
+                        ResponseCode = 0
+                    };
+                    return VMPrimitiveExitCode.CONTINUE_NEXT_TICK;
+                }
+
                 VMDialogHandler.ShowDialog(context, operand, table);
 
                 if ((operand.Flags & VMDialogFlags.Continue) == 0)
