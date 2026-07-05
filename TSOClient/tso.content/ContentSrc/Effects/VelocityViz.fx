@@ -50,24 +50,21 @@ float4 Viz_PS(VSOut input) : COLOR0
     // alpha == 0 -> pure black: nothing wrote velocity at this pixel.
     if (v.a < 0.5) return float4(0, 0, 0, 1);
 
-    if (DepthMode > 0.5)
-    {
-        // DEPTH view: grayscale of the packed normalized linear depth (near = dark, far = bright).
-        // The buffer is fp32 (smooth), but displaying it through the 8-bit backbuffer quantizes to 256
-        // levels — visible banding that ISN'T in the data. Dither by +-1/2 display LSB (interleaved
-        // gradient noise) so display quantization dissolves; genuine source banding (steps far larger
-        // than one display LSB) would still show as steps.
-        float ign = frac(52.9829189 * frac(dot(input.Coord * 1024.0, float2(0.06711056, 0.00583715))));
-        float d = saturate(v.b + (ign - 0.5) / 255.0);
-        return float4(d, d, d, 1);
-    }
+    // DEPTH view: grayscale of the packed normalized linear depth (near = dark, far = bright). Dither by
+    // +-1/2 display LSB (interleaved gradient noise) so the 8-bit backbuffer's display quantization
+    // dissolves; genuine source banding (steps far larger than one LSB) still shows.
+    float ign = frac(52.9829189 * frac(dot(input.Coord * 1024.0, float2(0.06711056, 0.00583715))));
+    float d = saturate(v.b + (ign - 0.5) / 255.0);
+    float4 depthColor = float4(d, d, d, 1);
 
-    // Encode velocity around mid-gray. R = vx*scale + 0.5, G = vy*scale + 0.5.
-    float r = saturate(v.r * Scale + 0.5);
-    float g = saturate(v.g * Scale + 0.5);
-    // Blue tint at 0.5 indicates "velocity was written here" — distinguishes a true-zero velocity
-    // (perfectly stationary object with valid wiring) from "no velocity buffer written" (black).
-    return float4(r, g, 0.5, 1);
+    // Velocity HUE view around mid-gray. R = vx*scale + 0.5, G = vy*scale + 0.5. Blue 0.5 = "written here".
+    float4 hueColor = float4(saturate(v.r * Scale + 0.5), saturate(v.g * Scale + 0.5), 0.5, 1);
+
+    // DepthMode is 0 (hue) or 1 (depth). Blend DIRECTLY by it — NO comparison. On MojoShader's ps_3_0
+    // OpenGL path a uniform COMPARISON (`DepthMode > 0.5`, or `step(0.5, DepthMode)`) is mis-evaluated and
+    // always fell through to the hue branch, even though the uniform's raw value arrives correctly (proven
+    // by a direct-read diagnostic). Using the value straight in the lerp sidesteps the broken comparison.
+    return lerp(hueColor, depthColor, saturate(DepthMode));
 }
 
 technique VelocityViz

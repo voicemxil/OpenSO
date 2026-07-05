@@ -149,13 +149,15 @@ namespace FSO.Common.Utils
                 // ever revived.
                 VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 NormalTarget?.Dispose();
-                // NormalTarget (world-space normals, MRT2) is NOT allocated: its only consumer was GTAO,
-                // which is dead code (AO removed from the options). Writing it cost 8 bytes/px of bandwidth
-                // on EVERY velocity-aware draw — a major reason the TAA path underperformed MSAA 8x. The
-                // velocity shaders still declare the COLOR2 output; D3D11 simply drops writes to unbound
-                // slots (BindVelocityMRT binds 2 targets when NormalTarget is null). Re-allocate here if
-                // AO is ever revived.
-                NormalTarget = null;
+                // NormalTarget (world-space normals, MRT2). The velocity shaders all declare 3 outputs
+                // (color/velocity/normal). D3D11 silently DROPS the COLOR2 write when only 2 targets are
+                // bound, but OpenGL/MojoShader does NOT — with 3 shader outputs and 2 bound draw buffers it
+                // corrupts the COLOR1 (velocity) write, which silently broke every temporal effect on GL
+                // (TAA warble, FSR, and the packed-depth debug view showing raw velocity) while DirectX was
+                // fine. Bind the real 3rd target so the output/target counts always match. Costs 8 bytes/px
+                // of bandwidth; its only past consumer (GTAO) is gone, but keeping it bound both fixes GL
+                // and leaves world-space normals available should AO/GTAO be revived.
+                NormalTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 // Tile targets: ceil(res / K). Reallocated here whenever the velocity target is (re)sized.
                 int tw = System.Math.Max(1, (Backbuffer.Width + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
                 int th = System.Math.Max(1, (Backbuffer.Height + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
