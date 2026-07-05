@@ -40,6 +40,8 @@ namespace FSO.SimAntics.Marshals
         public uint TimestampLockoutCount;
         public Color LightColor = Color.White;
 
+        public uint? PrivateToPersistID;
+
         public int Version;
         public bool TS1;
 
@@ -118,6 +120,11 @@ namespace FSO.SimAntics.Marshals
             {
                 LightColor = new Color(reader.ReadUInt32());
             }
+
+            if (Version > 38)
+            {
+                PrivateToPersistID = reader.ReadBoolean() ? (uint?)reader.ReadUInt32() : null;
+            }
         }
 
         public virtual void SerializeInto(BinaryWriter writer)
@@ -161,6 +168,9 @@ namespace FSO.SimAntics.Marshals
 
             writer.Write(TimestampLockoutCount);
             writer.Write(LightColor.PackedValue);
+
+            writer.Write(PrivateToPersistID.HasValue);
+            if (PrivateToPersistID.HasValue) writer.Write(PrivateToPersistID.Value);
         }
     }
 

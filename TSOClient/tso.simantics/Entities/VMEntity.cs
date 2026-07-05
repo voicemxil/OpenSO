@@ -38,6 +38,21 @@ namespace FSO.SimAntics
         public bool GhostImage;
         public VMMultitileGroup IgnoreIntersection; //Ignore collisions/slots from any of these objects.
 
+        //if set, this entity is part of the shared simulation as normal, but should only be
+        //drawn/picked/listed for the client whose vm.MyUID matches this persist id. Never
+        //branch on this inside simulation/BHAV logic - it must only be consulted by the
+        //client-side render/pick/UI layer, or determinism breaks.
+        private uint? _PrivateToPersistID;
+        public uint? PrivateToPersistID
+        {
+            get { return _PrivateToPersistID; }
+            set
+            {
+                _PrivateToPersistID = value;
+                if (UseWorld && WorldUI is AvatarComponent avatarc) avatarc.PrivateToPersistID = value;
+            }
+        }
+
         //own properties (for instance)
         public short ObjectID;
         public uint PersistID;
@@ -1661,6 +1676,7 @@ namespace FSO.SimAntics
             target.Position = _Position;
             target.TimestampLockoutCount = TimestampLockoutCount;
             target.LightColor = LightColor;
+            target.PrivateToPersistID = PrivateToPersistID;
         }
 
         public virtual void Load(VMEntityMarshal input)
@@ -1697,6 +1713,7 @@ namespace FSO.SimAntics
 
             TimestampLockoutCount = input.TimestampLockoutCount;
             LightColor = input.LightColor;
+            PrivateToPersistID = input.PrivateToPersistID;
 
             if (UseWorld) WorldUI.Visible = GetValue(VMStackObjectVariable.Hidden) == 0;
         }

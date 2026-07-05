@@ -179,7 +179,7 @@ namespace FSO.LotView.Platform
                         _2d.OffsetTile(avatar.Position);
                         avatar.Draw(gd, state);
 
-                        if (avatar.Visible && avatar.MyMario != null)
+                        if (avatar.Visible && avatar.VisibleToLocalPlayer(state) && avatar.MyMario != null)
                         {
                             var pos = avatar.GetPelvisPosition() * 3;
                             pos = new Vector3(pos.X, pos.Z, pos.Y);
