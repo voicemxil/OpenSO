@@ -1248,7 +1248,7 @@ TAAOut TAA_PS(VSOut input)      { return TAA_Core(input, false); }
 TAAOut TAA_DebugPS(VSOut input) { return TAA_Core(input, true); }
 
 // ============================================================================================
-// TAALite — a deliberately SIMPLE fallback TAA for the OpenGL/DesktopGL backend.
+// TAALite — the GL TAA + TAAU resolve: ONE upscale-general path; native 1:1 is the degenerate case.
 //
 // WHY THIS EXISTS: the full TAA_Core above (Cosmic TAA / Cosmic TAAU) has a persistent
 // reprojection "warble" on this project's GL path (ps_3_0 via MojoShader) that extensive
@@ -1259,67 +1259,78 @@ TAAOut TAA_DebugPS(VSOut input) { return TAA_Core(input, true); }
 // always took one branch (fixed in VelocityViz.fx's debug view by replacing such a branch with
 // lerp/saturate arithmetic instead of an `if`). TAA_Core's "SM3" path is NOT free of this risk —
 // the `#if SM4` gates above exist ONLY for ps_3_0 TEMP-REGISTER BUDGET, not for comparison
-// correctness, so the scalar-ALU logic with its many uniform-keyed `if`s (upscaleRatio,
-// edgeAniso, centerDepth, moveGate thresholds, etc.) still runs, unedited, on ps_3_0/GL. It is
-// plausible the warble comes from one (or several) of those branches silently misevaluating
-// under MojoShader — but finding which one, inside ~800 lines of tuned heuristics, has already
-// consumed significant effort without success.
+// correctness, so its scalar-ALU logic with many uniform-keyed `if`s still runs on ps_3_0/GL.
 //
-// Rather than keep hunting inside that complexity, TAALite is a straight port of this project's
-// OWN much simpler ORIGINAL TAA implementation, from BEFORE the R2-jitter/TAAU/Kalman-counter
-// work landed (git commit 218c3d5f). That algorithm has almost no data-dependent branching: one
-// loop-local `if (d < closestDepth)` inside an [unroll]ed 3x3 (a completely ordinary nearest-wins
-// reduction, not a uniform-threshold compare) and one final ternary select. It sidesteps the
-// entire suspected MojoShader bug class BY CONSTRUCTION, at the cost of the fancier features
-// (TAAU upscaling, Kalman accumulation, oscillation anti-fizzle lock, ring-contamination/feature
-// rejection, anisotropic reconstruction) that TAA_Core layers on for DirectX.
+// THE BRANCH-FREE LAW (non-negotiable in this body): NO `if`/ternary keyed on uniform- or
+// texture-derived values. Everything data-dependent is lerp/saturate/smoothstep/step arithmetic,
+// which sidesteps the whole suspected MojoShader bug class BY CONSTRUCTION. The only allowed
+// exceptions: the loop-local `if (d < closestDepth)` nearest-wins reduction inside the
+// [unroll]ed 3x3 (an ordinary per-tap compare, not a uniform-threshold compare) and the
+// [unroll] loop structure itself. Even the final out-of-bounds select is a step()/lerp().
 //
-// SCOPE: TAALite assumes native 1:1 rendering (InvScreenSize == InvColorSize) — it does NOT
-// implement TAAU upscaling; that stays DirectX-only (see World.cs / PPXDepthEngine.TAAUEnabled).
-// It is self-contained frame-to-frame: unlike TAA_Core it never reads its own meta history (no
-// accumulation counter, no oscillation state), so o.meta is a dummy zero — nothing downstream
-// depends on it for this technique. It also has no depth-disocclusion test (the 218c3d5f
-// baseline didn't have one either — it predates the history-alpha depth packing); ghosting on
-// hard disocclusions is instead bounded the way that baseline always bounded it: the YCoCg
-// variance-AABB clip plus the luma-diff/motion blend below.
+// UPSCALE-GENERAL FORM: upscaleRatio = InvColorSize.x / InvScreenSize.x — 1.0 at native, > 1
+// under Cosmic TAAU (history/output native, color/velocity render-res). All upscale-specific
+// terms fade out ARITHMETICALLY at ratio 1 (kernel scaling degenerates, sample confidence hits
+// exactly 1 — see the wC note below), never via `if`. At native this is therefore the same
+// algorithm, though NOT byte-identical to the previous TAALite: it gains the jitter-relative
+// Mitchell reconstruction, the meta accumulation counter, packed depth in history alpha, and
+// depth disocclusion. Backbone kept from the validated lite: YCoCg space, 1.5-sigma variance
+// AABB + ClipAABB, dilated-velocity reprojection with JitterDelta, Catmull-Rom history fetch,
+// luma-feedback diff, motion boost, Karis inverse-luma anti-flicker.
 //
-// This technique is intentionally NOT gated by #if SM4 internally — it is written as ONE simple
-// body that compiles the same for both vs_3_0/ps_3_0 and vs_4_0/ps_4_0. The C# side (TAAResolve)
-// only selects it on non-DirectX backends; nothing stops it from also compiling for DX (it's
-// simply unused there), which keeps this file simpler than adding a parallel #if fork.
+// DELIBERATELY EXCLUDED vs TAA_Core (register budget + the branch law + their tuning histories
+// are full of reverts/regressions that would have to be re-fought on GL): oscillation
+// anti-fizzle locks, Kalman evidence conditioning, ring-contamination + feature-level (gradient)
+// rejection, anisotropic/clutter-adaptive kernels, split (own-velocity) reprojection, the
+// velocityless-overlay class handling, firefly/texture-detail/soft-display shaping. The four
+// TAAU essentials it DOES keep: jitter-relative Mitchell reconstruction on the output grid,
+// center-sample confidence, meta counter + warmup, depth-in-alpha range disocclusion.
+//
+// The old closestMask `reprojectable` gate is REMOVED (review-panel-approved): it permanently
+// raw-jittered unwritten-velocity content (overlays/backdrops). Unwritten velocity decodes as
+// zero = identity reproject — correct for static content; actual motion is caught by the
+// variance clamp + luma feedback (same reasoning as TAA_Core's reprojection comment).
+//
+// Compiles identically for ps_3_0 and ps_4_0 (no internal #if SM4 forks); C# selects it on
+// non-DirectX backends only.
 // ============================================================================================
 TAAOut TAALite_PS(VSOut input)
 {
     TAAOut o;
     float2 uv = input.Coord;
 
-    // SHARP current sample — single center tap (no pre-filtering; accumulation across jittered
-    // history is what resolves detail, so the per-frame input should stay crisp).
-    float3 curr = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv, 0, 0)).rgb);
+    float2 colSize = 1.0 / InvColorSize; // INPUT color texels (reconstruction/box/velocity taps)
+    // outputRes / renderRes: 1 at native, > 1 under TAAU. All ratio-driven terms are arithmetic.
+    float upscaleRatio = InvColorSize.x / InvScreenSize.x;
+    float kscale = upscaleRatio; // output-sized Mitchell kernel (the TAAU sharpness mechanism)
 
-    // 3x3 neighborhood pass — does double duty: (1) variance stats (m1/m2) for the history clamp
-    // AABB, (2) VELOCITY DILATION: pick the velocity of the CLOSEST-depth pixel in the 3x3 (depth
-    // packed in velocity.b, 0=near..1=far) so thin/edge foreground movers don't ghost.
-    float3 m1 = 0, m2 = 0;
-    float2 dilatedVel = float2(0, 0);
-    float closestDepth = 1e9; // smaller = nearer; init far beyond any valid depth
-    float closestMask = 0.0;
-    [unroll] for (int dy = -1; dy <= 1; dy++)
-    [unroll] for (int dx = -1; dx <= 1; dx++)
-    {
-        float2 ofs = float2(dx, dy) * InvScreenSize;
-        float3 c = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(uv + ofs, 0, 0)).rgb);
-        m1 += c;
-        m2 += c * c;
+    // JITTER-RELATIVE MITCHELL RECONSTRUCTION base (TAA_Core's TAAU-general formulation): the
+    // output pixel center in input-pixel coords vs this frame's jittered sample positions.
+    // buffer[p] holds content that un-jittered belongs at p + SampleJitterUV, so the nearest
+    // sample's texel is floor(oPx - sPx); fracd = its offset from the output center (input px).
+    // (The 4-step warble bisect of 2026-07 exonerated this jitter-relative term, the counter
+    // deep end, and the warmup ramp — the culprit was the aliased point-sampler depth fetch;
+    // see the POINT-EMULATED comment below.)
+    float2 oPx = uv * colSize;
+    float2 sPx = SampleJitterUV * colSize;
+    float2 baseTexel = floor(oPx - sPx);
+    float2 fracd = (baseTexel + 0.5 + sPx) - oPx;
+    // Separable weights, distances scaled by kscale so the kernel is OUTPUT-pixel sized. At
+    // native (kscale 1, zero jitter) these degenerate to the fixed 0.8889/0.0556 constants.
+    float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscale), MitchellK(abs(fracd.x) * kscale), MitchellK(abs(fracd.x + 1.0) * kscale));
+    float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscale), MitchellK(abs(fracd.y) * kscale), MitchellK(abs(fracd.y + 1.0) * kscale));
 
-        float4 v = tex2Dlod(velocitySampler, float4(uv + ofs, 0, 0));
-        // Unwritten velocity pushed to sentinel depth 2.0 (beyond valid [0,1]) so a genuinely-far
-        // valid pixel still wins the nearest-depth tiebreak over an unwritten neighbour.
-        float d = (v.a >= 0.5) ? v.b : 2.0;
-        if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; closestMask = v.a; }
-    }
-    m1 *= (1.0 / 9.0);
-    m2 *= (1.0 / 9.0);
+    // VARIANCE BOX — 5-tap plus pattern at the content-stationary boxUV (uv - SampleJitterUV,
+    // bilinear does the shift): the clamp box stays spatially stationary under jitter (validated
+    // fizzle fix — a wobbling box re-clips converged history every frame). Pure arithmetic.
+    float2 boxUV = uv - SampleJitterUV;
+    float3 cboxC = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV, 0, 0)).rgb);
+    float3 cboxW = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV - float2(InvColorSize.x, 0), 0, 0)).rgb);
+    float3 cboxE = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(InvColorSize.x, 0), 0, 0)).rgb);
+    float3 cboxN = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV - float2(0, InvColorSize.y), 0, 0)).rgb);
+    float3 cboxS = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(0, InvColorSize.y), 0, 0)).rgb);
+    float3 m1 = (cboxC + cboxW + cboxE + cboxN + cboxS) * (1.0 / 5.0);
+    float3 m2 = (cboxC * cboxC + cboxW * cboxW + cboxE * cboxE + cboxN * cboxN + cboxS * cboxS) * (1.0 / 5.0);
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
     // 1.5-sigma box: tight enough to reject ghosting, loose enough that high-frequency content
     // (foliage) still accumulates instead of clipping to raw jitter every frame.
@@ -1327,39 +1338,134 @@ TAAOut TAALite_PS(VSOut input)
     float3 cmin = m1 - GAMMA * sigma;
     float3 cmax = m1 + GAMMA * sigma;
 
+    // 3x3 loop: RECONSTRUCTION at raw texel centers around the nearest jittered sample (all 9
+    // taps), plus VELOCITY DILATION + valid-depth RANGE on the 5-tap plus pattern at the
+    // jitter-stable boxUV (per TAA_Core's vCen rationale: raw-uv velocity taps read per-phase
+    // different fragments on sub-pixel geometry and churn the depth tests). The corner-tap
+    // exclusion is a compile-time literal test — folds under [unroll], no runtime branch.
+    float3 filt = 0;
+    float wsum = 0;
+    float3 crawC = 0; // nearest raw jittered sample (center recon tap) — thin-coverage fallback
+    float wC = 0;     // center tap's actual kernel weight — sample confidence below
+    float2 dilatedVel = float2(0, 0);
+    float closestDepth = 1e9; // smaller = nearer; init far beyond any valid depth
+    float dmin = 1e9, dmax = -1e9; // valid-tap depth range for the disocclusion test
+    float anyValid = 0.0;          // any velocity written in the plus pattern (arithmetic mask)
+    [unroll] for (int dy = -1; dy <= 1; dy++)
+    [unroll] for (int dx = -1; dx <= 1; dx++)
+    {
+        if (dx == 0 || dy == 0) // compile-time: plus pattern only
+        {
+            float4 v = tex2Dlod(velocitySampler, float4(boxUV + float2(dx, dy) * InvColorSize, 0, 0));
+            float validTap = step(0.5, v.a);
+            // Unwritten velocity pushed to sentinel depth 2.0 (beyond valid [0,1]) so a
+            // genuinely-far valid pixel still wins the nearest-depth tiebreak. lerp, not ternary.
+            float d = lerp(2.0, v.b, validTap);
+            if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; } // allowed reduction
+            dmin = min(dmin, lerp(1e9, v.b, validTap));
+            dmax = max(dmax, lerp(-1e9, v.b, validTap));
+            anyValid = max(anyValid, validTap);
+        }
+        // Reconstruction tap: RAW texel center (bilinear at an exact center = point fetch),
+        // weighted by its true distance to the output pixel center via the separable kernel.
+        float2 tapUV = (baseTexel + float2(dx, dy) + 0.5) * InvColorSize;
+        float3 craw = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(tapUV, 0, 0)).rgb);
+        float w = kx3[dx + 1] * ky3[dy + 1];
+        filt += craw * w;
+        wsum += w;
+        if (dx == 0 && dy == 0) { crawC = craw; wC = w; } // folds under [unroll]
+    }
+
+    // Thin-coverage fallback: with the output-sized kernel some frames leave a pixel with almost
+    // no in-support sample. Smoothly fall back to the nearest RAW texel (single-surface by
+    // construction — crisp under motion, and sample confidence keeps such frames history-leaning).
+    float3 curr = lerp(crawC, filt / max(wsum, 1e-4), saturate(wsum / (0.15 * kscale)));
+
+    // SAMPLE CONFIDENCE: how much this frame's nearest sample actually covers this output pixel.
+    // 1.2656 = 1 / MitchellK(0)^2 = 81/64, so at native (kscale 1, zero jitter: wC = 0.7901)
+    // sampleConf saturates at exactly 1.0 and the blend multiplier below is exactly 1 — the
+    // native path is unaffected by this term by construction.
+    float sampleConf = saturate(wC * 1.2656);
+
     // Reproject with the dilated velocity; JitterDelta cancels the jitter baked into the velocity
-    // buffer (which is computed from the jittered projection) for an exact reprojection.
+    // buffer for an exact reprojection. Unwritten velocity = zero = identity reproject (correct
+    // for static overlays/backdrops — the old closestMask gate is gone, see header).
     float2 velocity = dilatedVel;
     float2 histUV = uv - velocity + JitterDelta;
-    bool valid = (histUV.x >= 0) && (histUV.x <= 1) && (histUV.y >= 0) && (histUV.y <= 1);
-    bool reprojectable = closestMask >= 0.5;
+    float inBounds = step(0.0, histUV.x) * step(histUV.x, 1.0) * step(0.0, histUV.y) * step(histUV.y, 1.0);
+    float velPx = length(velocity / InvScreenSize) * VelGatePxScale; // NATIVE px
+    float moveGate = smoothstep(0.6, 2.0, velPx);
 
-    // Bicubic (Catmull-Rom) history fetch for detail preservation, then clip to the YCoCg
-    // neighborhood AABB to reject ghosting/disocclusion.
+    // Bicubic (Catmull-Rom) history fetch for detail preservation + a POINT tap for the packed
+    // depth in alpha (LINEAR would mix two surfaces' depths at every silhouette — see sampler
+    // comment) and the meta counter.
     float3 history = RGB_to_YCoCg(SampleHistoryBicubic(histUV));
     history = ClipAABB(cmin, cmax, history);
+    // POINT-EMULATED depth fetch (THE GL warble root cause, bisect-convicted): historyDepthSampler
+    // is a second sampler_state aliasing the SAME texture as the LINEAR historySampler. On DX the
+    // two coexist; on OpenGL filter state is a glTexParameter property of the TEXTURE object, so
+    // one of the two states silently wins for both samplers — the "point" depth read was really
+    // BILINEAR. At silhouettes that mixes two surfaces' depths into a value belonging to neither,
+    // the jitter shifts the mixture every frame, and depthReject fired rhythmically along every
+    // edge: the warble. Fix: snap the UV to the exact texel center and fetch through the ordinary
+    // linear sampler — bilinear at an exact texel center IS a point fetch, on every backend.
+    float2 histTexel = (floor(histUV / InvScreenSize) + 0.5) * InvScreenSize;
+    float historyDepth = tex2Dlod(historySampler, float4(histTexel, 0, 0)).a;
+    float prevN = tex2Dlod(metaHistorySampler, float4(histUV, 0, 0)).r * MaxAccum;
 
-    // Luminance feedback: stable pixels (history matches current luma) keep deep accumulation;
-    // changed pixels drop toward current so edges/disocclusions stay responsive.
+    // DEPTH RANGE DISOCCLUSION (TAA_Core's test, radically simplified, branch-free): history
+    // depth outside the current 3x3 valid-depth range = the surface that wrote it left. Range
+    // (not point) compare so static edges — where jitter flips the nearest-depth winner — never
+    // self-reject. MOTION-GATED (a genuine disocclusion requires motion; at rest any mismatch is
+    // sampling noise — sub-pixel foliage would otherwise permanently reject) and masked by
+    // anyValid (no valid taps -> no evidence; dmin/dmax sentinels never fire through the mask).
+    float outside = max(max(dmin - historyDepth, historyDepth - dmax), 0.0);
+    float depthReject = saturate(outside / max(historyDepth, DepthRejectParams.w) * DepthRejectParams.y - DepthRejectParams.z)
+                        * moveGate * anyValid;
+
+    // META ACCUMULATION COUNTER: N grows on agreement, collapses on rejection, zeroes off-screen.
+    float newN = min(prevN + 1.0, MaxAccum) * inBounds;
+    newN = lerp(newN, 0.0, depthReject);
+    float minN = min(prevN, newN);
+
+    // Luminance feedback: stable pixels keep deep accumulation; changed pixels drop toward
+    // current. diff also inherits the depth evidence.
     float lumaC = curr.x;
     float lumaH = history.x;
     float diff = saturate(abs(lumaC - lumaH) / max(0.2, max(lumaC, lumaH)));
-    float historyWeight = lerp(1.0 - BlendFactor, 0.6, diff);
+    diff = max(diff, depthReject);
+    // Counter-driven deep end replaces the flat floor: proven-stable pixels earn N/(N+1) trust
+    // (capped 0.985), never below the baseline 1-BlendFactor.
+    float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), 0.985);
+    float historyWeight = lerp(deepEnd, 0.68, diff);
 
     // Motion-adaptive: lean more on current when moving fast (less lag/ghosting under motion).
-    float vmag = length(velocity);
-    float motionBoost = saturate(vmag * 20.0) * 0.35;
+    float motionBoost = saturate(length(velocity) * 20.0) * 0.35;
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
+
+    // Sample-confidence injection gate: frames whose kernel barely covers this pixel inject
+    // little (their estimate is an amplified tail) — except under motion, where responsiveness
+    // wins. Exactly 1 at native (see sampleConf note).
+    blend *= lerp(lerp(0.14, 1.0, sampleConf), 1.0, moveGate);
+    // Honest disocclusion: strong depth evidence forces the current frame through regardless of
+    // accumulated trust.
+    blend = max(blend, smoothstep(0.65, 0.98, depthReject));
+    // Warmup: a young history (small N) cannot claim deep trust yet.
+    blend = max(blend, 1.0 / (minN + 1.0));
 
     // Anti-flicker (Karis) inverse-luma weighting so bright sub-pixel samples don't dominate.
     float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));
     float wh = (1.0 - blend) * (1.0 / (1.0 + max(lumaH, 0.0)));
     float3 blended = (curr * wc + history * wh) / max(wc + wh, 1e-5);
 
-    float3 outYCoCg = (valid && reprojectable) ? blended : curr;
+    // Out-of-bounds reproject -> current frame. Arithmetic select (branch-free law).
+    float3 outYCoCg = lerp(curr, blended, inBounds);
 
-    o.color = float4(saturate(YCoCg_to_RGB(outYCoCg)), 1.0); // alpha dummy: no depth-disocclusion test here
-    o.meta  = float4(0, 0, 0, 0); // dummy: TAALite never reads its own meta history (self-contained)
+    // History alpha carries this pixel's dilated depth (unwritten sentinel clamps to 1.0) for
+    // next frame's disocclusion test. Meta GB = the zero-velocity encode (v*10+0.5) so nothing
+    // downstream misdecodes; A unused here (no oscillation state in the lite path).
+    o.color = float4(saturate(YCoCg_to_RGB(outYCoCg)), min(closestDepth, 1.0));
+    o.meta  = float4(newN / MaxAccum, 0.5, 0.5, 0.0);
     return o;
 }
 

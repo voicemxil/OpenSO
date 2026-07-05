@@ -143,11 +143,11 @@ namespace FSO.LotView.Utils
             effect.Parameters["JitterPhases"]?.SetValue((float)R2Jitter.HaltonCycle(ss));
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
-            // Debug view is a DX-only diagnostic (no need to support it for the lite path). On non-DirectX
-            // backends prefer TAALite — a simpler, low-risk algorithm ported from the pre-R2/pre-TAAU
-            // baseline (see TAA.fx) that sidesteps the suspected MojoShader ps_3_0 branch-misevaluation bug
-            // class behind the GL "warble". DirectX keeps the full Cosmic TAA/TAAU technique.
-            var tech = (DebugAccum ? effect.Techniques["TAADebug"] : null)
+            // Debug view is a DX-only diagnostic (it belongs to TAA_Core). On non-DirectX backends ALWAYS
+            // TAALite — the branch-free upscale-general resolve (see TAA.fx) that sidesteps the confirmed
+            // MojoShader ps_3_0 branch-misevaluation bug class behind the GL "warble"; it now handles both
+            // native and TAAU (native is its degenerate case). DirectX keeps the full Cosmic TAA/TAAU.
+            var tech = (DebugAccum && FSOEnvironment.DirectX ? effect.Techniques["TAADebug"] : null)
                        ?? (!FSOEnvironment.DirectX ? effect.Techniques["TAALite"] : null)
                        ?? effect.Techniques["TAA"];
             if (tech == null) { gd.SetRenderTargets(finalTarget); return; }

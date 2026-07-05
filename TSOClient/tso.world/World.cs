@@ -1185,10 +1185,9 @@ namespace FSO.LotView
             if (taaOn) msaa = 0;
             // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
             // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
-            // DirectX-only: TAAU's upscale reconstruction is not implemented by the GL TAALite technique
-            // (which assumes native 1:1 rendering), so it must stay off there even though plain TAA no
-            // longer is.
-            PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1 && FSOEnvironment.DirectX;
+            // Supported on ALL backends: DirectX runs TAA_Core's TAAU reconstruction; GL runs TAALite,
+            // which is now upscale-general (native 1:1 is its degenerate case — see TAA.fx).
+            PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1;
             // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias). Floor RESTORED to the
             // full spec -2.0 (log2(scale) = -1.58 at 1/3 passes): the -1.0 blunting existed because the
             // DLSS-spec bias assumes ANISOTROPIC filtering and the OBJECT path sampled trilinear (leaves
@@ -1355,8 +1354,8 @@ namespace FSO.LotView
             // PPXDepthEngine.TAAJitterNDC each frame (same M31/M32 convention as the lot), giving the TAAU
             // reconstruction valid sample positions here. Mirrors ChangeAAMode; set before
             // EnableHistoryTargets below (history sizes to the native grid in TAAU mode).
-            // DirectX-only: see ChangeAAMode — TAALite (GL) has no upscale reconstruction.
-            PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1 && FSOEnvironment.DirectX;
+            // All backends: see ChangeAAMode — TAALite (GL) is upscale-general now.
+            PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1;
             // Content-shader mip bias under TAA (mirrors ChangeAAMode, incl. the restored -2.0 spec floor
             // — see that site's aniso-sampling rationale).
             PPXDepthEngine.TAAMipBias = (cityTaaOn && scale < 0.999f && scale > 0f)
