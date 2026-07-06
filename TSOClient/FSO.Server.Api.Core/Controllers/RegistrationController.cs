@@ -24,6 +24,11 @@ namespace FSO.Server.Api.Core.Controllers
         private const int RESEND_COOLDOWN_SECS = 60;            // min seconds between (re)sends of a code for one address
         private const int CONFIRM_MAX_FAILS = 8;                // wrong-code tries per IP per window before lockout
         private const int CONFIRM_FAIL_WINDOW = 10 * 60;        // 10 minutes
+        // Global wrong-code cap across ALL IPs per window, so the 6-digit space can't be swept from many IPs
+        // within a code's lifetime. Legit users almost never submit wrong codes, so this is generous headroom
+        // for real traffic while holding an attacker to <=CONFIRM_GLOBAL_MAX_FAILS guesses per window (~2400
+        // over a code's 2-hour life) against a 10^6 space — negligible even before the email-binding check.
+        private const int CONFIRM_GLOBAL_MAX_FAILS = 200;
 
         // Per-IP wrong-code attempt tracker (in memory; lost on restart, which is fine — codes expire anyway).
         // Throttles brute-forcing the small 6-digit code space.
@@ -31,10 +36,19 @@ namespace FSO.Server.Api.Core.Controllers
         private static readonly System.Collections.Generic.Dictionary<string, (int count, uint window)> ConfirmFails
             = new System.Collections.Generic.Dictionary<string, (int, uint)>();
 
+        // Global (all-IP) wrong-code counter for the current window. Guarded by the same ConfirmLock.
+        private static int ConfirmGlobalCount = 0;
+        private static uint ConfirmGlobalWindow = 0;
+
         private static bool IsConfirmLocked(string ip)
         {
             lock (ConfirmLock)
                 return ConfirmFails.TryGetValue(ip, out var e) && Epoch.Now - e.window <= CONFIRM_FAIL_WINDOW && e.count >= CONFIRM_MAX_FAILS;
+        }
+        private static bool IsConfirmGloballyLocked()
+        {
+            lock (ConfirmLock)
+                return Epoch.Now - ConfirmGlobalWindow <= CONFIRM_FAIL_WINDOW && ConfirmGlobalCount >= CONFIRM_GLOBAL_MAX_FAILS;
         }
         private static void RecordConfirmFail(string ip)
         {
@@ -45,6 +59,15 @@ namespace FSO.Server.Api.Core.Controllers
                     ConfirmFails[ip] = (e.count + 1, e.window);
                 else
                     ConfirmFails[ip] = (1, now);
+
+                // Same fail also counts toward the global cap (covers wrong codes AND email/code mismatches).
+                if (now - ConfirmGlobalWindow <= CONFIRM_FAIL_WINDOW)
+                    ConfirmGlobalCount++;
+                else
+                {
+                    ConfirmGlobalWindow = now;
+                    ConfirmGlobalCount = 1;
+                }
             }
         }
 
@@ -279,8 +302,9 @@ namespace FSO.Server.Api.Core.Controllers
             {
                 var ip = ApiUtils.GetIP(Request);
 
-                // Throttle brute-forcing the 6-digit code: reject once an IP racks up too many wrong codes.
-                if (IsConfirmLocked(ip))
+                // Throttle brute-forcing the 6-digit code: reject once an IP racks up too many wrong codes,
+                // or once the global (all-IP) cap for this window is hit (blocks distributed sweeps).
+                if (IsConfirmLocked(ip) || IsConfirmGloballyLocked())
                 {
                     return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
                     {
@@ -291,7 +315,14 @@ namespace FSO.Server.Api.Core.Controllers
 
                 EmailConfirmation confirmation = da.EmailConfirmations.GetByToken(user.token);
 
-                if(confirmation == null)
+                // Bind the code to the email it was issued for. Without this, a guessed/brute-forced code could
+                // bind an attacker's username+password to someone else's already-verified email (account
+                // takeover of the pending registration). Both an unknown code AND a code whose bound email does
+                // not match the submitted email take the exact same path (invalid_token + brute-force counter),
+                // so the response can't be used as an oracle for which of the two was wrong.
+                var submittedEmail = (user.email ?? "").Trim();
+                if (confirmation == null
+                    || !string.Equals(submittedEmail, (confirmation.email ?? "").Trim(), System.StringComparison.OrdinalIgnoreCase))
                 {
                     RecordConfirmFail(ip);
                     return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
@@ -419,6 +450,11 @@ namespace FSO.Server.Api.Core.Controllers
     public class RegistrationUseTokenModel
     {
         public string username { get; set; }
+        /// <summary>
+        /// The email the confirmation code was sent to. Must match the email the code is bound to
+        /// server-side; this stops a guessed code from being used against a different (victim) email.
+        /// </summary>
+        public string email { get; set; }
         /// <summary>
         /// User password.
         /// </summary>

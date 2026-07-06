@@ -29,10 +29,11 @@ namespace FSO.Server.Clients
             await Execute(request, callback);
         }
 
-        public async Task ConfirmCode(string code, string username, string password, Action<RegistrationResult> callback)
+        public async Task ConfirmCode(string code, string email, string username, string password, Action<RegistrationResult> callback)
         {
             var request = new RestRequest("userapi/registration/confirm", Method.Post);
             request.AddParameter("token", code);
+            request.AddParameter("email", email); // must match the email the code was issued to (server binds them)
             request.AddParameter("username", username);
             request.AddParameter("password", password);
             await Execute(request, callback);
