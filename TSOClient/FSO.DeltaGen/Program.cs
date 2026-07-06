@@ -14,9 +14,10 @@ namespace FSO.DeltaGen
     /// does (DiffGenerator XxHash32 whole-file diffs → a zip of the Add/Modify files + an FSOUpdateManifest
     /// JSON), lifted into a standalone CI tool so release.yml can attach the delta as a release asset.
     ///
-    /// The client patcher (FSO.Patcher.ReversiblePatcher) simply extracts every entry of the incremental
-    /// zip over the install, so the zip must contain exactly the changed files at their install-relative
-    /// paths — which is what this emits.
+    /// The client patcher (FSO.Patcher.ReversiblePatcher) extracts every entry of the incremental zip over
+    /// the install, so the zip must contain exactly the Add/Modify files at their install-relative paths —
+    /// which is what this emits. Remove diffs carry no zip entry (there's nothing to extract); the patcher
+    /// deletes them by reading the accompanying manifest.json instead (FSO.Patcher.UpdateManifest).
     ///
     /// Usage: FSO.DeltaGen &lt;prevClient.zip&gt; &lt;newClient.zip&gt; &lt;version&gt; &lt;outDir&gt;
     /// Emits &lt;outDir&gt;/OpenSO-client-win-x64.incremental.zip and OpenSO-client-win-x64.manifest.json.
@@ -59,8 +60,14 @@ namespace FSO.DeltaGen
 
                 var diffs = DiffGenerator.GetDiffs(Path.GetFullPath(prevDir), Path.GetFullPath(newDir));
 
+                // Normalize every diff's path to forward slashes. DiffGenerator uses the OS separator, and
+                // this manifest is read on Windows clients (and by the patcher's own removal-path safety
+                // check) regardless of which OS produced it — CI runs DeltaGen on ubuntu-latest today, but
+                // don't let that be load-bearing.
+                foreach (var d in diffs) d.Path = d.Path.Replace('\\', '/');
+
                 // Drop the patcher's own files entirely — they can't be patched in-place (see PatcherFiles).
-                diffs = diffs.Where(d => !PatcherFiles.Contains(Path.GetFileName(d.Path.Replace('\\', '/')))).ToList();
+                diffs = diffs.Where(d => !PatcherFiles.Contains(Path.GetFileName(d.Path))).ToList();
 
                 // The incremental zip carries the Add + Modify files at their install-relative paths.
                 // Whole-release diffs (no stable base+addon split), so we include everything that changed —

@@ -136,6 +136,7 @@ namespace FSO.Patcher
                             else if (arc == 2)
                             {
                                 //ignore
+                                patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path));
                                 patcher.Final();
                                 File.Delete(path);
                                 break;
@@ -144,6 +145,7 @@ namespace FSO.Patcher
                         else
                         {
                             Console.WriteLine($"===== Completed {path} =====");
+                            patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path));
                             patcher.Final();
                             File.Delete(path);
                             await AdvanceExtract();
