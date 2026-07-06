@@ -47,6 +47,7 @@ namespace FSO.SimAntics.Entities
 
         public void Tick(VM vm, uint tickID)
         {
+            if (vm.TS1) return; // TSO-only: bunny costume content and the blocking-dialog auto-answer (VMDialogPrivateStrings) are both gated to !TS1
             var context = vm.Context;
             var ticksPerMinute = context.Clock.TicksPerMinute;
             if (ticksPerMinute <= 0 || tickID % (uint)ticksPerMinute != 0) return; // once per sim-minute, synced via tickID
@@ -96,7 +97,7 @@ namespace FSO.SimAntics.Entities
                 if (avatar.GetMotiveData(VMMotive.Social) > SOCIAL_LOW_THRESHOLD) continue;
                 if (IsAnyOtherRealPlayerNearby(avatar, avatars)) continue;
 
-                SpawnBunny(avatar, avatars, context);
+                SpawnBunny(avatar, context);
             }
         }
 
@@ -165,13 +166,13 @@ namespace FSO.SimAntics.Entities
             return false;
         }
 
-        private static void SpawnBunny(VMAvatar target, List<VMEntity> avatars, VMContext context)
+        private static void SpawnBunny(VMAvatar target, VMContext context)
         {
             var group = context.CreateObjectInstance(VMAvatar.TEMPLATE_PERSON, LotTilePos.OUT_OF_WORLD, Direction.NORTH);
             if (group == null || group.Objects.Count == 0) return;
 
             var bunny = (VMAvatar)group.Objects[0];
-            bunny.PersistID = AllocateEphemeralPersistID(avatars);
+            bunny.PersistID = AllocateEphemeralPersistID(context);
             bunny.PrivateToPersistID = target.PersistID;
             bunny.Name = BUNNY_NAME;
             VMSocialBunnySuits.ApplyBunnyCostume(bunny);
@@ -239,12 +240,17 @@ namespace FSO.SimAntics.Entities
             bunny.SetMotiveData(VMMotive.Social, 100);
         }
 
-        private static uint AllocateEphemeralPersistID(List<VMEntity> avatars)
+        private static uint AllocateEphemeralPersistID(VMContext context)
         {
-            // Derived from shared state so it's identical on every VM instance, and never
-            // reuses the id of a bunny still present from an earlier save.
+            // Scan the LIVE authoritative avatar list (not the per-tick snapshot): each bunny
+            // spawned earlier in this same pass is already registered here with its assigned
+            // id, so two players crossing the threshold in one tick get distinct ids instead
+            // of colliding on the snapshot's stale max. This is a max over synced PersistIDs -
+            // order-independent, so it's identical on every VM instance and never reuses a real
+            // avatar's id or another bunny's (the just-created bunny is still id 0 here, and a
+            // bunny that fails placement is Deleted, freeing its id, before the next spawn).
             uint id = EPHEMERAL_PERSIST_BASE;
-            foreach (var ent in avatars)
+            foreach (var ent in context.ObjectQueries.Avatars)
             {
                 if (ent.PersistID >= id) id = ent.PersistID + 1;
             }
