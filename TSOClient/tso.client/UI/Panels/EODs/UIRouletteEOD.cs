@@ -662,7 +662,7 @@ namespace FSO.Client.UI.Panels.EODs
                         else
                             return;
                     }
-                    catch (Exception e)
+                    catch (Exception)
                     {
                         // I got an occasional random null, but couldn't pinpoint where and why.
                     }
@@ -682,7 +682,7 @@ namespace FSO.Client.UI.Panels.EODs
                                     Remove(chip.ChipImage);
                                     chip.Dispose();
                                 }
-                                catch (Exception e)
+                                catch (Exception)
                                 {
                                     chip.ChipImage.Visible = false;
                                 }
@@ -866,7 +866,7 @@ namespace FSO.Client.UI.Panels.EODs
                 {
                     Remove(image);
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     // something something log file?
                     if (image != null)

@@ -69,7 +69,7 @@ namespace FSO.Server.Api.Core.Utils
                     client.SendMailAsync(message);
 
                     return true;
-                } catch(Exception e) {
+                } catch (Exception) {
                     return false;
                 }  
             }

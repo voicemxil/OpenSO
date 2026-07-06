@@ -41,7 +41,7 @@ namespace FSO.Server.Domain
             {
                 try{
                     Poll();
-                }catch(Exception ex){
+                }catch (Exception){
                 }
                 AutoUpdate();
             });

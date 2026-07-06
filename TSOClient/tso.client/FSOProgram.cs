@@ -167,7 +167,7 @@ namespace FSO.Client
                     return assembly;
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 return null;
             }

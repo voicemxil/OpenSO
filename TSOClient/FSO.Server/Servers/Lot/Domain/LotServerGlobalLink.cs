@@ -768,7 +768,7 @@ namespace FSO.Server.Servers.Lot.Domain
 
                         var result = db.Outfits.Create(model);
                         callback(result != 0, result);
-                    }catch(Exception ex){
+                    }catch (Exception){
                         callback(false, 0);
                     }
                 }

@@ -247,7 +247,7 @@ namespace FSO.Server.Servers.City.Domain
                                             if (lot.admit_mode < 4 && modState == 0 && lot.category != FSO.Common.Enum.LotCategory.community)
                                                 security.DemandAvatars(avatars, AvatarPermissions.WRITE);
                                         }
-                                        catch (Exception ex)
+                                        catch (Exception)
                                         {
                                             Remove(lotId);
                                             return Immediate(new TryFindLotResult
@@ -332,7 +332,7 @@ namespace FSO.Server.Servers.City.Domain
                                             if (modState == 0)
                                                 security.DemandAvatars(avatars, AvatarPermissions.WRITE);
                                         }
-                                        catch (Exception ex)
+                                        catch (Exception)
                                         {
 
                                             //if we're not a roommate, check admit rules

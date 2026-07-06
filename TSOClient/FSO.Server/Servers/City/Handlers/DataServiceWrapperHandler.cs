@@ -52,7 +52,7 @@ namespace FSO.Server.Servers.City.Handlers
                                 Body = result
                             });
                         }
-                    } catch (Exception e)
+                    } catch (Exception)
                     {
                         //TODO
                         //keep this silent for now - bookmarks tend to spam errors.

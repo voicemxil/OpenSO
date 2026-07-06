@@ -442,7 +442,7 @@ namespace FSO.Server.Framework.Aries
             {
                 try {
                     db.Hosts.SetStatus(Config.Call_Sign, DbHostStatus.down);
-                }catch(Exception ex){
+                }catch (Exception){
                 }
             }
         }

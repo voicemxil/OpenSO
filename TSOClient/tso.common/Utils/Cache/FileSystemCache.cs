@@ -102,7 +102,7 @@ namespace FSO.Common.Utils.Cache
                             new FileSystemCacheRemoveMutation() {
                                 Key = last.Value.Key
                             }.Execute(this);
-                        }catch(Exception ex){
+                        }catch (Exception){
                         }
                         CalculateCacheSize();
                     }
@@ -114,7 +114,7 @@ namespace FSO.Common.Utils.Cache
                     {
                         task.Execute(this);
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
                     }
                 }

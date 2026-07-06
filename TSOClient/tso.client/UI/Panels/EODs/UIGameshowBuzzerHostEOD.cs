@@ -959,7 +959,7 @@ namespace FSO.Client.UI.Panels.EODs
                 EODBuzzersBack = new UIImage(extraTallBackTex);
                 EODMoreOptionsBack = new UIImage(extraTallBackTex);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 EODBuzzersBack = new UIImage();
                 EODMoreOptionsBack = new UIImage();
@@ -981,7 +981,7 @@ namespace FSO.Client.UI.Panels.EODs
                 AbstractTextureRef lightsframeredhRef = new FileTextureRef("Content/Textures/EOD/Buzzer/eod_lightsframeredh.png");
                 LightsframeredTex = lightsframeredhRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Lightsframe1Tex = null;
                 Lightsframe2Tex = null;

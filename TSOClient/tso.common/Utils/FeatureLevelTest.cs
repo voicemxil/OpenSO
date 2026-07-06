@@ -22,7 +22,7 @@ namespace FSO.Common.Utils
                     TextureUtils.UploadWithMips(mipTest, gd, data);
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 FSOEnvironment.EnableNPOTMip = false;
             }
@@ -35,7 +35,7 @@ namespace FSO.Common.Utils
                     mipTest.SetData(data);
                 }
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 FSOEnvironment.TexCompressSupport = false;
             }

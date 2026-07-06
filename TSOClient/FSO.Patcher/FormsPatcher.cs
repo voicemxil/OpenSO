@@ -81,7 +81,7 @@ namespace FSO.Patcher
                 try
                 {
                     Directory.Delete("PatchFiles/", true);
-                } catch (Exception e)
+                } catch (Exception)
                 {
 
                 }

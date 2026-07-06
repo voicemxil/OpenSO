@@ -48,7 +48,7 @@ namespace FSO.Server.Clients.Framework
                     try
                     {
                         item.Handle(this);
-                    }catch(Exception ex){
+                    }catch (Exception){
                     }
                 }
                 WaitHandle.Reset();

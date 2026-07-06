@@ -40,7 +40,7 @@ namespace FSOFacadeWorker
                 var configString = File.ReadAllText("facadeconfig.json");
                 Config = Newtonsoft.Json.JsonConvert.DeserializeObject<FacadeConfig>(configString);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Console.WriteLine("Could not find configuration file 'facadeconfig.json'. Please ensure it is valid and present in the same folder as this executable.");
                 return;

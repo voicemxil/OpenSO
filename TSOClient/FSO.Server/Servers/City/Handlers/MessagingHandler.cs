@@ -53,7 +53,7 @@ namespace FSO.Server.Servers.City.Handlers
 
                 targetSession.Write(message);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 //unknown error
             }

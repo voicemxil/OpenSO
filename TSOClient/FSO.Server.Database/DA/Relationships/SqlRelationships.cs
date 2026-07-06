@@ -69,7 +69,7 @@ namespace FSO.Server.Database.DA.Relationships
 
                 rows = Context.Connection.Execute(Context.CompatLayer(sCommand.ToString(), "`from_id`,`to_id`,`index`"), commandTimeout: 300);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 return -1;
             }

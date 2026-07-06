@@ -20,7 +20,7 @@ namespace FSO.Server.Database.DA.LotClaims
                 var newClaim = Context.Connection.Query<DbLotClaim>("SELECT * FROM fso_lot_claims WHERE claim_id = @claim_id AND owner = @owner", new { claim_id = (int)id, owner = newOwner }).FirstOrDefault();
                 return newClaim != null;
             }
-            catch (DbException ex)
+            catch (DbException)
             {
                 return false;
             }
@@ -56,7 +56,7 @@ namespace FSO.Server.Database.DA.LotClaims
             try {
                 return (uint)Context.Connection.Query<int>(Context.CompatLayer("INSERT INTO fso_lot_claims (shard_id, lot_id, owner) " +
                     " VALUES (@shard_id, @lot_id, @owner); SELECT LAST_INSERT_ID();"), claim).First();
-            }catch(DbException ex){
+            }catch (DbException){
                 return null;
             }
         }

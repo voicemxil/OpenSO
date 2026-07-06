@@ -44,7 +44,7 @@ namespace FSOiOS
             {
                 File.Delete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "The Sims Online.zip"));
             }
-            catch (Exception e) { }
+            catch (Exception) { }
             ReDownload = true;
             if (DownloadClient != null) DownloadClient.Dispose();
         }

@@ -193,7 +193,7 @@ namespace FSO.Client.UI.Panels
                 EODPanelExtraTallImg = extraTallRef.Get(gd);
                 ExtraTallInitialized = true;
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 EODPanelExtraTallImg = EODDoublePanelTallImg;
             }

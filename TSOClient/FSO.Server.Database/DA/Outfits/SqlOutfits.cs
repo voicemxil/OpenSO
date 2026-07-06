@@ -25,7 +25,7 @@ namespace FSO.Server.Database.DA.Outfits
                                                 outfit_type = outfit.outfit_type,
                                                 outfit_source = outfit.outfit_source.ToString()
                                             }).First();
-            }catch(Exception ex){
+            }catch (Exception){
                 return uint.MaxValue;
             }
         }

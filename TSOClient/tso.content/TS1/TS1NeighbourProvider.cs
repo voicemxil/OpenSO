@@ -100,7 +100,7 @@ namespace FSO.Content.TS1
                     {
                         File.Copy(srcPath, destPath, true);
                     }
-                    catch (IOException ex)
+                    catch (IOException)
                     {
                         throw; // Re-throw to show error dialog
                     }

@@ -923,7 +923,7 @@ namespace FSO.Client.UI.Panels.EODs
                 metroCaseTex = metroCaseRef.Get(gd);
                 skillLevelTex = skillLevelRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
 
             }

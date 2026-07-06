@@ -194,7 +194,7 @@ namespace FSO.SimAntics.JIT.Roslyn
                 var assembly = Assembly.LoadFile(Path.GetFullPath(FilePath + ".dll"));
                 return FindModuleInAssembly(assembly);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 return null;
             }

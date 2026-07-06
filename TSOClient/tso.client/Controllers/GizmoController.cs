@@ -45,7 +45,7 @@ namespace FSO.Client.Controllers
         {
             try {
                 Gizmo.CurrentAvatar.Value = null;
-            }catch(Exception ex){
+            }catch (Exception){
             }
         }
 

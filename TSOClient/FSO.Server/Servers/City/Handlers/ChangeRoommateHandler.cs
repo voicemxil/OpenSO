@@ -233,7 +233,7 @@ namespace FSO.Server.Servers.City.Handlers
                     }
                 }
             }
-            catch (Exception e) {
+            catch (Exception) {
                 Status(session, ChangeRoommateResponseStatus.UNKNOWN);
             }
         }
