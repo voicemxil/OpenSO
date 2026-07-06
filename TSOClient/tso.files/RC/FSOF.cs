@@ -415,7 +415,9 @@ namespace FSO.Files.RC
         public static T[] ReadArray<T>(IoBuffer reader, int size) where T : unmanaged
         {
             var result = new T[size];
-            var bytes = MemoryMarshal.Cast<T, byte>(result);
+            // .AsSpan() forces the Span<T> (not ReadOnlySpan<T>) Cast overload — C# 14/net10 span
+            // conversion rules otherwise pick ReadOnlySpan here and ReadBytes(Span<byte>) stops matching.
+            var bytes = MemoryMarshal.Cast<T, byte>(result.AsSpan());
 
             reader.ReadBytes(bytes);
 
