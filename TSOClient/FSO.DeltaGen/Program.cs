@@ -9,17 +9,10 @@ using Newtonsoft.Json;
 namespace FSO.DeltaGen
 {
     /// <summary>
-    /// Produces the incremental (delta) patch the in-game updater applies to go from a PREVIOUS client
-    /// release to the CURRENT one. This is the same computation FSO.Server.Api.Core's GenerateUpdateService
-    /// does (DiffGenerator XxHash32 whole-file diffs → a zip of the Add/Modify files + an FSOUpdateManifest
-    /// JSON), lifted into a standalone CI tool so release.yml can attach the delta as a release asset.
-    ///
-    /// The client patcher (FSO.Patcher.ReversiblePatcher) simply extracts every entry of the incremental
-    /// zip over the install, so the zip must contain exactly the changed files at their install-relative
-    /// paths — which is what this emits.
-    ///
-    /// Usage: FSO.DeltaGen &lt;prevClient.zip&gt; &lt;newClient.zip&gt; &lt;version&gt; &lt;outDir&gt;
-    /// Emits &lt;outDir&gt;/OpenSO-client-win-x64.incremental.zip and OpenSO-client-win-x64.manifest.json.
+    /// CI tool: generates the incremental (delta) patch between two client releases, so release.yml
+    /// can attach it as a release asset (same computation as GenerateUpdateService). The patcher just
+    /// extracts the zip over the install, so it must contain exactly the changed files at their
+    /// install-relative paths. Usage: FSO.DeltaGen &lt;prevClient.zip&gt; &lt;newClient.zip&gt; &lt;version&gt; &lt;outDir&gt;
     /// </summary>
     public static class Program
     {
@@ -27,9 +20,8 @@ namespace FSO.DeltaGen
         public const string IncrementalAsset = "OpenSO-client-win-x64.incremental.zip";
         public const string ManifestAsset = "OpenSO-client-win-x64.manifest.json";
 
-        // The in-game patcher (update.exe + its assemblies) can't overwrite its own running files mid-patch
-        // — it's the process doing the patching — so it must NEVER appear in a delta. It's delivered by full
-        // installs instead. Excluding it also lets an already-installed (older) patcher apply future deltas.
+        // The patcher can't overwrite its own running files mid-patch, so update.* must NEVER
+        // appear in a delta - it's delivered by full installs instead.
         private static readonly HashSet<string> PatcherFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "update.exe", "update.dll", "update.deps.json", "update.runtimeconfig.json", "update.dll.config", "update.pdb"
@@ -59,12 +51,10 @@ namespace FSO.DeltaGen
 
                 var diffs = DiffGenerator.GetDiffs(Path.GetFullPath(prevDir), Path.GetFullPath(newDir));
 
-                // Drop the patcher's own files entirely — they can't be patched in-place (see PatcherFiles).
+                // drop the patcher's own files (see PatcherFiles)
                 diffs = diffs.Where(d => !PatcherFiles.Contains(Path.GetFileName(d.Path.Replace('\\', '/')))).ToList();
 
-                // The incremental zip carries the Add + Modify files at their install-relative paths.
-                // Whole-release diffs (no stable base+addon split), so we include everything that changed —
-                // engine DLLs included — otherwise a genuinely-changed file would be missing post-patch.
+                // the incremental zip carries the Add + Modify files at their install-relative paths
                 var changed = diffs.Where(d => d.DiffType == FileDiffType.Add || d.DiffType == FileDiffType.Modify).ToList();
                 Directory.CreateDirectory(diffDir);
                 foreach (var d in changed)
@@ -78,7 +68,7 @@ namespace FSO.DeltaGen
                 if (File.Exists(incrementalPath)) File.Delete(incrementalPath);
                 ZipFile.CreateFromDirectory(diffDir, incrementalPath, CompressionLevel.Optimal, includeBaseDirectory: false);
 
-                // Manifest shape matches FSO.Server.Api.Core.Models.FSOUpdateManifest { Version, Diffs }.
+                // shape matches FSO.Server.Api.Core.Models.FSOUpdateManifest { Version, Diffs }
                 var manifest = new ManifestDto { Version = version, Diffs = diffs };
                 File.WriteAllText(Path.Combine(outDir, ManifestAsset), JsonConvert.SerializeObject(manifest));
 

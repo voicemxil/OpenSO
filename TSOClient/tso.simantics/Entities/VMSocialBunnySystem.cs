@@ -7,42 +7,26 @@ using FSO.SimAntics.Primitives;
 namespace FSO.SimAntics.Entities
 {
     /// <summary>
-    /// Deterministic per-tick system: spawns a private "Social Bunny" NPC next to a Sim whose
-    /// Social motive is low and who has no other real player nearby, so they always have
-    /// someone to talk to. Runs as ordinary simulation code inside VM.InternalTick, executing
-    /// identically on the server's VM and every client's VM.
-    ///
-    /// This system is deliberately STATELESS: every decision derives from the shared entity
-    /// list (bunnies are identified by VMEntity.PrivateToPersistID) and the synced tick
-    /// counter. It holds no fields. Any private state here (tracking dicts, cooldown timers,
-    /// cached interaction ids) would NOT be marshalled with the VM, so a lot reload or a
-    /// late-joining client would start with different state than the server and make
-    /// different spawn decisions - duplicating bunnies and desyncing the simulation.
-    /// The scan-based approach also self-heals: orphaned or duplicate bunnies from older
-    /// saves are deleted, and bunnies missing their name/costume are re-dressed.
-    ///
-    /// There is no explicit re-spawn cooldown: the spawn (-50) / despawn (+20) hysteresis is
-    /// the cooldown, since Social has to decay all the way back down before a new bunny is
-    /// considered - and motive state is shared/deterministic, unlike a local timer.
+    /// Deterministic per-tick system: spawns a private "Social Bunny" NPC next to a Sim with low
+    /// Social and no other real player nearby. Runs inside VM.InternalTick on server + all clients.
+    /// Stateless by design: unmarshalled fields desync late joiners / lot reloads, so every decision
+    /// is recomputed from the shared entity list (PrivateToPersistID) + tickID. There is no respawn
+    /// cooldown - the spawn (-50) / despawn (+20) hysteresis is the cooldown.
     /// </summary>
     public class VMSocialBunnySystem
     {
         public const string BUNNY_NAME = "Social Bunny";
 
-        // Motive scale in this codebase runs roughly -100 (starving) to 100 (fully satisfied).
+        // Motive scale runs roughly -100 to 100.
         private const short SOCIAL_LOW_THRESHOLD = -50;
         private const short SOCIAL_SATISFIED_THRESHOLD = 20;
         private const int NEARBY_PLAYER_RADIUS_TILES = 20;
 
-        // Reserved above any real (DB-assigned) player persist id range, so ephemeral bunny
-        // ids can never collide with a real avatar's persist id.
+        // Above any real (DB-assigned) persist id, so bunny ids can't collide with real avatars.
         private const uint EPHEMERAL_PERSIST_BASE = 0xF0000000;
 
-        // Candidate stock interaction names to try, in order, since content is fully
-        // data-driven (no hardcoded interaction ids exist anywhere in this engine).
-        // NOT cached: resolving runs the pie menu check trees, which can consume the shared
-        // random stream - so every VM instance must run it at the same tick (spawn time),
-        // not just the instances that happen to have an empty cache.
+        // Stock interaction names to try, in order. NOT cached: resolving runs the pie menu check
+        // trees, which consume the shared random stream - every VM must resolve at spawn time.
         private static readonly string[] TalkInteractionNames = { "Talk", "Chat", "Introduce" };
 
         public void Tick(VM vm, uint tickID)
@@ -54,9 +38,8 @@ namespace FSO.SimAntics.Entities
             // Snapshot: spawning/despawning below mutates ObjectQueries.Avatars.
             var avatars = new List<VMEntity>(context.ObjectQueries.Avatars);
 
-            // Pass 1 - rebuild the authoritative bunny map from shared state. Delete orphans
-            // (target no longer on the lot) and duplicates (from pre-stateless saves), and
-            // re-dress any bunny that lost its identity (loaded from an old save).
+            // Pass 1 - rebuild the bunny map from shared state; delete orphans and duplicates,
+            // re-dress bunnies from older saves.
             var bunniesByTarget = new Dictionary<uint, VMAvatar>();
             foreach (var ent in avatars)
             {
@@ -76,8 +59,7 @@ namespace FSO.SimAntics.Entities
                     bunny.Name = BUNNY_NAME;
                     VMSocialBunnySuits.ApplyBunnyCostume(bunny);
                 }
-                // Re-asserted every sim-minute: keeps the bunny accepting socials even after
-                // interactions drain its motives, and heals bunnies from older saves.
+                // re-asserted every sim-minute: interactions drain the bunny's motives
                 SetupBunnyPsyche(bunny, bunnyTarget);
             }
 
@@ -132,8 +114,7 @@ namespace FSO.SimAntics.Entities
             return false;
         }
 
-        // True while the bunny and its target are engaged with each other (either one has the
-        // other queued/active) - don't yank the bunny away mid-social.
+        // True while either has the other queued/active - don't delete the bunny mid-social.
         private static bool BusyWithEachOther(VMAvatar target, VMAvatar bunny)
         {
             if (bunny.Thread != null)
@@ -179,14 +160,12 @@ namespace FSO.SimAntics.Entities
 
             if (!VMFindLocationFor.FindLocationFor(bunny, target, context, VMPlaceRequestFlags.Default))
             {
-                // No room to place the bunny near the target this tick - clean up and retry
-                // on a later tick instead of leaving a stuck out-of-world avatar around.
+                // no room near the target this tick - clean up and retry later
                 bunny.Delete(true, context);
                 return;
             }
 
-            // Greet the target once: the bunny initiates a stock social. After this the bunny
-            // is a normal pie-menu target - the player interacts with it like any Sim.
+            // greet the target once; after this the bunny is a normal pie-menu target
             var talk = ResolveTalkInteraction(target, bunny, context);
             if (talk != null)
             {
@@ -194,14 +173,10 @@ namespace FSO.SimAntics.Entities
             }
         }
 
-        // Make the bunny accept any social the player initiates (dance, play, etc.).
-        // Acceptance check trees in the stock social BHAVs weigh the RECEIVER's relationship
-        // to the asker, their mood, and their personality - so give the bunny a maxed
-        // opinion of its player, a permanently great mood (Cheats=1 also freezes motive
-        // decay, see VMAvatarMotiveDecay.Tick), and a maximally friendly/playful
-        // personality. All synced simulation state, applied identically on every VM
-        // instance. Only the bunny's own relationship map is touched - writing to the
-        // player's map would leak ephemeral bunny ids into their DB relationship rows.
+        // Make the bunny accept any social: acceptance checks weigh the receiver's relationship,
+        // mood and personality. Cheats=1 also freezes motive decay (VMAvatarMotiveDecay.Tick).
+        // Only the bunny's own relationship map is written - writing the player's would leak
+        // ephemeral bunny ids into their DB relationship rows.
         private static void SetupBunnyPsyche(VMAvatar bunny, VMAvatar target)
         {
             if (!bunny.MeToPersist.TryGetValue(target.PersistID, out var rel))
@@ -213,11 +188,8 @@ namespace FSO.SimAntics.Entities
             rel[0] = 100; // short-term relationship
             rel[1] = 100; // long-term relationship
 
-            // NPC person type (>=254): excluded from visitor counting/greet logic, the
-            // person-grid toolbar, and shown with the object cursor. Engine-side
-            // interaction permissions use AvatarState.Permissions (not PersonType), so
-            // socials still work. GreetStatus 2 = "greeted", in case any content still
-            // runs visitor-greet checks against it.
+            // NPC person type (>=254): excluded from visitor counting/greeting and the person grid;
+            // socials use AvatarState.Permissions so they still work. GreetStatus 2 = greeted.
             bunny.SetPersonData(VMPersonDataVariable.PersonType, 254);
             bunny.SetPersonData(VMPersonDataVariable.GreetStatus, 2);
 
@@ -241,8 +213,7 @@ namespace FSO.SimAntics.Entities
 
         private static uint AllocateEphemeralPersistID(List<VMEntity> avatars)
         {
-            // Derived from shared state so it's identical on every VM instance, and never
-            // reuses the id of a bunny still present from an earlier save.
+            // derived from shared state - identical on every VM, never reuses a live id
             uint id = EPHEMERAL_PERSIST_BASE;
             foreach (var ent in avatars)
             {

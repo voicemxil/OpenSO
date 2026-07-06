@@ -325,9 +325,8 @@ struct ObjVertexOutV
 };
 struct CityPSOutV { float4 color : COLOR0; float4 velocity : COLOR1; float4 normal : COLOR2; };
 
-// Current-frame TAA jitter (NDC), matching the jitter baked into BaseMatrix (and so into currClip). Subtracted
-// so velocity is jitter-free; PrevBaseMatrix (used for prevClip) is supplied UN-jittered by the C# caller
-// (Terrain.Draw / Terrain.DrawSurrounding).
+// Current-frame TAA jitter (NDC), baked into BaseMatrix/currClip; subtracted so velocity is jitter-free.
+// PrevBaseMatrix (prevClip) is supplied un-jittered by the C# caller.
 float2 JitterNDC;
 
 float2 CityComputeVel(float4 curr, float4 prev)
@@ -350,8 +349,7 @@ CityPSOutV CityObjPSFogV(ObjVertexOutV Input)
 	c.xyz = lerp(c.xyz, FogColor.xyz, fogDistance);
 	o.color = c;
 	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
-	// World-space normal for screen-space AO. Trees use a hardcoded up-vector in the VS (TreeVSv) so this
-	// is the billboard normal; ordinary city objects use their geometric normal.
+	// World-space normal for screen-space AO (trees get the VS's hardcoded up-vector).
 	o.normal = float4(normalize(Input.normal), 1);
 	return o;
 }
@@ -465,8 +463,7 @@ float4 ShadLight(float4 BCol, CityVertexOut Input) {
 	return float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz * lerp(ShadowMult, 1, min(Diffuse(Input), shadowLerp(ShadSampler, ShadSize, Input.shadPos.xy, depth + 0.003*(2048.0 / ShadSize.x)))), 1)).rgb, BCol.w);
 }
 
-// Velocity-aware new-city PS path. CityVertexOutV mirrors VerShader's; ToBaseV copies the shared fields
-// so we can reuse the existing colour helpers, then we emit velocity to MRT1.
+// Velocity-aware new-city path. CityVertexOutV mirrors VerShader's; ToBaseV adapts to the colour helpers.
 struct CityVertexOutV
 {
 	float4 VertexPosition : SV_Position0;

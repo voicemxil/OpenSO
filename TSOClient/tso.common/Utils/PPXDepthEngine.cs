@@ -12,39 +12,30 @@ namespace FSO.Common.Utils
         private static RenderTarget2D ResolveTarget2; //2nd ping-pong target (scale -> FXAA -> sharpen needs two)
         private static RenderTarget2D RenderPostTarget; //RENDER-res intermediate: spatial AA before the upscaler (SSAA<1 only)
         private static RenderTarget2D VelocityTarget; //3D-mode per-pixel screen-space velocity (HalfVector4), MRT1 for TAA / motion blur
-        // World-space normal (HalfVector4: .xyz normal, .a validity). MRT2, written by the same velocity-
-        // aware shaders. Required for GTAO — derived ddx/ddy normals from NDC depth were noisy garbage.
-        private static RenderTarget2D NormalTarget;
-        // Motion-blur reconstruction-filter intermediates (McGuire 2012). Allocated alongside the velocity
-        // target. TileMax reduces velocity to KxK tiles; NeighborMax dilates it 3x3 so fast streaks reach
-        // neighbouring tiles. Both at velocity-res / MB_TILE_SIZE.
+        private static RenderTarget2D NormalTarget; //world-space normal MRT2 (HalfVector4: .xyz normal, .a validity), for GTAO
+        // motion blur tile intermediates (McGuire 2012), at velocity-res / MB_TILE_SIZE
         private static RenderTarget2D MBTileMax, MBNeighborMax;
         public const int MB_TILE_SIZE = 20;
-        private static RenderTarget2D HistoryA, HistoryB; //TAA history ping-pong (screen-res RGBA8: RGB color, A depth)
-        // TAA meta ping-pong (screen-res RGBA8), swapped in lock-step with History. R = per-pixel accumulation
-        // count N (normalized N/MAXN) that drives a variable blend rate for deep convergence + instant reset;
-        // GB = octahedral-encoded previous-frame world normal for normal-based disocclusion rejection.
+        private static RenderTarget2D HistoryA, HistoryB; //TAA history ping-pong (RGB color, A depth)
+        // TAA meta ping-pong, swapped in lock-step with History (R = accumulation count N, GB = prev normal encode)
         private static RenderTarget2D MetaA, MetaB;
         private static bool _HistoryAIsPrev; //which buffer holds last frame's TAA output (governs History + Meta)
-        // True when HistoryA/B were allocated as HalfVector4 (fp16). TAAResolve keys the shader's
-        // DepthRejectParams off this so the RGBA8 fallback keeps the old quantization-blunted tuning.
+        // true when HistoryA/B are HalfVector4; TAAResolve keys DepthRejectParams off this for the RGBA8 fallback
         public static bool HistoryIsFP16 { get; private set; }
         private static SpriteBatch SB;
         public static float SSAA = 1f; //render scale: >1 supersample (downsample resolve), <1 upscale, 1 native
         public static int MSAA = 0;
-        // Current frame's TAA sub-pixel jitter (NDC), published by World.PreDraw. Lets velocity-pass draws
-        // that lack a WorldState (the sky dome) un-jitter their motion vectors. Zero when TAA is off.
+        // current frame's TAA jitter (NDC), published by World.PreDraw; lets draws without a WorldState
+        // (sky dome) un-jitter their motion vectors
         public static Vector2 TAAJitterNDC = Vector2.Zero;
 
-        // Bloom mip chain (half, quarter, ... of viewport res). HalfVector4 so blurred highlights don't
-        // clip while accumulating. Allocated in InitScreenTargets, used by BloomPass.
+        // bloom mip chain (half, quarter, ... of viewport res); HalfVector4 so highlights don't clip
         public const int BLOOM_MIPS = 5;
         private static RenderTarget2D[] BloomMip;
         public static RenderTarget2D GetBloomMip(int i) => (BloomMip != null && i < BloomMip.Length) ? BloomMip[i] : null;
         public static int BloomMipCount => (BloomMip != null) ? BloomMip.Length : 0;
 
-        // GTAO: noisy single-frame AO buffer + a filter pong (cross-bilateral blur destination) + a
-        // temporal history ping-pong. SurfaceFormat.Color (R8 isn't universal).
+        // GTAO: noisy AO buffer, blur destination, temporal history ping-pong. Color format (R8 isn't universal).
         private static RenderTarget2D AOTarget, AOTarget2;
         private static RenderTarget2D AOHistoryA, AOHistoryB;
         private static bool _AOHistoryAIsPrev;
@@ -63,35 +54,29 @@ namespace FSO.Common.Utils
         public static void InitScreenTargets()
         {
             if (GD == null) return;
-            // Clamp to what the GPU can actually resolve. Selecting (or restoring) a higher count than the
-            // hardware supports — e.g. 8x on Apple Silicon, which caps at 4x — produces a black screen. The
-            // 2D supersample-fold path also forces MSAA up to 8; this catches that too.
+            // clamp to hardware MSAA - a higher count than supported (e.g. 8x on Apple Silicon) black-screens
             if (MSAA > FSOEnvironment.MaxMSAA) MSAA = FSOEnvironment.MaxMSAA;
             if (BackbufferDepth != null) BackbufferDepth.Dispose();
             BackbufferDepth = null;
             if (Backbuffer != null) Backbuffer.Dispose();
             var scale = 1;//FSOEnvironment.DPIScaleFactor;
-            // Backbuffer is sized by the render scale (SSAA). Float scale -> round to whole pixels, min 1.
+            // backbuffer is sized by the render scale (SSAA), rounded to whole pixels
             int w = System.Math.Max(1, (int)System.Math.Round(SSAA * GD.Viewport.Width / scale));
             int h = System.Math.Max(1, (int)System.Math.Round(SSAA * GD.Viewport.Height / scale));
             if (!FSOEnvironment.Enable3D)
                 BackbufferDepth = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, w, h, DepthFormat.None);
             Backbuffer = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, w, h, DepthFormat.Depth24Stencil8);
-            // Screen-res intermediate (no MSAA) used to chain a sharpen pass after the scale/post-AA resolve.
             int rw = System.Math.Max(1, GD.Viewport.Width / scale), rh = System.Math.Max(1, GD.Viewport.Height / scale);
             if (ResolveTarget != null) ResolveTarget.Dispose();
             ResolveTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
             if (ResolveTarget2 != null) ResolveTarget2.Dispose();
             ResolveTarget2 = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
-            // RENDER-res intermediate for the upscaling path: spatial AA (FXAA/SMAA) must run at RENDER
-            // resolution BEFORE the upscaler (AMD FSR1 guideline — EASU/TAAU want anti-aliased input on the
-            // render grid; running them post-upscale smooths already-reconstructed pixels instead of the
-            // real edges). Only needed when SSAA < 1.
+            // render-res intermediate: spatial AA must run before the upscaler (EASU/TAAU want
+            // anti-aliased input on the render grid). Only needed when SSAA < 1.
             if (RenderPostTarget != null) { RenderPostTarget.Dispose(); RenderPostTarget = null; }
             if (SSAA < 0.999f)
                 RenderPostTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, w, h, DepthFormat.None);
 
-            // Bloom mip chain: half, quarter, ... of viewport res. HalfVector4 keeps highlights from clipping.
             if (BloomMip != null) foreach (var m in BloomMip) m?.Dispose();
             BloomMip = new RenderTarget2D[BLOOM_MIPS];
             for (int i = 0; i < BLOOM_MIPS; i++)
@@ -101,9 +86,6 @@ namespace FSO.Common.Utils
                 BloomMip[i] = new RenderTarget2D(GD, mw, mh, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
             }
 
-            // GTAO targets: SurfaceFormat.Color (R8 isn't universal). Four screen-res targets — noisy AO,
-            // depth-aware spatial blur, and a temporal history ping-pong (absorbs the per-frame variation
-            // from TAA-jittered depth/normals so AO doesn't flicker).
             AOTarget?.Dispose();
             AOTarget2?.Dispose();
             AOHistoryA?.Dispose();
@@ -114,18 +96,13 @@ namespace FSO.Common.Utils
             AOHistoryB = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
             _AOHistoryAIsPrev = true;
 
-            // Per-pixel screen-space velocity for TAA / motion blur. Only meaningful in 3D mode (the 2D path
-            // is cached sprites with no per-object motion). HalfVector4: 2 channels for velocity is enough,
-            // but the format gives float precision needed for reprojection accuracy. Allocated lazily by
-            // EnableVelocityTarget so the cost (~16MB at 1080p) is opt-in.
+            // velocity target is (re)allocated on demand by EnableVelocityTarget
             if (VelocityTarget != null) { VelocityTarget.Dispose(); VelocityTarget = null; }
             if (MBTileMax != null) { MBTileMax.Dispose(); MBTileMax = null; }
             if (MBNeighborMax != null) { MBNeighborMax.Dispose(); MBNeighborMax = null; }
         }
 
-        // Allocate / dispose the velocity MRT (+ motion-blur tile intermediates) on demand. Engine binds
-        // the velocity target as MRT1 alongside the backbuffer when this returns non-null. The caller
-        // (World.ChangeAAMode) tracks whether TAA / motion blur are requested and which mode the world is in.
+        // allocate/dispose the velocity MRT (+ motion blur tile intermediates) on demand (World.ChangeAAMode)
         public static RenderTarget2D EnableVelocityTarget(bool enable)
         {
             if (!enable)
@@ -140,23 +117,14 @@ namespace FSO.Common.Utils
             if (VelocityTarget == null || VelocityTarget.Width != Backbuffer.Width || VelocityTarget.Height != Backbuffer.Height)
             {
                 VelocityTarget?.Dispose();
-                // HalfVector4 (fp16): every velocity-aware draw writes this scene-wide, so its bandwidth is
-                // the TAA path's single biggest cost — fp16 halves it (8 vs 16 bytes/px). It was fp32 only
-                // for SSAO's depth-compare (half-precision linear depth banded the AO) — and AO is dead code
-                // now. TAA's own consumers are fine at fp16: .rg velocity is sub-pixel scale (relative fp16
-                // precision is ample), and the .b depth quantization (~5e-4 relative) is covered by widening
-                // the disocclusion dead-zone (see TAAResolve.DepthRejectParams). Restore Vector4 if AO is
-                // ever revived.
+                // fp16 halves the biggest bandwidth cost of the TAA path; the .b depth quantization is
+                // covered by TAAResolve's disocclusion dead-zone. Restore Vector4 if AO is ever revived.
                 VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 NormalTarget?.Dispose();
-                // NormalTarget (world-space normals, MRT2) is NOT allocated: its only consumer was GTAO,
-                // which is dead code (AO removed from the options). Writing it cost 8 bytes/px of bandwidth
-                // on EVERY velocity-aware draw — a major reason the TAA path underperformed MSAA 8x. The
-                // velocity shaders still declare the COLOR2 output; D3D11 simply drops writes to unbound
-                // slots (BindVelocityMRT binds 2 targets when NormalTarget is null). Re-allocate here if
-                // AO is ever revived.
+                // NormalTarget not allocated - its only consumer (GTAO) is dead code, and writing it cost
+                // 8 bytes/px on every velocity-aware draw. BindVelocityMRT binds 2 targets when null;
+                // unbound COLOR2 writes are dropped. Re-allocate here if AO is revived.
                 NormalTarget = null;
-                // Tile targets: ceil(res / K). Reallocated here whenever the velocity target is (re)sized.
                 int tw = System.Math.Max(1, (Backbuffer.Width + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
                 int th = System.Math.Max(1, (Backbuffer.Height + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
                 MBTileMax?.Dispose();
@@ -167,20 +135,16 @@ namespace FSO.Common.Utils
             return VelocityTarget;
         }
 
-        // When set, GetVelocityTarget() reports "no velocity target" so every velocity-aware shader
-        // (RCObject / Vitaboy / Grass / Wall) falls back to its single-output, non-velocity technique.
-        // Used by the 3D lot-thumbnail render (WorldPlatform3D.GetLotThumb): it binds a single colour
-        // target, so writing the velocity (COLOR1) / normal (COLOR2) MRT outputs into unbound slots
-        // corrupts COLOR0 to opaque black on ps_4_0_level_9_3 -- the black thumbnail backdrop in 3D mode.
+        // when set, GetVelocityTarget() reports null so velocity-aware shaders use their non-velocity
+        // techniques. Used by single-target renders (lot thumbnails): MRT writes to unbound slots corrupt
+        // COLOR0 on ps_4_0_level_9_3.
         public static bool SuppressVelocityTarget = false;
         public static RenderTarget2D GetVelocityTarget() => SuppressVelocityTarget ? null : VelocityTarget;
         public static RenderTarget2D GetNormalTarget() => NormalTarget;
         public static RenderTarget2D GetMBTileMax() => MBTileMax;
 
         /// <summary>
-        /// Bind the backbuffer + velocity MRT (+ normal MRT if allocated) as MRTs for velocity-aware
-        /// draws. All velocity-aware shaders write COLOR2 normal, so when the normal target exists it
-        /// must be bound or the GPU writes garbage to MRT2.
+        /// Bind color + velocity (+ normal if allocated) as MRTs for velocity-aware draws.
         /// </summary>
         public static void BindVelocityMRT(GraphicsDevice gd, RenderTarget2D velocityRT)
         {
@@ -193,15 +157,9 @@ namespace FSO.Common.Utils
         }
         public static RenderTarget2D GetMBNeighborMax() => MBNeighborMax;
 
-        // --- Independent per-target blend for the velocity MRT --------------------------------------------
-        // When color (MRT0) and velocity (MRT1) are written together, ONE blend state normally governs both.
-        // Color needs alpha blending (the surrounding-lots fade + sky atmospheric blend), but velocity must
-        // OVERWRITE — alpha-blending it dims/corrupts it at transparent edges. The old code forced
-        // BlendState.Opaque to get clean velocity, which broke the color fade and brightened the far terrain
-        // and sky. MonoGame supports independent per-target blend on GL 4.0+ / GL_ARB_draw_buffers_blend:
-        // VelocityColorBlend builds target[0] = the requested color blend, target[1] = opaque velocity.
-        // On older GPUs (where setting IndependentBlendEnable throws) it falls back to the plain color blend
-        // (color correct; only cost is slightly attenuated velocity at transparent fade edges).
+        // Independent per-target blend for the velocity MRT: target[0] keeps the requested color blend,
+        // target[1+] overwrite (velocity must not be alpha-blended). Falls back to the plain color blend
+        // where independent blend is unsupported.
         private static bool? _independentBlend;
         private static readonly System.Collections.Generic.Dictionary<BlendState, BlendState> _velBlendCache
             = new System.Collections.Generic.Dictionary<BlendState, BlendState>();
@@ -256,12 +214,7 @@ namespace FSO.Common.Utils
             return result;
         }
 
-        // TAA history ping-pong. Each frame TAA reads from "prev" and writes to "curr", then SwapHistory
-        // toggles roles for the next frame.
-        //
-        // Sizing: matches the surface TAA resolves on — the viewport normally (TAA runs after the SSAA
-        // scale-resolve), but the RENDER-res Backbuffer when upscaling (SSAA < 1), where TAA now runs
-        // BEFORE the EASU upscale (AMD FSR1 pipeline; see TAASkipFinalBlit / DrawBackbuffer).
+        // TAA history ping-pong: read "prev", write "curr", SwapHistory toggles roles each frame.
         public static void EnableHistoryTargets(bool enable)
         {
             if (!enable)
@@ -273,12 +226,9 @@ namespace FSO.Common.Utils
                 return;
             }
             if (GD == null) return;
-            // TAA operates at the resolution of the surface it RESOLVES ON: NATIVE (viewport) normally and
-            // under Cosmic TAAU (where the resolve is the upscaler and history is the native output grid),
-            // but RENDER resolution when upscaling via FSR 1 (TAA runs BEFORE the EASU upscale — see
-            // TAASkipFinalBlit). History/meta must match that surface 1:1. Callers (ChangeAAMode /
-            // ConfigureCityAA) invoke this after InitScreenTargets, so Backbuffer is already (re)sized,
-            // and set TAAUEnabled beforehand.
+            // history/meta must match the surface TAA resolves on 1:1 - native normally and under TAAU,
+            // render-res under FSR1 (TAA runs before the EASU upscale, see TAASkipFinalBlit). Callers must
+            // set TAAUEnabled and run InitScreenTargets first.
             int w = System.Math.Max(1, GD.Viewport.Width);
             int h = System.Math.Max(1, GD.Viewport.Height);
             if (SSAA < 0.999f && !TAAUEnabled && Backbuffer != null)
@@ -292,12 +242,9 @@ namespace FSO.Common.Utils
                 HistoryB?.Dispose();
                 MetaA?.Dispose();
                 MetaB?.Dispose();
-                // History wants fp16: the RGBA8 history was the TAA's double root cause — the packed depth in
-                // alpha was 1/255-quantized (false depth-disocclusions at silhouettes; the reject curve had to
-                // be blunted to hide it) and color accumulation stalled once per-frame deltas dropped below
-                // one 8-bit LSB (convergence plateau ~N=32). fp16 fixes both; fall back to Color on hardware
-                // that can't render to HalfVector4 — the shader's DepthRejectParams uniform keeps the old
-                // blunted tuning on the fallback path (see TAAResolve).
+                // fp16 history: RGBA8 quantized the packed depth (false disocclusions) and stalled color
+                // accumulation at one 8-bit LSB. Fall back to Color where HalfVector4 isn't renderable;
+                // TAAResolve keeps the blunted reject tuning on that path.
                 try
                 {
                     HistoryA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
@@ -315,13 +262,8 @@ namespace FSO.Common.Utils
                 MetaB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
                 _HistoryAIsPrev = true;
 
-                // Clear to defined contents so the first TAA frame can't read uninitialized GPU garbage. This
-                // matters most for the META target: garbage could decode as a high accumulation count N and
-                // make the resolve trust the (also-garbage) history heavily for a frame — a nondeterministic
-                // bright/ghost flash on TAA-enable. History clears to transparent black (depth 0); meta clears
-                // to (0,127,127,0) = N=0, GB prev-velocity decoding to ~zero (127/255 -> -0.0002 UV) so the
-                // disparity reactive starts silent, and A=0 = zero luma-oscillation evidence (the anti-fizzle
-                // gate starts untrusting and must earn ~10 consecutive alternations before deepening).
+                // clear to defined contents so the first TAA frame can't read garbage: meta (0,127,127,0)
+                // = N=0, prev-velocity ~zero, no oscillation evidence
                 var prevRTs = GD.GetRenderTargets();
                 var metaClear = new Color(0, 127, 127, 0);
                 GD.SetRenderTarget(HistoryA); GD.Clear(Color.Transparent);
@@ -366,22 +308,18 @@ namespace FSO.Common.Utils
                     gd.SetRenderTarget(depth);
                     gd.Clear(Color.White);
                 }
-                // Clear VelocityTarget once per frame (when we're starting a fresh frame on the main
-                // Backbuffer). It's bound transiently around the object draws in WorldEntities, not for the
-                // whole 3D render — that's the only way to stop non-velocity-aware shaders from writing
-                // garbage to MRT1 (level_9_3 hardware doesn't reliably preserve unwritten MRT slots).
+                // clear VelocityTarget once per frame; it's only bound transiently around object draws,
+                // since non-velocity-aware shaders would write garbage to MRT1
                 if (color == Backbuffer && VelocityTarget != null)
                 {
                     gd.SetRenderTarget(VelocityTarget);
-                    // Clear to (vel=0, depth=1 FAR, mask=0): unwritten pixels (sky, distant trees, anything
-                    // without a velocity-aware shader) read as static far background. Depth MUST be far, not
-                    // 0 — a 0 (near) clear would make the motion-blur depth test treat the empty background
-                    // as foreground in front of moving objects and break the silhouette weighting.
+                    // (vel=0, depth=1 FAR, mask=0): unwritten pixels read as static far background.
+                    // depth must be far or the motion-blur depth test treats them as foreground.
                     gd.Clear(new Color(0f, 0f, 1f, 0f));
                     if (NormalTarget != null)
                     {
                         gd.SetRenderTarget(NormalTarget);
-                        // Up-vector default + invalid mask. GTAO treats alpha<0.5 as no-geometry.
+                        // up-vector default + invalid mask (GTAO treats alpha<0.5 as no-geometry)
                         gd.Clear(new Color(0.5f, 1f, 0.5f, 0f));
                     }
                     gd.SetRenderTarget(color);
@@ -467,58 +405,39 @@ namespace FSO.Common.Utils
         }
 
         public static Action<GraphicsDevice, RenderTarget2D> SSAAFunc;
-        // Diagnostic velocity visualizer. When non-null, DrawBackbuffer bypasses the entire post chain
-        // and draws this directly to screen so the user can see raw MRT1 contents — useful for finding
-        // which shaders are writing valid velocity and which aren't.
+        // velocity debug visualizer: when non-null, DrawBackbuffer bypasses the post chain and draws raw MRT1
         public static Action<GraphicsDevice, RenderTarget2D> VelocityDebugFunc;
-        // Optional per-pixel motion blur pass (3D). Reads color + the velocity MRT; sits BEFORE post-AA so
-        // FXAA/SMAA smooth the blurred edges. null = off.
+        // per-pixel motion blur (3D); runs before post-AA so FXAA/SMAA smooth the blurred edges. null = off
         public static Action<GraphicsDevice, RenderTarget2D> MotionBlurFunc;
-        // Optional post-process resolve (FXAA/SMAA/FSR). Runs even when SSAA==1. null = disabled, in which
-        // case DrawBackbuffer keeps the plain blit below, so there's zero behaviour change when AA is off.
+        // post-process resolve (FXAA/SMAA/FSR); runs even when SSAA==1. null = plain blit (no behaviour change)
         public static Action<GraphicsDevice, RenderTarget2D> PostProcessFunc;
-        // Optional temporal AA (TAA). Its OWN chain stage, applied AFTER the spatial post-AA (FXAA/SMAA)
-        // rather than in place of it — TAA temporally stabilizes the already edge-smoothed frame. Screen-res
-        // in/out (same slot timing as PostProcessFunc). null = off.
+        // temporal AA; its own stage AFTER spatial post-AA, not in place of it. null = off
         public static Action<GraphicsDevice, RenderTarget2D> TAAFunc;
-        // TAA pre-upscale mode (render scale < 1): TAA runs at RENDER resolution BEFORE the EASU upscale —
-        // AMD's documented FSR1 pipeline (TAA -> EASU -> RCAS). EASU is an edge-adaptive NONLINEAR upscaler
-        // specified for anti-aliased input; feeding it the raw jittered frame made it re-detect and re-draw
-        // edges differently every frame, so the TAA that ran after it received a shape-morphing, DOUBLE-
-        // amplitude wobble (±0.5 render px = ±1 native px at 0.5 scale) it could never stabilise — the
-        // "persistent jitter in the resolved output at low res". DrawBackbuffer sets TAASkipFinalBlit before
-        // invoking TAAFunc; the resolve renders into its (render-res) history target, skips the stretch blit,
-        // and publishes the resolved frame via TAAOutput for the chain to feed into the upscaler.
+        // TAA pre-upscale (FSR1: TAA -> EASU -> RCAS). EASU needs anti-aliased input, so at scale < 1
+        // DrawBackbuffer sets TAASkipFinalBlit; the resolve skips its stretch blit and publishes the
+        // render-res result via TAAOutput for the upscaler.
         public static bool TAASkipFinalBlit;
         public static RenderTarget2D TAAOutput;
-        // Cosmic TAAU: the TAA resolve IS the upscaler (replaces EASU when render scale < 1). Set from
-        // WorldConfig (TAA on + Upscaler == TAAU) BEFORE EnableHistoryTargets so history/meta size to the
-        // NATIVE grid; the resolve then accumulates jittered render-res samples directly onto it — detail
-        // beyond render resolution emerges from the sample positions (the supersampled-like resolve).
+        // TAAU: the TAA resolve IS the upscaler (replaces EASU at render scale < 1). Must be set BEFORE
+        // EnableHistoryTargets so history/meta size to the native grid.
         public static bool TAAUEnabled;
-        // Negative texture LOD bias for content shaders under TAA at render scale < 1 (log2(scale), clamped
-        // -2; 0 otherwise). Set by World.ChangeAAMode / ConfigureCityAA; consumed by every velocity-technique
-        // param push (RCObject objects/walls, GrassShader terrain/roofs). See the shaders' MipBias comments.
+        // negative texture LOD bias under TAA at render scale < 1 (log2(scale), clamped -2; 0 otherwise).
+        // Set by World.ChangeAAMode/ConfigureCityAA; pushed by every velocity-technique param push.
         public static float TAAMipBias;
-        // True only while DrawBackbuffer invokes TAAFunc as the upscaler stage; TAAResolve reads it to bind
-        // native-size history + set InvColorSize (render) vs InvScreenSize (native).
+        // true only while DrawBackbuffer invokes TAAFunc as the upscaler stage (TAAResolve binds native history)
         public static bool TAAUpscaleMode;
-        // Optional ambient-occlusion pass (GTAO). Sits BEFORE bloom in the chain so AO darkens crevices
-        // before bloom adds highlights — the standard order. Reads the velocity buffer for depth + scene
-        // color for the composite, writes scene*AO to the bound target. null = off.
+        // ambient occlusion (GTAO); runs before bloom. null = off
         public static Action<GraphicsDevice, RenderTarget2D> AOFunc;
-        // Optional bloom pass. Reads the current chain color, blooms it into its own mip chain, composites
-        // scene+bloom to the bound target. Sits after post-AA (blooms the AA'd image), before sharpen. null = off.
+        // bloom; runs after post-AA, before sharpen. null = off
         public static Action<GraphicsDevice, RenderTarget2D> BloomFunc;
-        // Optional final sharpening pass (FSR RCAS). Reads the resolved frame and writes the screen. null = off.
+        // final sharpen (FSR RCAS); writes the screen. null = off
         public static Action<GraphicsDevice, Texture2D> SharpenFunc;
         public static bool WithOpacity = true;
 
         public static void DrawBackbuffer(float opacity, float scale)
         {
             if (Backbuffer == null) return; //this gfx mode does not use a rendertarget backbuffer
-            // Velocity-debug override: when on, ditch the whole chain and visualize MRT1 instead. The
-            // visualizer reads VelocityTarget directly so the `src` param is unused but kept for shape.
+            // velocity-debug override: skip the whole chain and visualize MRT1 instead
             if (VelocityDebugFunc != null && VelocityTarget != null && scale == 1f && (!WithOpacity || opacity >= 1f))
             {
                 GD.SetRenderTarget(null);
@@ -526,7 +445,7 @@ namespace FSO.Common.Utils
                 return;
             }
             bool nonNative = (SSAA > 1.001f || SSAA < 0.999f);
-            // Post-AA / motion blur / sharpen run only outside fade/zoom transitions (those use the alpha blit below).
+            // post stages only run outside fade/zoom transitions (those use the alpha blit below)
             bool postOk = scale == 1f && (!WithOpacity || opacity >= 1f);
             bool doMotionBlur = MotionBlurFunc != null && postOk;
             bool doPost = PostProcessFunc != null && postOk;
@@ -537,35 +456,21 @@ namespace FSO.Common.Utils
 
             if (nonNative || doMotionBlur || doPost || doTAA || doAO || doBloom || doSharpen)
             {
-                // Ordered resolve chain: scale-resolve (box/EASU) -> motion blur -> post-AA (FXAA/SMAA) ->
-                // TAA -> AO -> bloom -> sharpen (RCAS). Each stage samples the previous stage's result and
-                // draws full-screen; intermediates ping-pong between the two screen-res ResolveTargets, and
-                // the last active stage targets the screen. TAA runs AFTER FXAA/SMAA (temporal pass over the
-                // spatially-AA'd frame), not in their place.
+                // resolve chain: scale-resolve -> motion blur -> post-AA -> TAA -> AO -> bloom -> sharpen.
+                // Intermediates ping-pong between the two ResolveTargets; the last active stage targets the screen.
                 RenderTarget2D src = Backbuffer;
 
-                // UPSCALING (+TAA), two modes:
-                //  * Cosmic TAAU (taau): the TAA resolve IS the upscaler — it runs in the nonNative stage
-                //    slot below, accumulating render-res jittered samples onto the NATIVE history grid.
-                //  * FSR 1 (taaFirst): TAA runs FIRST at render resolution on the raw jittered backbuffer,
-                //    then EASU upscales the anti-aliased result (AMD FSR1 order; see TAASkipFinalBlit doc).
-                //    remaining stays >= 1 here (nonNative still pending), so TAA never targets the screen.
+                // upscaling + TAA: TAAU = the TAA resolve is the upscaler (runs in the nonNative slot);
+                // FSR1 (taaFirst) = TAA runs first at render-res, then EASU upscales
                 bool taau = doTAA && SSAA < 0.999f && TAAUEnabled;
                 bool taaFirst = doTAA && SSAA < 0.999f && !taau;
 
-                // STAGE COUNT: under TAAU, doTAA's own slot never runs (the resolve occupies the nonNative
-                // slot), so it must NOT be counted — counting it left `remaining` stuck above zero and the
-                // LAST real stage drew into a ping-pong target instead of the screen: with sharpen off,
-                // NOTHING painted the screen (the city-map-black-under-TAAU bug; sharpen masked it elsewhere
-                // because it targets the screen unconditionally). This is verbatim the adversarial-review
-                // verdict fix ("remaining count uses (nonNative && !taau)") originally dismissed as benign.
+                // under TAAU the doTAA slot never runs (the resolve occupies the nonNative slot) - counting
+                // it would leave `remaining` above zero and the last real stage would miss the screen
                 int remaining = (nonNative ? 1 : 0) + (doMotionBlur ? 1 : 0) + (doPost ? 1 : 0) + ((doTAA && !taau) ? 1 : 0) + (doAO ? 1 : 0) + (doBloom ? 1 : 0) + (doSharpen ? 1 : 0);
                 int pong = 0;
 
-                // UPSCALING: spatial AA (FXAA/SMAA) runs FIRST, at RENDER resolution — before the TAA stage
-                // (same relative order as the native chain: spatial then temporal) and before the upscaler
-                // (EASU/TAAU want anti-aliased input on the render grid; post-upscale FXAA/SMAA smooth
-                // already-reconstructed pixels instead of the real edges).
+                // when upscaling, spatial AA runs first at render-res (EASU/TAAU want anti-aliased input)
                 bool postFirst = doPost && SSAA < 0.999f && RenderPostTarget != null;
                 if (postFirst)
                 {
@@ -592,10 +497,8 @@ namespace FSO.Common.Utils
                     GD.SetRenderTarget(dst);
                     if (taau)
                     {
-                        // Cosmic TAAU occupies the resolve slot (stage counting unchanged): src is the
-                        // render-res jittered frame; output/history are native. When a later stage follows,
-                        // skip the blit and hand it the native history target directly (same perf win as
-                        // the native-TAA path).
+                        // TAAU: src is render-res, output/history native. When a later stage follows,
+                        // skip the blit and hand it the history target directly.
                         TAAUpscaleMode = true;
                         if (dst != null)
                         {
@@ -637,9 +540,8 @@ namespace FSO.Common.Utils
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
                     if (dst != null)
                     {
-                        // A later stage (RCAS/bloom/AO) consumes the result — let it read the history target
-                        // directly instead of paying a fullscreen copy into the ping-pong target (perf: the
-                        // resolve already renders the full frame into history; the blit was pure duplication).
+                        // a later stage consumes the result - let it read the history target directly
+                        // instead of paying a fullscreen copy
                         TAASkipFinalBlit = true;
                         TAAOutput = null;
                         TAAFunc(GD, src);
@@ -648,7 +550,7 @@ namespace FSO.Common.Utils
                     }
                     else
                     {
-                        // TAA is the final stage: the resolve's blit is the only way onto the screen.
+                        // TAA is the final stage: the resolve's blit is the only way onto the screen
                         GD.SetRenderTarget(null);
                         TAAFunc(GD, src);
                         src = null;
@@ -659,7 +561,7 @@ namespace FSO.Common.Utils
                     remaining--;
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
                     GD.SetRenderTarget(dst);
-                    AOFunc(GD, src); // GTAO -> blur -> composite scene*ao to dst
+                    AOFunc(GD, src);
                     src = dst;
                 }
                 if (doBloom)
@@ -667,7 +569,7 @@ namespace FSO.Common.Utils
                     remaining--;
                     var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
                     GD.SetRenderTarget(dst);
-                    BloomFunc(GD, src); // blooms into its own mips, then composites scene+bloom to dst
+                    BloomFunc(GD, src);
                     src = dst;
                 }
                 if (doSharpen)

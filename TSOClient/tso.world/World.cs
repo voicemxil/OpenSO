@@ -69,16 +69,8 @@ namespace FSO.LotView
 
         protected LMapBatch Light;
         protected Blueprint Blueprint;
-        // Tracks the last-applied LightingMode so ChangedWorldConfig can detect a tier change (e.g. +Walls
-        // -> +Objs) and force a lightmap redraw. Upstream (SegerEnd/FreeSO dotnet9) gets this "for free" by
-        // unconditionally disposing+recreating Light on every settings-apply while AdvancedLighting is on -
-        // that implicit full-rebuild is what makes any lighting-relevant setting "just work" there. Our fork
-        // made that idempotent (only recreate Light on an actual off->on transition, to stop it flickering
-        // on every UNRELATED settings change - e.g. render scale, bloom), which is worth keeping, but it
-        // silently dropped upstream's "any change picks up new settings" behavior for settings that only
-        // affect what an ALREADY-drawn room's lightmap looks like (UltraLighting's DrawObjShadows branch,
-        // currently the only such setting - Shadow3D was tried and reverted, see LMapBatch.DrawWallShadows).
-        // Tracking the single int instead of one bool per derived tier covers any future tier the same way.
+        // last-applied LightingMode, so ChangedWorldConfig can detect a tier change and rebuild the
+        // lightmap without recreating Light on every unrelated settings change
         protected int _lastLightingMode = -1;
 
         public event Action OnFullZoomOut;
@@ -135,13 +127,11 @@ namespace FSO.LotView
 
             Blueprint?.Changes?.SetFlag(BlueprintGlobalChanges.ZOOM);
 
-            // InitScreenTargets disposed the velocity buffer (size changed). Re-apply the AA/motion config
-            // so it's re-allocated at the new screen size; otherwise motion blur stays disabled until the
-            // options dialog is reopened.
+            // InitScreenTargets disposed the velocity buffer - re-apply the AA config so it's re-allocated
             if (State?.Device != null) ChangeAAMode(State.Device);
         }
 
-        // Previous frame's NDC jitter, for computing the per-frame jitter delta handed to the TAA resolve.
+        // previous frame's NDC jitter, for the TAA resolve's jitter delta
         private Vector2 _PrevTAAJitterNDC;
 
         public virtual void InitDefaultGraphicsMode()
@@ -410,15 +400,9 @@ namespace FSO.LotView
                     State.Zoom = WorldZoom.Near;
                     break;
             }
-            // GameResized (not just ChangeAAMode): switching graphics mode changes the EFFECTIVE render
-            // scale (2D folds SSAA to 1; 3D restores it), so the 2D world dimensions must be recomputed
-            // from the new backbuffer/SSAA pair. Without this, dims computed under the 3D scale (e.g.
-            // bb/0.33 = 3x native) survived into 2D mode — the "impossible zoom out" after a 3D->2D switch.
-            // ONLY while this world is the active presenter: a hidden world must not touch the shared
-            // engine (same ownership rule as ChangeAAMode). Joining a lot FROM THE MAP configures the new
-            // lot world while the city is still drawing — an immediate GameResized here disposed the
-            // ResolveTargets mid-city-frame (Texture2D.CreateTexture NRE on the disposed bind). Defer to
-            // the visibility-regain in Draw, which runs on the game thread before this world presents.
+            // mode switches change the effective render scale (2D folds SSAA to 1), so the 2D world dims
+            // must be recomputed via GameResized. Only while this world is the active presenter - a hidden
+            // world must not touch the shared engine; defer to the visibility regain in Draw.
             if (Visible) GameResized();
             else _PendingGameResized = true;
             State.Platform = Platform;
@@ -683,16 +667,10 @@ namespace FSO.LotView
         {
             base.PreDraw(device);
             if (HasInit == false) { return; }
-            // Marks "first PrepareCulling call this frame can update PreviousViewProjection". Without this,
-            // the 5+ PrepareCulling calls per frame each overwrite PreviousViewProjection -> velocity = 0.
+            // only the first PrepareCulling call each frame may update PreviousViewProjection
             State.BeginFrameForVelocity();
-            // Compute TAA sub-pixel jitter from an R2 low-discrepancy sequence ONLY when TAA is fully operational
-            // (setting on + 3D + history buffers + shader present). Gating it this way means jitter only
-            // runs when TAA's accumulation is actually present to resolve it (a half-enabled jitter without
-            // accumulation reads as constant shake — the "way too strong" the user saw before the gate).
-            // JITTER_PIXELS=0.5 gives the reference ±0.5px range (samples spread across the full pixel
-            // footprint), which is what properly resolves stairstepping on high-contrast edges. The earlier
-            // 0.25 under-sampled the pixel and left some edges aliased.
+            // jitter only when TAA is fully operational - jitter without accumulation reads as constant
+            // shake. 0.5 = the reference ±0.5px footprint (0.25 under-sampled the pixel).
             const float JITTER_PIXELS = 0.5f;
             bool taaJitterReady = WorldConfig.Current.TAA
                 && State.CameraMode == CameraRenderMode._3D
@@ -700,34 +678,23 @@ namespace FSO.LotView
                 && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
             if (taaJitterReady)
             {
-                // Cycled Halton(2,3) — the industry-standard TAA jitter (isotropic sample-to-sample jumps,
-                // short repeating cycle so converged output goes STILL). Replaced free-running R2, whose
-                // constant-vector increments made partially-converged aliasing crawl directionally under
-                // TAA's recency-weighted accumulation — see R2Jitter class docs.
+                // cycled Halton(2,3); free-running R2 crawled directionally (see R2Jitter)
                 var r2 = FSO.Common.Utils.R2Jitter.SampleHalton(State.TAAFrameIndex++, FSO.Common.Utils.PPXDepthEngine.SSAA);
                 float hx = r2.X; // [-0.5, +0.5)
                 float hy = r2.Y;
                 var bb = FSO.Common.Utils.PPXDepthEngine.GetBackbuffer();
                 int w = bb?.Width ?? device.Viewport.Width;
                 int h = bb?.Height ?? device.Viewport.Height;
-                // Jitter must be ±0.5px OF THE GRID TAA RESOLVES ON in every mode. jpx is in RENDER pixels
-                // (the jittered projection rasterizes the backbuffer). Upscaling (SSAA<1): TAA runs at render
-                // res (pre-EASU) -> factor 1, already correct. Native: factor 1. SUPERSAMPLING (SSAA>1): TAA
-                // runs at native res after the box downsample, and ±0.5 render px is only ±0.5/SSAA native px
-                // (half the reference footprint at 2x -> weakened sub-pixel coverage) -> scale by SSAA so the
-                // resolve grid sees the full ±0.5px spread.
+                // jitter must be ±0.5px of the grid TAA resolves on: at SSAA>1 TAA runs at native res
+                // after the downsample, so scale up by SSAA
                 float jscale = System.Math.Max(1f, FSO.Common.Utils.PPXDepthEngine.SSAA);
-                // Sub-pixel offset in PIXELS, range ±JITTER_PIXELS (reference ±0.5px footprint at 0.5).
                 float jpxX = hx * (2f * JITTER_PIXELS) * jscale;
                 float jpxY = hy * (2f * JITTER_PIXELS) * jscale;
-                // Camera is PERSPECTIVE — jitter is applied as an NDC translation via Projection.M31/M32
-                // (depth-independent for perspective). NDC<->pixel: ndc = 2*px/dim, hence the 2x (this is
-                // the standard pixel->NDC conversion, NOT a doubling of the jitter amount).
+                // applied as an NDC translation via Projection.M31/M32; ndc = 2*px/dim
                 var ndcJitter = new Vector2(2f * jpxX / w, 2f * jpxY / h);
                 State.TAAJitter = ndcJitter;
-                // Publish for the sky dome (no WorldState there). The velocity pass now subtracts this jitter
-                // itself (JitterNDC uniform), so the velocity buffer is jitter-free — TAA reprojection no
-                // longer needs the JitterDelta cancellation (leaving it would double-correct), so zero it.
+                // publish for the sky dome (no WorldState there). The velocity pass un-jitters itself,
+                // so JitterDeltaUV stays zero (leaving it set would double-correct).
                 FSO.Common.Utils.PPXDepthEngine.TAAJitterNDC = ndcJitter;
                 FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
                 _PrevTAAJitterNDC = ndcJitter;
@@ -740,8 +707,7 @@ namespace FSO.LotView
                 _PrevTAAJitterNDC = Vector2.Zero;
             }
             State.Cameras.PreDraw(this);
-            // Snapshot the active 3D camera's projection params for GTAO's depth linearization.
-            // Falls through when no 3D camera (2D modes don't write velocity, so AO is gated off anyway).
+            // snapshot the active 3D camera's projection params for GTAO's depth linearization
             var active3D = (State.Cameras.ActiveCamera as FSO.LotView.Utils.Camera.CameraController3D)?.Camera;
             if (active3D != null && device != null)
             {
@@ -776,10 +742,8 @@ namespace FSO.LotView
                 device.SetRenderTarget(null);
             }
 
-            // ---- TEMP VELOCITY PROBE v3 (exact, parallax-free): reconstruct the WORLD POINT the center
-            // pixel actually shows (screen-center ray x view depth from the buffer's own .b), project it
-            // through the SAME matrix pair the writers receive, and compare against the buffer's stored
-            // velocity. ratio=1.0 exonerates the writers exactly; anything else is a real deficit. ----
+            // TEMP velocity probe: reproject the world point at the center pixel through the writers'
+            // matrix pair and compare against the stored velocity (ratio=1 = writers exact). Logs to vel_probe.log.
             {
                 try
                 {
@@ -793,8 +757,7 @@ namespace FSO.LotView
                         {
                             float viewDist = v4.Z * 800f; // decode saturate(clip.w/800)
                             var invView = Matrix.Invert(State.View);
-                            // screen-center ray in view space = forward axis; view-space point (0,0,-viewDist)
-                            // (RH view space looks down -Z in XNA).
+                            // screen-center view-space point (0,0,-viewDist) (RH view looks down -Z)
                             var worldPt = Vector4.Transform(new Vector4(0f, 0f, -viewDist, 1f), invView);
                             var vpNow = State.View * State.ProjectionUnjittered;
                             var now = Vector4.Transform(worldPt, vpNow);
@@ -829,17 +792,14 @@ namespace FSO.LotView
         /// </summary>
         /// <param name="device"></param>
         private bool _WasVisibleLastDraw = true;
-        // A SetGraphicsMode arrived while hidden (e.g. lot configured behind the city during a map join);
-        // its GameResized is deferred to the visibility regain below (game thread, before we present).
+        // a SetGraphicsMode arrived while hidden; its GameResized is deferred to the visibility regain below
         private bool _PendingGameResized;
 
         public override void Draw(GraphicsDevice device){
             if (HasInit == false) { return; }
 
-            // ENGINE OWNERSHIP: a world that isn't the active presenter must NOT resolve to the screen.
-            // In the city view, the paused lot world behind it kept running its post chain every frame —
-            // painting its (stale/empty) backbuffer OVER the city output (the "city map black under TAAU"
-            // bug) while its config fought the city's over the shared PPXDepthEngine state.
+            // only the active presenter may resolve to the screen - a hidden world's post chain would
+            // paint over the city output and fight its config over the shared PPXDepthEngine
             if (!Visible)
             {
                 _WasVisibleLastDraw = false;
@@ -847,9 +807,8 @@ namespace FSO.LotView
             }
             if (!_WasVisibleLastDraw || _PendingGameResized)
             {
-                // Regained visibility: re-apply this world's AA/scale config (the city view owned and
-                // reconfigured the shared engine while we were hidden). A deferred SetGraphicsMode needs
-                // the full GameResized (dims recompute + screen targets); a plain regain only ChangeAAMode.
+                // regained visibility: re-apply this world's AA config (the city reconfigured the shared
+                // engine while hidden). A deferred SetGraphicsMode needs the full GameResized.
                 _WasVisibleLastDraw = true;
                 if (_PendingGameResized) { _PendingGameResized = false; GameResized(); }
                 else ChangeAAMode(device);
@@ -1180,70 +1139,52 @@ namespace FSO.LotView
         {
             State._2D.Begin(this.State.Camera2D);
             var thumb = Platform.GetLotThumb(gd, State, rooflessCallback);
-            // The 2D thumb path leaves the PPX Backbuffer (a render target) bound via SetPPXTarget(null);
-            // restore the real backbuffer so a following Present (this can run outside the draw loop)
-            // doesn't throw "Cannot call Present when a render target is active".
+            // the 2D thumb path leaves the PPX Backbuffer bound - restore the real backbuffer so a
+            // following Present doesn't throw
             gd.SetRenderTarget(null);
             return thumb;
         }
 
         public void ChangeAAMode(GraphicsDevice gd)
         {
-            // ENGINE OWNERSHIP: a hidden world (e.g. the paused lot behind the city view) must not
-            // reconfigure the shared PPXDepthEngine — its settings (2D SSAA fold, TAAU off, history
-            // teardown) fought the city's config every frame, thrashing the backbuffer size and destroying
-            // the city's TAA history. Draw() re-applies our config when we become visible again.
+            // a hidden world must not reconfigure the shared PPXDepthEngine (it would fight the city's
+            // config) - Draw() re-applies our config on visibility regain
             if (!Visible) return;
             var lastm = PPXDepthEngine.MSAA;
             var lasts = PPXDepthEngine.SSAA;
             var cfg = WorldConfig.Current;
 
-            // Decoupled: hardware MSAA and render scale are independent and can combine.
+            // hardware MSAA and render scale are independent and can combine
             var msaa = cfg.MSAA;                                         //0/2/4/8
             float scale = (cfg.RenderScale > 0f) ? cfg.RenderScale : 1f; //<1 upscale, 1 native, >1 supersample
-            // Back-compat: an older config only set the legacy int SuperSampling; honor it at default RenderScale.
+            // back-compat: honor the legacy int SuperSampling at default RenderScale
             if (scale == 1f && cfg.SuperSampling > 1) scale = cfg.SuperSampling;
 
-            // Back-compat: an older/stale options UI only sets the legacy WorldConfig.AA preset (0/1/2). If the
-            // decoupled fields were left at defaults but AA is set, derive MSAA/render scale from it so AA
-            // still works regardless of which UI build is running.
+            // back-compat: derive MSAA/render scale from the legacy AA preset (0/1/2)
             if (msaa == 0 && scale == 1f && cfg.AA > 0)
             {
                 if (cfg.AA == 1) msaa = 4;
                 else scale = 2f;
             }
 
-            // TAA supersedes MSAA (industry standard). The velocity MRT must match the scene target's sample
-            // count, so scene MSAA forces a MULTISAMPLED velocity buffer — and its resolve AVERAGES fg+bg
-            // velocity/depth/mask at exactly the silhouettes TAA's dilation + disocclusion depend on (mixed
-            // motion vectors = edge ghosting). Uses the FULL taaReady predicate (incl. MotionBlur content)
-            // so a missing shader can't strip MSAA while TAA never actually runs.
+            // TAA supersedes MSAA: a multisampled velocity buffer's resolve averages fg+bg velocity/depth
+            // at the silhouettes TAA's dilation/disocclusion depend on (edge ghosting)
             bool taaOn = cfg.TAA && State.CameraMode == CameraRenderMode._3D
                          && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             if (taaOn) msaa = 0;
-            // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
-            // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
+            // TAAU (the TAA resolve replaces EASU as the upscaler) must be set BEFORE EnableHistoryTargets
+            // below - it sizes history to the native grid
             PPXDepthEngine.TAAUEnabled = taaOn && cfg.Upscaler == 1;
-            // Content-shader mip bias under TAA (see PPXDepthEngine.TAAMipBias). Floor RESTORED to the
-            // full spec -2.0 (log2(scale) = -1.58 at 1/3 passes): the -1.0 blunting existed because the
-            // DLSS-spec bias assumes ANISOTROPIC filtering and the OBJECT path sampled trilinear (leaves
-            // re-aliased per frame). Objects now use aniso + footprint-correct gradient sampling under
-            // SM4 (RCObject MeshAnisoSampler), same as walls/terrain always did — the spec bias is
-            // per-frame-stable again, and the half-octave of texture softness the blunting cost below
-            // 0.5x scale ("indistinct past 0.5x") comes back. SM3 fallback keeps trilinear tex2Dbias;
-            // if a non-SM4 target ever shows leaf flicker again, re-blunt THERE, not globally.
+            // mip bias under TAA. The -2 spec floor assumes anisotropic sampling, which the SM4 object
+            // path now uses; if a non-SM4 (trilinear) target ever shows leaf flicker, re-blunt there.
             PPXDepthEngine.TAAMipBias = (taaOn && scale < 0.999f && scale > 0f)
                 ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
             PPXDepthEngine.MSAA = msaa;
             PPXDepthEngine.SSAA = scale;
 
-            // Render scale is a 3D-only feature. It sizes the shared backbuffer, but the 2D sprite scene is
-            // pixel-exact to the viewport (ortho camera), so a non-native backbuffer crops it. Neutralize
-            // render scale entirely in 2D modes: supersampling (>1) folds into hardware MSAA (free quality,
-            // no resize), and upscaling (<1) is simply disabled so the 2D scene always renders at native
-            // resolution (no crop). Separating geometry-buffer resolution from the 2D sprites would be the
-            // "true" fix but is a much larger renderer change; 3D-only is the agreed scope for now.
+            // render scale is 3D-only: the 2D sprite scene is pixel-exact to the viewport, so a non-native
+            // backbuffer crops it. Fold supersampling into MSAA and disable upscaling in 2D modes.
             if (State.CameraMode < CameraRenderMode._3D && PPXDepthEngine.SSAA != 1f)
             {
                 if (PPXDepthEngine.SSAA > 1f)
@@ -1251,19 +1192,11 @@ namespace FSO.LotView
                 PPXDepthEngine.SSAA = 1f;
             }
 
-            // Resolve pass. The plain box-downsample is the default supersample resolve; FXAA/SMAA/FSR are
-            // post-process passes applied via PostProcessFunc once their effects are built (Windows shader
-            // build). When a pass's shader is missing the chooser leaves it off, so this is safe everywhere.
-            // Supersampling (scale > 1) uses the box downsample; upscaling (scale < 1) uses the FSR bicubic
-            // upscale. Falls back to the box resolve if the FSR shader isn't present (e.g. non-HiDef device).
+            // supersampling resolves with the box downsample; upscaling uses the FSR bicubic
+            // (box fallback when the shader is missing, e.g. non-HiDef device)
             PPXDepthEngine.SSAAFunc = (PPXDepthEngine.SSAA < 0.999f && WorldContent.FSR != null) ? FSRUpscale.Draw : SSAADownsample.Draw;
 
-            // FXAA is the only post-process pass built so far, so any selected post-AA mode (PostAA > 0,
-            // including the SMAA presets) routes through it until SMAA's own shaders land. Sharpen (FSR) is
-            // a separate pass and stays off here until its shader exists. null => DrawBackbuffer keeps the
-            // plain blit (no behaviour change). DrawBackbuffer only invokes this when SSAA == 1.
-            // Spatial post-AA selector (SMAA > FXAA > off). Independent of TAA: the spatial pass runs first,
-            // then TAA gets its own stage AFTER it (see DrawBackbuffer / PPXDepthEngine.TAAFunc).
+            // spatial post-AA selector (SMAA > FXAA > off); independent of TAA, which gets its own later stage
             System.Action<GraphicsDevice, RenderTarget2D> postFn = null;
             if (cfg.PostAA >= 2 && WorldContent.SMAA != null && WorldContent.SMAAAreaTex != null && WorldContent.SMAASearchTex != null)
                 postFn = SMAAResolve.Draw;
@@ -1271,40 +1204,22 @@ namespace FSO.LotView
                 postFn = PostProcessAA.Draw;
             PPXDepthEngine.PostProcessFunc = postFn;
 
-            // Temporal AA: separate resolve-chain stage applied AFTER the spatial AA above, so FXAA/SMAA and
-            // TAA compose (spatial edge smoothing + temporal stabilization) instead of being mutually
-            // exclusive. Needs the velocity buffer, so 3D mode + TAA/MotionBlur content present.
             bool taaReady = taaOn; // same predicate the MSAA force above used
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
 
-            // FSR RCAS sharpening: a final, user-controlled pass over the resolved frame, available at ANY
-            // render scale (native, supersampled/downscaled, or upscaled). Note this is separate from the
-            // downscale RESOLVE — supersampling resolves with the box/tent (SSAAFunc), never FSR — so RCAS
-            // here is just optional sharpening, not "FSR downscaling".
+            // RCAS sharpen: optional final pass at any render scale (separate from the downscale resolve)
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
-            // TAA-coupled auto-sharpen: TAA's history resampling is inherently a low-pass, so reference TAA
-            // pipelines (UE, FSR2, DLSS) always pair the resolve with a post sharpen. When TAA is on and the
-            // user hasn't enabled their own sharpen, run a modest RCAS, scaled up at lower resolutions where
-            // TAA softening is most visible (the main reason 540p/720p TAA read worse than industry TAAs).
-            // The user's own sharpen setting, when active, wins untouched.
+            // TAA's history resample is a low-pass, so pair it with a modest auto-RCAS when the user
+            // hasn't enabled their own sharpen (which wins untouched)
             bool autoSharpen = !sharpen && taaReady && WorldContent.FSR != null;
             if (autoSharpen)
             {
-                // SHARPEN IS SCALED BY THE GRID THE IMAGE ACTUALLY LIVES ON. Under TAAU the resolve
-                // outputs NATIVE-res detail (history IS the output grid), so the auto-sharpen must key
-                // off the OUTPUT height — keying it off the render-res backbuffer treated a 1080p TAAU
-                // image as "356p-soft" at 1/3 scale and drove RCAS to its ceiling: ~3x over-sharpening
-                // of an already output-res image. THAT overdose was the primary residual "edge ringing
-                // + dither" at low scale — RCAS halos bright fine detail (ringing added AFTER the
-                // resolve, which no resolve-side dering could remove) and amplifies whatever small
-                // temporal alternation the resolve leaves (dither). The low-res ramp remains correct
-                // for the FSR1 path, whose final image really is a soft EASU upscale of a render-res
-                // frame. The 0.62 TAAU ceiling is retired with this — it was tuned against the wrong-
-                // height formula and only ever raised the overdose.
+                // key the ramp off the grid the image lives on: TAAU output is native-res, so use the
+                // output height - the render-res backbuffer height overdrives RCAS at low scale
                 float bbH = PPXDepthEngine.TAAUEnabled
                     ? gd.Viewport.Height
                     : (PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height);
-                // 0.25 at 1080p (the config default), ramping to 0.5 by 540p; floor 0.2 at high res.
+                // 0.25 at 1080p, ramping to 0.5 by 540p; floor 0.2 at high res
                 RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, 0.5f);
             }
             else RCASSharpen.OverrideAmount = null;
@@ -1312,55 +1227,39 @@ namespace FSO.LotView
 
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
 
-            // Velocity buffer for TAA / per-pixel motion blur. Only meaningful in 3D mode (the 2D path is
-            // cached sprites; for it MotionBlur=1 uses a cheap camera-delta blur with no velocity buffer).
-            // Allocates ~16MB at 1080p; freed when both features are off.
+            // velocity buffer for TAA / per-pixel motion blur; 3D only, freed when both are off
             bool wantVelocity = FSOEnvironment.Enable3D && State.CameraMode == CameraRenderMode._3D
                                 && (cfg.TAA || cfg.MotionBlur == 2 || cfg.VelocityDebug);
             PPXDepthEngine.EnableVelocityTarget(wantVelocity);
-            // History buffers for TAA's ping-pong. Allocated alongside velocity (same scope as TAA itself).
             PPXDepthEngine.EnableHistoryTargets(cfg.TAA && State.CameraMode == CameraRenderMode._3D);
 
-            // Per-pixel motion blur consumer: reads color + velocity, samples N taps along velocity.
             bool motionBlur3D = wantVelocity && cfg.MotionBlur == 2 && WorldContent.MotionBlur != null && cfg.MotionBlurAmount > 0f;
             PPXDepthEngine.MotionBlurFunc = motionBlur3D ? PerPixelMotionBlur.Draw : null;
 
-            // Bloom: post-process, independent of velocity/3D. Enabled when on with a non-zero intensity
-            // and the shader is present.
             bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
-            // GTAO/SSAO: functional but DISABLED for now — the path and its UI are hidden until the grass
-            // (and other content) is ready for it. Flip AOEnabled to re-enable; the menu controls in
-            // UIGraphicsOptionsDialog must be restored alongside. Kept wired (not deleted) so it's a one-line
-            // re-enable.
+            // GTAO is functional but disabled for now. Flip AOEnabled to re-enable, restoring the
+            // UIGraphicsOptionsDialog controls alongside.
             const bool AOEnabled = false;
             bool ao = AOEnabled && wantVelocity && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null;
             PPXDepthEngine.AOFunc = ao ? Utils.AOPass.Draw : null;
-            // AO needs the velocity buffer too — force-enable it even when TAA/motion blur are off.
+            // AO needs the velocity buffer too - force-enable it even when TAA/motion blur are off
             if (AOEnabled && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null && State.CameraMode == CameraRenderMode._3D)
             {
                 PPXDepthEngine.EnableVelocityTarget(true);
                 PPXDepthEngine.AOFunc = Utils.AOPass.Draw;
             }
 
-            // Velocity diagnostic visualizer (motion-blur combo "Debug (velocity/depth)"): when on, overrides
-            // the entire post chain in DrawBackbuffer so the user sees the raw MRT1 buffer (hue = velocity,
-            // or grayscale packed depth) instead of the scene — independent of TAA now. The TAA meta/trust
-            // debug view lives on the TAA dropdown ("On + Debug" -> cfg.TAADebug); if both are enabled the
-            // velocity visualizer wins (it bypasses the whole chain, TAA included).
+            // velocity visualizer overrides the whole post chain; the TAA meta debug view lives on the
+            // TAA dropdown. Velocity view wins if both are on.
             Utils.TAAResolve.DebugAccum = cfg.TAADebug && taaReady;
             bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
         }
 
-        // --- Post pipeline config for the 3D city/map view -----------------------------------------------
-        // The city/map renderer (FSO.LotView is not its owner - it's a separate Terrain scene) has no World
-        // or WorldState, so it can't drive ChangeAAMode. This static path configures the shared PPXDepthEngine
-        // for it: same WorldConfig.Current source as the lot path (so MSAA / render scale stay consistent),
-        // always 3D, and - for now - with the velocity-dependent passes (TAA, per-pixel motion blur, AO,
-        // velocity debug) left OFF, because the terrain renderer doesn't emit a velocity buffer yet. The
-        // heavy target (re)allocation only runs when the scale / MSAA / viewport actually changes.
+        // Post pipeline config for the 3D city/map view, which has no World/WorldState and can't drive
+        // ChangeAAMode. Mirrors it (minus AO); target (re)allocation only runs on a real change.
         private static int _CityLastMSAA = -1;
         private static float _CityLastSSAA = -1f;
         private static int _CityLastW = -1, _CityLastH = -1;
@@ -1374,18 +1273,13 @@ namespace FSO.LotView
             if (scale == 1f && cfg.SuperSampling > 1) scale = cfg.SuperSampling;
             if (msaa == 0 && scale == 1f && cfg.AA > 0) { if (cfg.AA == 1) msaa = 4; else scale = 2f; }
 
-            // TAA supersedes MSAA — same rationale as ChangeAAMode: a multisampled velocity MRT resolve
-            // averages edge velocity/depth/mask and corrupts TAA's dilation/disocclusion. Force the LOCAL
-            // msaa (not just the engine field) so the _CityLastMSAA change-detect cache below stays coherent.
+            // TAA supersedes MSAA (see ChangeAAMode); force the local msaa so the change-detect cache
+            // below stays coherent
             bool cityTaaOn = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null;
             if (cityTaaOn) msaa = 0;
-            // Cosmic TAAU in the city: enabled now that Terrain.Draw publishes the city's jitter to
-            // PPXDepthEngine.TAAJitterNDC each frame (same M31/M32 convention as the lot), giving the TAAU
-            // reconstruction valid sample positions here. Mirrors ChangeAAMode; set before
-            // EnableHistoryTargets below (history sizes to the native grid in TAAU mode).
+            // TAAU: Terrain.Draw publishes the city's jitter each frame; set before EnableHistoryTargets
             PPXDepthEngine.TAAUEnabled = cityTaaOn && cfg.Upscaler == 1;
-            // Content-shader mip bias under TAA (mirrors ChangeAAMode, incl. the restored -2.0 spec floor
-            // — see that site's aniso-sampling rationale).
+            // mip bias mirrors ChangeAAMode
             PPXDepthEngine.TAAMipBias = (cityTaaOn && scale < 0.999f && scale > 0f)
                 ? System.Math.Max(-2f, (float)System.Math.Log(scale, 2.0)) : 0f;
 
@@ -1404,19 +1298,15 @@ namespace FSO.LotView
             bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
-            // RCAS sharpen — user-controlled, available at any render scale (the downscale resolve uses the
-            // box/tent, not FSR, so this is just optional sharpening). NOTE: city TAA IS wired now (below),
-            // but the TAA-coupled AUTO-sharpen is deliberately NOT mirrored here yet — the city look was
-            // tuned without it, and adding it should be its own validated change. Clear any override left
-            // over from the lot path so lot auto-sharpen doesn't leak into the city.
+            // user sharpen only - the TAA auto-sharpen is deliberately not mirrored here. Clear any
+            // override left over from the lot path.
             RCASSharpen.OverrideAmount = null;
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
             PPXDepthEngine.SharpenFunc = sharpen ? RCASSharpen.Draw : null;
 
             PPXDepthEngine.WithOpacity = false; //3D scene is opaque; no per-pixel opacity blend on resolve.
 
-            // Re-allocate shared targets only on a real size/scale/MSAA change (resize, settings change, or the
-            // lot path having left them sized differently). InitScreenTargets is expensive - never per-frame.
+            // re-allocate shared targets only on a real change - InitScreenTargets is expensive
             int w = gd.Viewport.Width, h = gd.Viewport.Height;
             var bb = PPXDepthEngine.GetBackbuffer();
             int wantW = System.Math.Max(1, (int)System.Math.Round(scale * w));
@@ -1428,10 +1318,8 @@ namespace FSO.LotView
                 _CityLastMSAA = msaa; _CityLastSSAA = scale; _CityLastW = w; _CityLastH = h;
             }
 
-            // Velocity buffer for per-pixel motion blur / TAA / velocity debug. The city terrain is static
-            // geometry, so velocity is camera-induced - Terrain.Draw tracks the previous BaseMatrix and selects
-            // the pass-5 velocity technique. Allocated AFTER InitScreenTargets so it matches the (re)sized
-            // backbuffer (InitScreenTargets disposes it).
+            // velocity is camera-induced (static terrain, see Terrain.Draw); allocate AFTER
+            // InitScreenTargets, which disposes the buffer
             bool wantVelocity = cfg.TAA || cfg.MotionBlur == 2 || cfg.VelocityDebug;
             PPXDepthEngine.EnableVelocityTarget(wantVelocity);
             PPXDepthEngine.EnableHistoryTargets(cfg.TAA);
@@ -1439,16 +1327,13 @@ namespace FSO.LotView
             bool motionBlur3D = wantVelocity && cfg.MotionBlur == 2 && WorldContent.MotionBlur != null && cfg.MotionBlurAmount > 0f;
             PPXDepthEngine.MotionBlurFunc = motionBlur3D ? PerPixelMotionBlur.Draw : null;
 
-            // TAA: resolve-chain stage applied after the spatial AA. Needs the velocity buffer + history
-            // (enabled above when cfg.TAA) and the shaders. Terrain.Draw applies the matching sub-pixel
-            // projection jitter each frame whenever TAAFunc is set. AO stays disabled (as in ChangeAAMode).
+            // Terrain.Draw applies the matching projection jitter whenever TAAFunc is set
             bool taaReady = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null
                             && PPXDepthEngine.GetVelocityTarget() != null && PPXDepthEngine.GetHistoryPrev() != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
             PPXDepthEngine.AOFunc = null;
 
-            // Debug selection mirrors ChangeAAMode: TAA meta/trust view from the TAA dropdown (cfg.TAADebug),
-            // velocity/depth visualizer from the motion-blur combo — independent; velocity view wins if both.
+            // debug selection mirrors ChangeAAMode; velocity view wins if both
             Utils.TAAResolve.DebugAccum = cfg.TAADebug && taaReady;
             bool velocityDebug = wantVelocity && cfg.VelocityDebug && WorldContent.VelocityViz != null;
             PPXDepthEngine.VelocityDebugFunc = velocityDebug ? Utils.VelocityVisualizer.Draw : null;
@@ -1467,15 +1352,9 @@ namespace FSO.LotView
 
             if (config.AdvancedLighting)
             {
-                // Recreate the lightmap on an off->on transition (Light == null) OR an actual lighting-tier
-                // change (LightingMode: FSO/+Walls/+Objs). This mirrors upstream's blunt "recreate Light on
-                // every ChangedWorldConfig" - the behaviour that makes tier changes reliably take effect
-                // there - but scoped to only the cases that matter, so unrelated settings tweaks (render
-                // scale, bloom, ...) don't flicker the lightmap. Merely keeping the old Light and flagging
-                // ROOM_CHANGED proved fragile: it relied on reproducing every side effect of a full rebuild
-                // through the dirty-room pipeline and kept missing cases (a lower tier's shadow
-                // contributions surviving into a higher tier and vice-versa). A one-frame rebuild on a
-                // deliberate slider move is imperceptible - upstream did it on every settings change.
+                // recreate the lightmap on an off->on transition OR a lighting-tier change - patching the
+                // old Light via dirty flags kept missing tier side effects, and a one-frame rebuild on a
+                // deliberate slider move is imperceptible
                 if (Light == null || config.LightingMode != _lastLightingMode)
                 {
                     State.AmbientLight?.Dispose();
@@ -1506,12 +1385,7 @@ namespace FSO.LotView
 
             if (Blueprint != null && !FSOEnvironment.Enable3D)
             {
-                // Mirrors SubWorldComponent.ChangedWorldConfig's (correct) version of this same check. This
-                // had regressed to an unconditional "create once, never revisit" (shad3D compared against a
-                // literal `true`, and the create-branch's condition replaced with `true`) - so toggling the
-                // Advanced Lighting slider between Off/FSO/+Walls/+Objs never rebuilt or tore down WCRC after
-                // its first creation, leaving wall lighting stuck at whatever level was active when the lot
-                // was first loaded regardless of later slider changes.
+                // rebuild/tear down WCRC when Shadow3D changes (mirrors SubWorldComponent.ChangedWorldConfig)
                 var shad3D = (Blueprint.WCRC != null);
                 if (config.Shadow3D != shad3D)
                 {

@@ -18,12 +18,8 @@ namespace FSO.Client.UI.Controls
 {
     /// <summary>
     /// Renders a sim in the UI, this class just helps translate the UI world
-    /// into the 3D world for sim rendering.
-    ///
-    /// Two render modes:
-    ///  - default (orthographic WorldCamera) — the cheap 140x200 thumbnail used by person buttons etc.
-    ///  - perspective (BasicCamera) — a large Create-A-Sim viewport you can orbit (drag) and dolly (scroll).
-    ///    Enable via SetPerspective(true, w, h). Opt-in so the many small UISim instances are unaffected.
+    /// into the 3D world for sim rendering. Two modes: the default orthographic thumbnail,
+    /// and an opt-in perspective CAS viewport (SetPerspective) with orbit/dolly controls.
     /// </summary>
     public class UISim : UIElement
     {
@@ -39,8 +35,7 @@ namespace FSO.Client.UI.Controls
         public bool AutoRotate = true;
         public float TimeOffset;
 
-        // Interactive viewport (e.g. Create-A-Sim): drag to rotate/orbit, scroll to zoom/dolly.
-        // Opt-in so the small person-button/thumbnail UISims are unaffected.
+        // Interactive viewport (CAS): drag to rotate/orbit, scroll to zoom/dolly. Opt-in.
         public bool Interactive = false;
         public float MinZoom = 0.6f, MaxZoom = 2.5f;
         public float RotateSensitivity = 0.01f;
@@ -50,7 +45,6 @@ namespace FSO.Client.UI.Controls
         private int _LastMouseX, _LastMouseWheel;
         private float _ManualRotation;
 
-        // Perspective mode: a real perspective camera orbiting the sim, for a modern large CAS viewport.
         public bool Perspective { get; private set; }
         private float _Azimuth = 0f;                       // radians; 0 = sim facing the camera
         private float _Distance = 11f;                     // camera distance from the focus point
@@ -58,20 +52,17 @@ namespace FSO.Client.UI.Controls
         public float MinDistance = 3f, MaxDistance = 22f;
         private int _TargetW = 140, _TargetH = 200;        // render-target logical size
 
-        // Smooth head/body focus: lerp the look-at + distance toward a target pose.
         private Vector3 _FocusTarget = new Vector3(0, 3.0f, 0);
         private float _DistanceTarget = 11f;
         private bool _SmoothFocus = false;
         public float FocusLerp = 0.16f;
         public float PanFraction = 0.28f;  // >0 renders the sim left of centre, leaving room for menus on the right
 
-        // Studio lighting (CAS): the avatar's compiled directional-lighting technique (#5) is normally fed by a lot's
-        // light maps. With no lot, we feed it a single SYNTHETIC constant light (1x1 textures + zeroed map transform)
-        // so the sim gets a real camera-relative key + cool fill instead of the flat top-down ambient gradient.
+        // Studio lighting (CAS): the directional-lighting technique is normally fed by a lot's light
+        // maps; with no lot we feed a synthetic constant light (1x1 textures + zeroed map transform).
         public bool StudioLighting = false;
         public Vector3 KeyDirection = new Vector3(-0.5f, 0.72f, 0.62f); // direction TO the key (camera-relative; +X=screen-right, +Y=up, +Z=toward camera)
-        // pctAmbient = Fill/(Key+Fill) sets the shadow floor; a strong key + low fill widens the lit-vs-shadow window
-        // so the single directional term actually models the form (FillStrength is the one knob for shadow depth).
+        // pctAmbient = Fill/(Key+Fill) sets the shadow floor (FillStrength is the shadow-depth knob)
         public float KeyStrength = 1.15f, FillStrength = 0.30f;
         public Vector3 KeyColor = new Vector3(1.30f, 1.22f, 1.06f);       // warm key (LightingAdjust)
         public Vector4 ShadowColor = new Vector4(0.16f, 0.20f, 0.30f, 1f); // deep cool shadow (OutsideDark)
@@ -114,15 +105,15 @@ namespace FSO.Client.UI.Controls
         }
 
         /// <summary>
-        /// Switch between the cheap orthographic thumbnail render and a large perspective render for CAS.
-        /// Rebuilds the render target + camera; the avatar (and its current outfit/appearance) is preserved.
+        /// Switch between the orthographic thumbnail and the perspective CAS render.
+        /// Rebuilds the render target + camera; the avatar is preserved.
         /// </summary>
         public void SetPerspective(bool on, int targetW = 0, int targetH = 0)
         {
             if (targetW > 0) _TargetW = targetW;
             if (targetH > 0) _TargetH = targetH;
             Perspective = on;
-            StudioLighting = on; // drive the directional-lighting technique with our synthetic studio light
+            StudioLighting = on;
             if (on) Avatar.RotationY = 0f; // orbit the camera, keep the model front-facing
             RebuildScene();
         }
@@ -165,9 +156,8 @@ namespace FSO.Client.UI.Controls
             var x = (float)Math.Sin(_Azimuth) * _Distance;
             var z = (float)Math.Cos(_Azimuth) * _Distance;
             var orbit = new Vector3(x, 0, z);
-            // Truck the camera along its OWN right axis (not world-x). Shifting position+target by the same
-            // camera-space vector slides the sim to the left of frame without moving the orbit pivot — so the
-            // sim spins in place around its own vertical axis instead of revolving around an off-centre point.
+            // Truck along the camera's own right axis: shifting position+target by the same
+            // camera-space vector frames the sim off-centre without moving the orbit pivot.
             var forward = -Vector3.Normalize(orbit);
             var right = Vector3.Normalize(Vector3.Cross(forward, Vector3.Up));
             var camPan = right * (PanFraction * _Distance);
@@ -260,8 +250,7 @@ namespace FSO.Client.UI.Controls
         private void GraphicsDevice_DeviceReset(object sender, EventArgs e)
         {
             Scene.DeviceReset(GameFacade.GraphicsDevice);
-            // The lazily-created 1x1 studio maps are lost on a device reset; null them so ApplyStudioLighting rebuilds
-            // valid handles next frame (otherwise advancedDirection samples 0 → the directional term collapses to flat).
+            // 1x1 studio maps are lost on a device reset; null them so they're rebuilt next frame
             _StudioWhite?.Dispose(); _StudioWhite = null;
             _StudioDir?.Dispose(); _StudioDir = null;
         }
@@ -285,7 +274,6 @@ namespace FSO.Client.UI.Controls
 
                 if (Perspective)
                 {
-                    // Smoothly animate toward a head/body focus pose.
                     if (_SmoothFocus)
                     {
                         _Focus = Vector3.Lerp(_Focus, _FocusTarget, FocusLerp);
@@ -293,7 +281,6 @@ namespace FSO.Client.UI.Controls
                         UpdatePerspectiveCamera();
                         if ((_Focus - _FocusTarget).LengthSquared() < 0.002f && Math.Abs(_Distance - _DistanceTarget) < 0.02f) _SmoothFocus = false;
                     }
-                    // Drag = orbit the camera around the sim.
                     if (_Dragging)
                     {
                         var dx = state.MouseState.X - _LastMouseX;
@@ -301,7 +288,6 @@ namespace FSO.Client.UI.Controls
                         _Azimuth -= dx * RotateSensitivity;
                         UpdatePerspectiveCamera();
                     }
-                    // Scroll = dolly in/out (cancels an in-progress focus animation).
                     if (wheelDelta != 0f)
                     {
                         _UserControlled = true;
@@ -312,7 +298,7 @@ namespace FSO.Client.UI.Controls
                 }
                 else
                 {
-                    // Legacy: drag = rotate the model; scroll = orthographic precise-zoom.
+                    // legacy: drag rotates the model; scroll = precise-zoom
                     if (_Dragging)
                     {
                         var dx = state.MouseState.X - _LastMouseX;
@@ -328,7 +314,6 @@ namespace FSO.Client.UI.Controls
                 }
             }
 
-            // Gentle turntable until the user takes control.
             if (AutoRotate && !_UserControlled)
             {
                 var time = state.Time.TotalGameTime.Ticks + TimeOffset;
@@ -367,10 +352,9 @@ namespace FSO.Client.UI.Controls
         }
 
         /// <summary>
-        /// Feed the avatar's directional-lighting technique a single synthetic studio light (key + ambient fill),
-        /// camera-relative so the front of the sim stays lit as you orbit. Uses 1x1 constant light/direction maps and
-        /// a zeroed world->light transform so every fragment samples the same light, leaving the normal as the only
-        /// per-pixel variation. Set just before the scene draws; nothing else touches these params in CAS.
+        /// Feed the directional-lighting technique one synthetic camera-relative studio light:
+        /// 1x1 constant maps + a zeroed world->light transform, so every fragment samples the
+        /// same light and the normal is the only per-pixel variation.
         /// </summary>
         private void ApplyStudioLighting()
         {
@@ -386,9 +370,9 @@ namespace FSO.Client.UI.Controls
             if (_StudioDir == null)
                 _StudioDir = new Texture2D(gd, 1, 1, false, SurfaceFormat.Vector4);
 
-            // Keep the key camera-relative: rotate the to-light vector by the orbit azimuth (same handedness as the camera).
+            // keep the key camera-relative: rotate the to-light vector by the orbit azimuth
             var toLight = Vector3.Transform(Vector3.Normalize(KeyDirection), Microsoft.Xna.Framework.Matrix.CreateRotationY(_Azimuth));
-            // The shader reads -direction.xyz as the to-light vector; |xyz| is the directional strength, .w the total.
+            // the shader reads -direction.xyz as the to-light vector; |xyz| = directional strength, .w = total
             _StudioDir.SetData(new[] { new Vector4(-toLight * KeyStrength, KeyStrength + FillStrength) });
 
             if (_DirTechnique < 0)
@@ -418,8 +402,8 @@ namespace FSO.Client.UI.Controls
             {
                 if (!_3DScene.IsInvalidated)
                 {
-                    // DefaultTechnique is a static shared by every avatar; scope it tightly around our one draw so the
-                    // studio technique can't mis-light sibling thumbnail/pie-menu avatars drawn later this frame.
+                    // DefaultTechnique is a static shared by every avatar - scope it around this draw
+                    // so the studio technique can't mis-light other avatars this frame.
                     var prevTech = Vitaboy.Avatar.DefaultTechnique;
                     var prevSpec = Vitaboy.Avatar.SuppressHeadObjectSpec;
                     if (Perspective && StudioLighting) ApplyStudioLighting();

@@ -22,7 +22,7 @@ namespace FSO.Files.RC
         //2: normals
         //3: depth mask (for sinks, fireplaces)
         public static int CURRENT_VERSION = 3;
-        public static int CURRENT_RECONSTRUCT = 21; // back to upstream reconstruction (v14 conditioning/cull/fusion reverted); bumped above any prior fork value so stale v14 caches regenerate
+        public static int CURRENT_RECONSTRUCT = 21; // above any prior fork value so stale caches regenerate
 
         public static DGRPRCParams DefaultParams = new DGRPRCParams();
         public static Dictionary<string, DGRPRCParams> ParamsByIff = new Dictionary<string, DGRPRCParams>()
@@ -139,9 +139,8 @@ namespace FSO.Files.RC
         public BoundingBox? Bounds;
 
         /// <summary>
-        /// Whether any geometry group retained collision triangles (see DGRP3DGeometry.ColVerts). False for
-        /// meshes built without going through the normal reconstruction+SComplete path (e.g. bounds-only
-        /// stubs), in which case picking should fall back to the AABB instead of treating every ray as a miss.
+        /// True if any geometry group retained collision triangles. When false (e.g. bounds-only stubs),
+        /// picking should fall back to the AABB rather than treating every ray as a miss.
         /// </summary>
         public bool HasCollisionMesh
         {
@@ -155,8 +154,7 @@ namespace FSO.Files.RC
         }
 
         /// <summary>
-        /// Ray-triangle intersection against every geometry group's retained collision mesh, in mesh-local
-        /// space. Returns the closest hit distance along the ray, or null if nothing was hit.
+        /// Closest ray hit distance against the retained collision meshes (mesh-local space), or null.
         /// </summary>
         public float? IntersectsRay(Ray ray)
         {
@@ -294,21 +292,15 @@ namespace FSO.Files.RC
 
         private void CleanupFailedLoad(DGRP dgrp, GraphicsDevice gd, string filePath)
         {
-            // LoadData can throw before UnloadedGeoms is created (e.g. the "Reconstruction outdated" check
-            // fires right after reading the header, before the list is allocated). An unguarded Clear() here
-            // therefore NREs *inside the async streaming catch handler* and takes the whole client down.
-            // Guard it so a failed/outdated/corrupt .fsom degrades gracefully. (Outdated CACHE files are now
-            // skipped up-front in RCMeshProvider so they regenerate instead of reaching here.)
+            // LoadData can throw before UnloadedGeoms is allocated - null guard avoids an NRE in the async streaming catch handler
             UnloadedGeoms?.Clear();
             CompleteFSOMLoad(gd);
         }
 
         /// <summary>
-        /// Cheaply checks whether a cached .fsom is safe to stream-load, by reading only its header: it must
-        /// (a) contain geometry (geomCount > 0) and (b) not be an outdated reconstruction — a ReconstructVersion
-        /// below CURRENT_RECONSTRUCT is what LoadData rejects by throwing, which the async streaming path cannot
-        /// recover from (NRE / renders nothing). Callers skip such files so a fresh mesh regenerates instead.
-        /// ReconstructVersion 0 = hand-authored / replacement mesh, never "outdated". False on any read error too.
+        /// Header-only check that a cached .fsom has geometry and a current ReconstructVersion, so the
+        /// async streaming path never hits LoadData's "outdated" throw. 0 = replacement mesh, never outdated.
+        /// False on any read error.
         /// </summary>
         public static bool FileMeshCurrent(string filePath)
         {

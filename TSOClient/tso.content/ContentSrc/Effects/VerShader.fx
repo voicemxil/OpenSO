@@ -36,10 +36,8 @@ struct VertexToShad
 float4x4 BaseMatrix;
 float4x4 MV;
 float4x4 LightMatrix;
-// Previous-frame BaseMatrix (mvp) for city-backdrop velocity output. Set by Terrain.Draw / DrawSurrounding;
-// the backdrop is static in world so velocity is purely camera-induced (BaseMatrix vs PrevBaseMatrix).
-// UN-jittered (unlike BaseMatrix) -- PixShader's CityComputeVel subtracts JitterNDC from currClip instead,
-// so the velocity buffer stays jitter-free rather than carrying last frame's TAA jitter as motion.
+// Previous-frame BaseMatrix for city-backdrop velocity (backdrop is static, so velocity is camera-induced).
+// Un-jittered, unlike BaseMatrix — PixShader's CityComputeVel subtracts JitterNDC from currClip instead.
 float4x4 PrevBaseMatrix;
 
 float4 GetPositionFromLight(float4 position)
@@ -244,8 +242,7 @@ ObjVertexOut TreeVS(ObjVertexIn Input)
 	return CityObjFogVS(Input);
 }
 
-// Velocity-aware variant of the city object/tree path. ObjVertexOutV adds clip-space positions for the
-// current and previous frame so the PS can emit screen-space velocity to MRT1.
+// Velocity variants: pass current + previous clip positions so the PS can write velocity to MRT1.
 struct ObjVertexOutV
 {
 	float4 position : SV_Position0;
@@ -274,12 +271,11 @@ ObjVertexOutV TreeVSv(ObjVertexIn Input)
 	pos.z += pos.w / 100000000;
 	Output.vPos = pos.xyz;
 	Output.currClip = cclip;                          // pre-depthbias clip (clean for velocity)
-	Output.prevClip = mul(opos, PrevBaseMatrix);      // trees static -> same opos, previous camera
+	Output.prevClip = mul(opos, PrevBaseMatrix);
 	return Output;
 }
 
-// Velocity variant of CityObjFogVS — facade (surrounding-lot) art: houses + their trees. Facades are
-// static, so velocity is camera-induced (BaseMatrix vs PrevBaseMatrix, same ObjModel both frames).
+// Velocity variant of CityObjFogVS (surrounding-lot facades; static).
 ObjVertexOutV CityObjFogVSv(ObjVertexIn Input)
 {
 	ObjVertexOutV Output = (ObjVertexOutV)0;
@@ -446,7 +442,7 @@ VertexToShad NShadVS(CityVertex Input)
 	return Output;
 }
 
-// Velocity-aware new-city (distant terrain + water) VS. CityVertexOutV adds clip positions for velocity.
+// Velocity variant of the new-city (distant terrain + water) VS.
 struct CityVertexOutV
 {
 	float4 VertexPosition : SV_Position0;

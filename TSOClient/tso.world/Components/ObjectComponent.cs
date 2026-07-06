@@ -62,9 +62,7 @@ namespace FSO.LotView.Components
         private BoundingBox _Bounds;
         private Matrix _World3D;
         private bool _World3DDirty;
-        // Previous-frame World3D snapshot, captured at the end of each Draw. Used by velocity-aware shaders
-        // (motion vectors -> motion blur, TAA) to compute per-pixel screen-space motion. On the first draw
-        // it mirrors the current World3D so velocity = 0 (no motion).
+        // previous-frame World3D, for motion vectors (TAA/motion blur); mirrors current on first draw
         private Matrix _PreviousWorld3D;
         private bool _PrevWorld3DValid;
         public Matrix PreviousWorld3D => _PrevWorld3DValid ? _PreviousWorld3D : World3D;
@@ -155,11 +153,8 @@ namespace FSO.LotView.Components
         }
 
         /// <summary>
-        /// Picking test against the object's actual reconstructed silhouette rather than its AABB. Falls
-        /// back to the AABB result when no collision mesh is available (e.g. bounds-only stub meshes), so
-        /// objects without retained geometry remain clickable. Returns the hit distance along the world
-        /// ray (comparable with other objects' IntersectsBounds/IntersectsPrecise results), or null if the
-        /// ray misses the object entirely.
+        /// Picking test against the reconstructed collision mesh, falling back to the AABB when none is
+        /// retained. Returns the hit distance along the world ray, or null on miss.
         /// </summary>
         public float? IntersectsPrecise(Ray ray)
         {
@@ -174,7 +169,7 @@ namespace FSO.LotView.Components
             var localRay = new Ray(localPos, localTarget - localPos);
 
             var localT = dgrp.IntersectsRay(localRay);
-            if (localT == null) return null; // AABB was hit, but the real geometry was missed
+            if (localT == null) return null; // AABB hit, but the real geometry was missed
 
             var worldHit = Vector3.Transform(localPos + localRay.Direction * localT.Value, world);
             return Vector3.Dot(worldHit - ray.Position, ray.Direction);
@@ -429,17 +424,9 @@ namespace FSO.LotView.Components
             }
         }
 
-        // ---------------------------------------------------------------------------- GPU instancing
-        // Support for the batched-draw path in WorldEntities, which groups several ObjectComponents that
-        // share a mesh into one DGRPRenderer.DrawInstanced call instead of calling Draw() per object.
-
         /// <summary>
-        /// True if this object may be drawn as part of a GPU-instanced batch this frame instead of via its
-        /// own Draw() call. Deliberately conservative: excludes anything Draw() does extra bookkeeping for
-        /// that the batch path does not replicate (particles, the 2D/headline branches, the Room==65533
-        /// "disabled" render override - see DGRPRenderer.DrawInstanced) or that only shows up in the rarer
-        /// "3D component forced on in a 2D camera" mode. Objects that fail this check simply fall back to
-        /// the existing per-object Draw() path with no behavior change.
+        /// True if this object can join a GPU-instanced batch this frame (see WorldEntities). Excludes
+        /// anything Draw() handles specially; failures fall back to per-object Draw().
         /// </summary>
         public bool CanInstance(WorldState world)
         {
@@ -452,16 +439,13 @@ namespace FSO.LotView.Components
         }
 
         /// <summary>
-        /// Loads (if necessary) and returns this object's shared 3D mesh, without drawing it - used to
-        /// compute the instancing batch key (see WorldEntities).
+        /// Loads and returns the shared 3D mesh without drawing - used as the instancing batch key.
         /// </summary>
         public DGRP3DMesh EnsureMesh3D() => dgrp?.EnsureMesh3D();
 
         /// <summary>
-        /// Returns this frame's World3D and the previous frame's snapshot (for velocity), and advances the
-        /// previous-world bookkeeping for next frame - mirrors what ObjectComponent.Draw does around
-        /// dgrp.Draw3D, without issuing a draw call. Used by the instancing batch path, which draws a
-        /// whole group of objects via one DGRPRenderer.DrawInstanced call.
+        /// Returns current and previous World3D (for velocity) and advances the previous-world snapshot,
+        /// mirroring Draw's bookkeeping without issuing a draw call.
         /// </summary>
         public void PrepareInstancedDraw(out Matrix world, out Matrix prevWorld)
         {

@@ -4,9 +4,8 @@ float4x4 Projection;
 float4x4 View;
 float4x4 World;
 
-// Velocity-output uniforms for the DrawWithVelocity techniques. ViewProjection is pre-combined on the
-// CPU side so the velocity VS can use a single mat-mul and fit the level_9_1 temp register budget.
-// PreviousWorld covers the (rare) case of moving terrain pieces; for typical static grass it equals World.
+// Velocity-technique transforms. ViewProjection is pre-combined CPU-side so the velocity VS fits the
+// level_9_1 temp register budget.
 float4x4 ViewProjection;
 float4x4 PreviousViewProjection;
 float4x4 PreviousWorld;
@@ -20,11 +19,8 @@ float4 DiffuseColor;
 float2 ScreenOffset;
 float GrassProb;
 float GrassFadeMul;
-// Negative texture LOD bias under TAA/TAAU (the DLSS/FSR2-spec integration requirement): at render scale
-// < 1 the derivative-selected mip is one level lower than the OUTPUT grid needs, so the temporal resolve
-// converges to a mip-blurred texture ("painted over" ground detail). Biasing by ~log2(renderScale) samples
-// the sharper mip; the per-frame aliasing that adds is exactly what the jittered temporal accumulation
-// integrates into stable native-res texture detail. 0 when TAA is off (no resolve to integrate the noise).
+// Negative texture LOD bias (~log2(renderScale)) under TAA/TAAU at render scale < 1, so the temporal
+// resolve converges at the original texture frequency (DLSS/FSR2 convention). 0 when TAA is off.
 float MipBias;
 
 float2 TexOffset;
@@ -760,7 +756,7 @@ void BasePS3D(GrassPSVTX input, out float4 color:COLOR0)
 		float a = 1 - (2 - sqrt(input.ScreenPos.z / (25 * GrassFadeMul)));
 		if (a > 0) {
 			a = min(1, a);
-			//blade mipmaps (MipBias: sharper noise mip under TAA — see uniform comment)
+			//blade mipmaps
 			float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias)).xy;
 			float multex = rand.x;
 			multex *= ((2.0 - input.GrassInfo.x) / 2);
@@ -785,10 +781,8 @@ void BasePSLMap(GrassPSVTX input, out float4 color:COLOR0)
 }
 
 // ---------------------------------------------------------------------------- DrawWithVelocity (terrain)
-// Velocity-aware variant of GrassVS+BasePS3D that emits the same color AND screen-space velocity to MRT1
-// so TAA can reproject history correctly on grass/terrain pixels during camera moves. Static-geometry
-// velocity is purely camera-induced (PreviousWorld == World for non-moving terrain pieces); the math
-// mirrors RCObject's DrawWithVelocity.
+// GrassVS/BasePS3D variants that also emit screen-space velocity (COLOR1) and normal (COLOR2) for
+// TAA/motion blur; math mirrors RCObject's DrawWithVelocity.
 struct GrassPSVTXv {
     float4 Position : SV_Position0;
     float4 Color : COLOR0;
@@ -827,11 +821,8 @@ GrassPSVTXv GrassVSv(GrassVTX input)
     output.ScreenPos.xy = output.ScreenPos.xy*ScreenMatrix.xw + output.ScreenPos.yx*ScreenMatrix.zy;
     output.ScreenPos.xy += ScreenRotCenter;
 
-    // Velocity outputs. For terrain we deliberately use `World` (NOT `PreviousWorld`) on both sides —
-    // terrain is static in world space, so PreviousWorld == World by definition. `FloorGeom.DrawFloor`
-    // overwrites `e.World` per floor inside its loop, but never touches PreviousWorld; pulling them apart
-    // with a separately-set uniform produces large spurious velocity from the per-floor translation delta.
-    // Velocity is then purely camera-induced (ViewProjection vs PreviousViewProjection), which is correct.
+    // Deliberately World (not PreviousWorld) on both sides: terrain is static, and FloorGeom.DrawFloor
+    // rewrites e.World per floor without updating PreviousWorld, which would give spurious velocity.
     output.currClip = position;
     float4 prevWPos = mul(input.Position, World);
     output.prevClip = mul(prevWPos, PreviousViewProjection);
@@ -839,8 +830,7 @@ GrassPSVTXv GrassVSv(GrassVTX input)
     return output;
 }
 
-// Current-frame TAA sub-pixel jitter (NDC). The current clip pos is rasterized jittered (TAA sampling) but
-// velocity must use the UN-jittered NDC: NDC_jittered = NDC_unjittered + JitterNDC, so subtract it.
+// Current-frame TAA sub-pixel jitter (NDC), subtracted so velocity is jitter-free.
 float2 JitterNDC;
 
 float2 ComputeGrassVelocity(float4 curr, float4 prev)
@@ -850,10 +840,10 @@ float2 ComputeGrassVelocity(float4 curr, float4 prev)
     float2 currNDC = curr.xy / currW - JitterNDC;
     float2 prevNDC = prev.xy / prevW;
     float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
-    return clamp(v, -0.5, 0.5); // was +/-0.05 (fit the meta byte encode) — 0.05 UV = ~64px/frame, routinely EXCEEDED by fast drags/rotation at 30fps: every writer saturated and reprojection undershot by the excess = the displaced-silhouette / motion-ghosting saga. fp16 buffer holds +/-0.5 losslessly; the meta encode still saturates itself on store (desirable: the reactive fires during ultra-fast motion).
+    return clamp(v, -0.5, 0.5); // fp16 buffer holds +/-0.5 losslessly; the meta encode saturates itself on store
 }
 
-// Same color logic as BasePS3D — duplicated rather than refactored to avoid touching the existing PS.
+// Color logic duplicated from BasePS3D.
 GrassPSOutputV BasePS3DV(GrassPSVTXv input)
 {
     GrassPSOutputV o;
@@ -884,7 +874,7 @@ GrassPSOutputV BasePS3DV(GrassPSVTXv input)
         float a = 1 - (2 - sqrt(input.ScreenPos.z / (25 * GrassFadeMul)));
         if (a > 0) {
             a = min(1, a);
-            // MipBias: sharper noise mip under TAA — see uniform comment.
+            //blade mipmaps
             float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias)).xy;
             float multex = rand.x;
             multex *= ((2.0 - input.GrassInfo.x) / 2);
@@ -900,8 +890,7 @@ GrassPSOutputV BasePS3DV(GrassPSVTXv input)
         color.a *= Alpha;
     }
     o.color = color;
-    // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. Linear (not NDC clip.z/clip.w)
-    // so half-float depth precision stays ~distance*2^-10 — NDC banding broke SSAO. See RCObject.PackDepth.
+    // velocity.b = normalized linear view distance (clip.w / far=800); see RCObject.PackDepth.
     o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), saturate(input.currClip.w / 800.0), 1);
     // World-space normal for screen-space AO.
     o.normal = float4(normalize(input.Normal), 1);
@@ -1100,8 +1089,7 @@ technique DrawMask
 	}
 }
 
-// Velocity-aware grass-blade PS (3D shells). Same as BladesPS3D plus velocity output to COLOR1. Uses
-// GrassVSv (provides currClip/prevClip). velocity.a=1 makes the NonPremultiplied blend overwrite MRT1
+// BladesPS3D plus velocity output. velocity.a=1 makes the NonPremultiplied blend overwrite MRT1
 // cleanly even though COLOR0 stays translucent for shell layering.
 GrassPSOutputV BladesPS3DV(GrassPSVTXv input)
 {
@@ -1119,16 +1107,14 @@ GrassPSOutputV BladesPS3DV(GrassPSVTXv input)
     color.a *= fade * fade;
     color.a *= Alpha;
     o.color = color;
-    // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. See RCObject.PackDepth.
+    // velocity.b = normalized linear view distance (clip.w / far=800); see RCObject.PackDepth.
     o.velocity = float4(ComputeGrassVelocity(input.currClip, input.prevClip), saturate(input.currClip.w / 800.0), 1);
     o.normal = float4(normalize(input.Normal), 1);
     return o;
 }
 
-// DrawBaseWithVelocity mirrors DrawBase's pass layout (TerrainComponent picks Passes[2] for 3D mode).
-// Only MainPass3D is velocity-aware for now; the other passes reuse the original PSes. Added at the end
-// of the file so the existing GrassTechniques enum (DrawBase=0..DrawMask=4) stays valid; this new
-// technique is index 5.
+// Mirrors DrawBase's pass layout (TerrainComponent picks Passes[2] in 3D); only MainPass3D emits velocity.
+// Velocity techniques are appended so the GrassTechniques enum indices (DrawBase=0..DrawMask=4) stay valid.
 technique DrawBaseWithVelocity
 {
     pass MainPassSimple
@@ -1163,9 +1149,7 @@ technique DrawBaseWithVelocity
     }
 }
 
-// DrawBladesWithVelocity mirrors DrawBlades' pass layout (TerrainComponent picks Passes[2]=MainBlades3D
-// in 3D non-parallax). Only MainBlades3D is velocity-aware; the other passes reuse the originals (they
-// aren't hit in 3D since parallax is hardcoded off in TerrainComponent's blade loop). Index 6.
+// Mirrors DrawBlades' pass layout; only MainBlades3D emits velocity.
 technique DrawBladesWithVelocity
 {
     pass MainBladesSimple

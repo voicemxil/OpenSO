@@ -3,8 +3,7 @@
 float4x4 World;
 float4x4 ViewProjection;
 
-// Previous-frame transforms for the DrawWithVelocity technique (per-pixel motion blur / TAA). Pushed by
-// DGRPRenderer.PreviousWorld / WorldEntities (PreviousViewProjection). Unused by every other technique.
+// Previous-frame transforms, used only by the velocity (TAA/motion blur) techniques.
 float4x4 PreviousWorld;
 float4x4 PreviousViewProjection;
 
@@ -23,13 +22,8 @@ sampler TexSampler = sampler_state {
 	AddressV = Clamp;
 };
 
-// Anisotropic view of MeshTex for the velocity (TAA) path's mip-biased sampling (SM4 only — the
-// GrassShader AnisoTexSampler pattern). The DLSS/FSR2-spec negative mip bias assumes ANISOTROPIC
-// filtering on the biased samplers: under trilinear, the sharper mip re-aliases on minified/oblique
-// content (tree leaves especially) at a per-frame rate the temporal resolve cannot fully integrate —
-// the reason the bias floor was blunted to -1.0 (World.ChangeAAMode). With aniso + footprint-correct
-// gradient sampling (exactly how the wall path below already samples) the full spec bias is stable,
-// restoring object-texture distinctness below 0.5x render scale.
+// Anisotropic view of MeshTex for the velocity path's mip-biased sampling (SM4 only). The negative
+// MipBias assumes aniso filtering; under trilinear the sharper mip re-aliases on minified content.
 #if SM4
 sampler MeshAnisoSampler = sampler_state {
 	texture = <MeshTex>;
@@ -268,10 +262,8 @@ technique Draw
 }
 
 // ---------------------------------------------------------------------------- DrawWithVelocity
-// Same as Draw, but the VS forwards both current and previous-frame clip-space positions and the PS emits
-// screen-space velocity to COLOR1 in addition to color to COLOR0. Selected by WorldEntities.StaticDraw
-// when the engine has bound a velocity MRT (motion blur / TAA). Same pass layout as Draw so the existing
-// PassOffset / DirPassOffset logic still picks lit-vs-directional correctly.
+// Same as Draw, but also emits screen-space velocity (COLOR1) and normal (COLOR2) for TAA/motion blur.
+// Pass layout matches Draw so the PassOffset/DirPassOffset selection still works.
 struct VertexOutV
 {
 	float4 position : SV_Position0;
@@ -304,22 +296,13 @@ VertexOutV vsRCV(VertexIn v)
 	return r;
 }
 
-// Compute screen-space velocity from current/previous clip-space positions. NDC delta [-1..1] maps to UV
-// delta [0..1] via *0.5; Y axis is flipped because NDC up=+1 but UV down=+1. Visible geometry has w > 0
-// (in front of camera), so guard with a positive floor — earlier sign(w) variant left w==0 unprotected
-// because sign(0)==0, which produced NaN velocity and smeared the world. Clamp the final value at +/-0.05
-// UV/frame (5% screen) — enough range for fast camera moves without smearing the whole frame.
-// Current-frame TAA sub-pixel jitter (NDC), matching WorldState.Projection's M31/M32 offset. The current
-// clip pos is rasterized JITTERED (so TAA samples sub-pixels), but velocity must use the UN-jittered NDC:
-// NDC_jittered = NDC_unjittered + JitterNDC, so subtract it. PreviousViewProjection is already un-jittered.
-// Leaving the jitter in velocity made motion blur smear stationary pixels and fed jitter back into TAA.
+// Current-frame TAA sub-pixel jitter (NDC). currClip is rasterized jittered, but velocity must use
+// un-jittered NDC, so it is subtracted; PreviousViewProjection is supplied un-jittered.
 float2 JitterNDC;
-// Negative texture LOD bias under TAA at render scale < 1 (DLSS/FSR2 integration requirement, mirrors
-// GrassShader.MipBias): sample the sharper mip so the temporal resolve converges at the ORIGINAL texture
-// frequency instead of one mip lower. Only the velocity techniques consume it (they are what runs under
-// TAA); 0 otherwise. The per-frame aliasing it adds is what the jittered accumulation integrates away.
+// Negative texture LOD bias under TAA at render scale < 1 (mirrors GrassShader.MipBias); 0 when TAA is off.
 float MipBias;
 
+// NDC delta -> UV delta (*0.5, Y flipped). Positive w floor: w==0 would produce NaN velocity.
 float2 ComputeVelocity(float4 curr, float4 prev)
 {
 	float currW = max(curr.w, 1e-4);
@@ -327,23 +310,17 @@ float2 ComputeVelocity(float4 curr, float4 prev)
 	float2 currNDC = curr.xy / currW - JitterNDC;
 	float2 prevNDC = prev.xy / prevW;
 	float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
-	return clamp(v, -0.5, 0.5); // was +/-0.05 (fit the meta byte encode) — 0.05 UV = ~64px/frame, routinely EXCEEDED by fast drags/rotation at 30fps: every writer saturated and reprojection undershot by the excess = the displaced-silhouette / motion-ghosting saga. fp16 buffer holds +/-0.5 losslessly; the meta encode still saturates itself on store (desirable: the reactive fires during ultra-fast motion).
+	return clamp(v, -0.5, 0.5); // fp16 buffer holds +/-0.5 losslessly; the meta encode saturates itself on store
 }
 
-// velocity.b = normalized LINEAR view distance (clip.w / farPlane), clamped to [0,1] (0=near .. 1=far).
-// The lot camera is perspective, so clip.w is the positive view-space distance and dividing by the
-// fixed far plane (BasicCamera.FarPlane = 800) makes this linear in world space. We deliberately do NOT
-// store clip.z/clip.w (NDC depth): NDC depth is non-linear/front-loaded, and a half-float only has
-// ~2^-10 relative precision, so mid-range NDC depth quantizes to ~0.3 world-units — which read as
-// horizontal depth banding in SSAO. Linear distance keeps precision ~ distance*2^-10 (~0.02u nearby).
-// Consumers (TAA velocity dilation, motion-blur soft-depth, AO) all assume .b is [0,1] near..far, which
-// this preserves. velocity.a stays the valid-velocity mask.
+// velocity.b = normalized linear view distance (clip.w / far plane, BasicCamera.FarPlane = 800), [0,1]
+// near..far. Linear rather than NDC depth: half-float NDC quantization caused depth banding in SSAO.
+// velocity.a is the valid-velocity mask.
 float PackDepth(float4 clip) { return saturate(clip.w / 800.0); }
 
 PSOutputV psRCV(VertexOutV v)
 {
 	PSOutputV o;
-	// SM4: aniso + gradient sampling so the full spec MipBias is per-frame-stable (see MeshAnisoSampler).
 #if SM4
 	float4 tex = tex2Dgrad(MeshAnisoSampler, v.texCoord, ddx(v.texCoord) * exp2(MipBias), ddy(v.texCoord) * exp2(MipBias));
 #else
@@ -353,7 +330,7 @@ PSOutputV psRCV(VertexOutV v)
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
-	// World-space surface normal for screen-space AO. v.normal already includes the World transform.
+	// World-space normal for screen-space AO.
 	o.normal = float4(normalize(v.normal), 1);
 	return o;
 }
@@ -362,7 +339,6 @@ PSOutputV psDirRCV(VertexOutV v)
 {
 	PSOutputV o;
 	float3 n = normalize(v.normal);
-	// SM4: aniso + gradient sampling (see psRCV / MeshAnisoSampler).
 #if SM4
 	float4 tex = tex2Dgrad(MeshAnisoSampler, v.texCoord, ddx(v.texCoord) * exp2(MipBias), ddy(v.texCoord) * exp2(MipBias));
 #else
@@ -402,14 +378,8 @@ technique DrawWithVelocity
 }
 
 // ---------------------------------------------------------------------------- Instanced draws
-// GPU instancing for repeated identical objects (same DGRP mesh + same dynamic-sprite state, batched by
-// DGRPRenderer.DrawInstanced). Per-instance World (and PreviousWorld, for the velocity variant) is fed
-// via stream-1 vertex data instead of the World/PreviousWorld uniforms, one full matrix row per TEXCOORD
-// register. We pass all 4 rows rather than the common 3-row affine-compact trick because this file uses
-// row-vector mul(v, M) semantics throughout; packing only 3 rows would require re-deriving the correct
-// multiply order for the dropped translation row, which is an easy source of transpose bugs. Instance
-// data is written directly from the CPU-side row-major Matrix (M11..M44) with no repacking, so instWorld
-// here is bit-for-bit the same matrix the per-object path would have set into the World uniform.
+// Per-instance World (and PreviousWorld for the velocity variant) arrives as stream-1 vertex data,
+// one full matrix row per TEXCOORD, row-major exactly as written by DGRPRenderer.DrawInstanced.
 struct VertexInInstanced
 {
 	float4 position : SV_Position0;
@@ -588,10 +558,8 @@ technique WallLMap
 }
 
 // ---------------------------------------------------------------------------- Wall velocity
-// Mirror of vsWallRC + psWallRC that ALSO emits per-pixel screen-space velocity to MRT1. Used by
-// WallComponentRC.Draw when the engine has VelocityTarget bound. PreviousWorld is NOT a separate
-// uniform here — walls are static rigid geometry in the lot frame, so velocity comes purely from
-// camera motion (ViewProjection vs PreviousViewProjection).
+// vsWallRC/psWallRC plus velocity output. Walls are static, so PreviousWorld is not used — velocity is
+// camera-only (ViewProjection vs PreviousViewProjection).
 struct WallVertexOutV
 {
     float4 position : SV_Position0;
@@ -627,7 +595,6 @@ PSOutputV psWallRCV(WallVertexOutV v)
 #if SIMPLE
     float4 color = gammaMul(v.color * tex2D(TexSampler, texC), lightInterp(mPos, v.texCoord.z));
 #else
-    // MipBias: sharper wall-texture mip under TAA — see uniform comment.
     float4 color = gammaMul(v.color * tex2Dgrad(AnisoSampler, texC, ddx(v.texCoord.xy) * exp2(MipBias), ddy(v.texCoord.xy) * exp2(MipBias)), lightInterp(mPos, v.texCoord.z));
 #endif
     if (SideMask != 0) {
@@ -639,8 +606,7 @@ PSOutputV psWallRCV(WallVertexOutV v)
     if (color.a < 0.1) discard;
     o.color = color;
     o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
-    // Wall normal: walls are planar so reconstructing from world-pos derivatives is reliable here
-    // (no interior depth discontinuities). cross(dy, dx) gives the outward face normal.
+    // Walls are planar, so a derivative-reconstructed face normal is safe here.
     o.normal = float4(normalize(cross(ddy(v.modelPos.xyz), ddx(v.modelPos.xyz))), 1);
     return o;
 }

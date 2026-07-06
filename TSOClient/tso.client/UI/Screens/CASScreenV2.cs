@@ -9,13 +9,10 @@ using FSO.Common.Rendering.Framework.IO;
 namespace FSO.Client.UI.Screens
 {
     /// <summary>
-    /// Modern Create-A-Sim (OpenSO) — behind the GlobalSettings.ModernCAS feature flag.
-    ///
-    /// Built from scratch: the legacy sprite UI is hidden entirely and replaced with a full-window perspective
-    /// sim (left, TS4-style), a rounded frosted glass panel, and a Head / Body / Bio tab bar (dark-studio theme:
-    /// near-black panel, teal accent). Only the underlying DATA is reused — the inherited head/body collection
-    /// viewers (selection holders, shown one at a time) and the name/description text edits (read by
-    /// PersonSelectionEditController) — so the avatar-create save path / server PDU is untouched.
+    /// Modern Create-A-Sim, behind the GlobalSettings.ModernCAS flag: full-window perspective sim,
+    /// frosted glass panel with Head/Body/Bio tabs. The legacy sprite UI is hidden; only the inherited
+    /// data controls are reused (head/body collection viewers, name/description edits read by
+    /// PersonSelectionEditController), so the avatar-create save path / server PDU is untouched.
     /// </summary>
     public class CASScreenV2 : PersonSelectionEdit
     {
@@ -39,7 +36,7 @@ namespace FSO.Client.UI.Screens
             var gh = GlobalSettings.Default.GraphicsHeight;
             var gd = GameFacade.GraphicsDevice;
 
-            // ---- Full-window perspective sim (shifted left), layered behind the UI ----
+            // full-window perspective sim (shifted left), layered behind the UI
             SimBox.AutoRotate = true;
             SimBox.Interactive = true;
             SimBox.Size = new Vector2(gw, gh);
@@ -51,14 +48,13 @@ namespace FSO.Client.UI.Screens
             m_HeadSkinBrowser.OnChange += (e) => SimBox.FocusHead();
             m_BodySkinBrowser.OnChange += (e) => SimBox.FocusBody();
 
-            // ---- Hide ALL legacy controls; we rebuild the menu from scratch ----
+            // hide all legacy controls
             foreach (var child in new List<UIElement>(Children))
             {
                 if (child == Background || child == SimBox) continue;
                 child.Visible = false;
             }
 
-            // ---- Custom dark-studio gradient backdrop (replaces the legacy blue background) ----
             if (Background != null) Background.Visible = false;
             var backdrop = new UIImage(RadialGradient(gd, 480, 300, new Vector2(0.30f, 0.40f),
                 new Color(48, 56, 72), new Color(7, 9, 14), 0.98f));
@@ -66,15 +62,12 @@ namespace FSO.Client.UI.Screens
             backdrop.Position = new Vector2((gw - 1024) / -2f, (gh - 768) / -2f);
             this.AddAt(1, backdrop); // behind the sim (sim shifts to index 2)
 
-            // ---- Rounded frosted glass panel — placed BEHIND the controls (above the sim) ----
             var panel = new UIImage(RoundedRect(gd, (int)PW, (int)PH, 18, new Color(19, 23, 30, 222))) { X = PX, Y = PY };
             this.AddAt(3, panel);
 
-            // ---- Studio lighting is driven by UISim's directional technique; keep AmbientLight neutral so it doesn't
-            //      uniformly scale (and re-flatten / clip) the directional result. ----
+            // keep AmbientLight neutral so it doesn't rescale/clip UISim's studio directional result
             if (SimBox.Avatar != null) SimBox.Avatar.AmbientLight = Vector4.One;
 
-            // ---- Head / Body / Bio tab bar ----
             _TabActive = RoundedRect(gd, 150, 40, 11, Accent);
             _TabInactive = RoundedRect(gd, 150, 40, 11, new Color(38, 44, 56, 210));
             _LightText = TextStyle.Create(new Color(216, 224, 234), 13);
@@ -90,35 +83,29 @@ namespace FSO.Client.UI.Screens
                 this.Add(lbl);
                 _TabLabel.Add(lbl);
                 int idx = i;
-                // Register the click on the tab IMAGE itself (local 0,0,w,h region), the way UIButton/UIImage do.
                 bg.ListenForMouse((type, state) => { if (type == UIMouseEventType.MouseUp) SetTab(idx); });
             }
 
-            // ---- Reposition the reused interactive widgets onto the panel ----
             Place(FemaleButton,        PX + 26,  PY + 78);
             Place(MaleButton,          PX + 74,  PY + 78);
             Place(SkinLightButton,     PX + 160, PY + 78);
             Place(SkinMediumButton,    PX + 208, PY + 78);
             Place(SkinDarkButton,      PX + 256, PY + 78);
 
-            // ---- Re-skin the gender / skin pickers with custom glassy glyph icons ----
             ReskinButton(FemaleButton,     GenderIcon(gd, IconSize, IconSize, false));
             ReskinButton(MaleButton,       GenderIcon(gd, IconSize, IconSize, true));
             ReskinButton(SkinLightButton,  SkinIcon(gd, IconSize, IconSize, new Color(242, 211, 181)));
             ReskinButton(SkinMediumButton, SkinIcon(gd, IconSize, IconSize, new Color(198, 138, 91)));
             ReskinButton(SkinDarkButton,   SkinIcon(gd, IconSize, IconSize, new Color(120, 78, 52)));
 
-            // ---- Expand both thumbnail grids to fill the panel, with frosted-glass cell frames. Head and body
-            //      thumbnails have different native aspects (~1:1 vs ~33:70), so each grid gets its own cell shape;
-            //      the image area is ThumbSize - 2*offset, so it must match the native aspect to avoid stretching. ----
-            // HEAD: square cells (image area 60x60) → ~6 columns.
+            // Head and body thumbs have different native aspects (~1:1 vs ~33:70), so each grid gets its
+            // own cell shape; the image area (ThumbSize - 2*offset) must match to avoid stretching.
             m_HeadSkinBrowser.Size            = new Vector2(PW - 44, PH - 230);
             m_HeadSkinBrowser.ThumbSize       = new Vector2(HeadCellW, HeadCellH);
             m_HeadSkinBrowser.ThumbMargins    = new Vector2(8, 8);
             m_HeadSkinBrowser.ThumbImageOffsets = new Vector2(CellOff, CellOff);
             m_HeadSkinBrowser.ThumbButtonImage = GlassStrip(gd, HeadCellW, HeadCellH, CellR);
             m_HeadSkinBrowser.Relayout();
-            // BODY: tall cells (image area 60x127) preserve the full-body portrait aspect.
             m_BodySkinBrowser.Size            = new Vector2(PW - 44, PH - 230);
             m_BodySkinBrowser.ThumbSize       = new Vector2(BodyCellW, BodyCellH);
             m_BodySkinBrowser.ThumbMargins    = new Vector2(6, 6);
@@ -148,8 +135,8 @@ namespace FSO.Client.UI.Screens
             e.Position = new Vector2(x, y);
         }
 
-        // Swap a reused gender/skin UIButton onto a generated 4-state glass icon. Frame width == IconSize so the
-        // button's horizontal 9-slice is a no-op; ImageStates re-syncs the click region to the new texture.
+        // Swap a reused UIButton onto a generated 4-state glass icon. Frame width == IconSize so the
+        // 9-slice is a no-op; ImageStates re-syncs the click region.
         private void ReskinButton(UIButton btn, Texture2D tex)
         {
             if (btn == null) return;
@@ -197,7 +184,7 @@ namespace FSO.Client.UI.Screens
             return tex;
         }
 
-        // Radial gradient texture: inner colour at centerFrac fading (smoothstep) to outer at radiusFrac of width.
+        // Radial gradient: inner colour at centerFrac fading to outer at radiusFrac of width.
         private static Texture2D RadialGradient(GraphicsDevice gd, int w, int h, Vector2 centerFrac, Color inner, Color outer, float radiusFrac)
         {
             var tex = new Texture2D(gd, w, h);
@@ -215,9 +202,7 @@ namespace FSO.Client.UI.Screens
             return tex;
         }
 
-        // ---------------------------------------------------------------------------------------------------------
-        //  Procedural glassy controls (frosted rounded buttons + simple glyph icons) for the dark-studio theme.
-        // ---------------------------------------------------------------------------------------------------------
+        // ---- Procedural glassy controls (frosted rounded buttons + glyph icons) ----
 
         // Non-premultiplied src-over of one pixel.
         private static void Blend(Color[] data, int idx, Color src)
@@ -234,8 +219,7 @@ namespace FSO.Client.UI.Screens
             data[idx] = new Color((int)r, (int)g, (int)b, (int)(oa * 255));
         }
 
-        // Fill a rounded rect (frame at ox,oy of size w x h in a `stride`-wide buffer) with a frosted fill,
-        // a vertical top→bottom sheen, and a coloured border.
+        // Fill a rounded rect at ox,oy with a frosted fill, a top sheen and a coloured border.
         private static void FillGlass(Color[] data, int stride, int ox, int oy, int w, int h, int r,
                                       Color fill, Color border, int borderW)
         {
@@ -249,7 +233,6 @@ namespace FSO.Client.UI.Screens
                     float cov = MathHelper.Clamp(r - dist + 0.5f, 0f, 1f); // soft outer edge
                     if (cov <= 0f) continue;
 
-                    // top sheen: lighten the upper portion of the fill for a glassy look
                     float sheen = MathHelper.Clamp(1f - (float)y / h, 0f, 1f);
                     var f = fill;
                     f = new Color(
@@ -258,7 +241,6 @@ namespace FSO.Client.UI.Screens
                         (int)MathHelper.Clamp(f.B + sheen * 30, 0, 255),
                         f.A);
 
-                    // border: within borderW of the rounded edge
                     float edge = r - dist; // distance inside the rounded edge
                     var col = (edge <= borderW) ? border : f;
                     col = new Color(col.R, col.G, col.B, (int)(col.A * cov));
@@ -310,8 +292,8 @@ namespace FSO.Client.UI.Screens
                 }
         }
 
-        // 4-state frosted-glass button strip (normal / selected+hover / down / disabled), each frame w x h.
-        // The optional `glyph` callback stamps an icon centred in each frame; it receives the per-state accent colour.
+        // 4-state frosted-glass button strip (normal / selected+hover / down / disabled). The optional
+        // `glyph` callback stamps an icon in each frame with the per-state accent colour.
         private static Texture2D GlassStrip(GraphicsDevice gd, int w, int h, int r,
             System.Action<Color[], int, int, int, Color> glyph = null)
         {

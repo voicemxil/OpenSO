@@ -4,10 +4,9 @@ float4x4 World;
 float4x4 View;
 float4x4 Projection;
 
-// Velocity-technique matrices + previous-frame bone array for skinned-deformation velocity. The second
-// 50-matrix array (PreviousSkelBindings) doubles the constant budget past the 256 vec4 limit of
-// vs_4_0, so the entire effect file is built at pure vs_4_0 / ps_4_0 (DX HiDef, OGL Reach can
-// still consume it via its higher feature level mapping). Device already requires HiDef for FSR/SMAA.
+// Velocity-technique matrices + previous-frame bone array for skinned velocity. The second 50-matrix
+// array exceeds the level_9 256-vec4 constant limit, so all techniques compile at plain vs_4_0/ps_4_0
+// (the device already requires HiDef).
 float4x4 ViewProjection;
 float4x4 PreviousViewProjection;
 float4x4 PreviousWorld;
@@ -441,9 +440,8 @@ technique HeadObject
 }
 
 // ---------------------------------------------------------------------------- DrawWithVelocity
-// Velocity-writing techniques. MUST stay LAST in the file, in this order (DrawWithVelocity then
-// DrawWithVelocityDirection), so WorldEntities.DrawAvatars' literal Techniques[7]/[8] selections keep
-// pointing at these two and the original techniques keep their 0..6 indices.
+// Velocity-writing techniques. Must stay last and in this order — WorldEntities.DrawAvatars selects
+// them by literal technique index (originals keep 0..6).
 struct VitaVertexOutV
 {
     float4 position : SV_Position0;
@@ -473,17 +471,14 @@ VitaVertexOutV vsVitaboyV(VitaVertexIn v)
     result.normal = mul(normal, (float3x3)World);
     result.screenPos = float4(finalPos.xy*float2(0.5, -0.5) + float2(0.5, 0.5), finalPos.zw);
     result.currClip = finalPos;
-    // Previous-frame skinned position: same vertex data + bone indices, but PreviousSkelBindings holds
-    // last frame's bone matrices. Captures walk animation, arm-waving, idle bob — anything that moves a
-    // bone between frames creates a per-pixel velocity for that part of the mesh.
+    // Previous-frame skinned position via PreviousSkelBindings, so bone animation contributes velocity.
     float4 prevPosition = (1.0-v.params.z) * mul(v.position, PreviousSkelBindings[int(v.params.x)]) + v.params.z * mul(float4(v.bvPosition, 1.0), PreviousSkelBindings[int(v.params.y)]);
     float4 prevWPos = mul(prevPosition, PreviousWorld);
     result.prevClip = mul(prevWPos, PreviousViewProjection);
     return result;
 }
-// Current-frame TAA jitter (NDC), matching the jitter baked into ViewProjection (and so into currClip).
-// Subtracted so velocity is jitter-free; PreviousViewProjection (used for prevClip) is supplied UN-jittered
-// by the C# caller (WorldEntities.DrawAvatars), same convention as RCObject.fx / GrassShader.fx.
+// Current-frame TAA jitter (NDC), baked into ViewProjection; subtracted so velocity is jitter-free.
+// PreviousViewProjection is supplied un-jittered, as in RCObject.fx / GrassShader.fx.
 float2 JitterNDC;
 
 float2 ComputeVitaboyVelocity(float4 curr, float4 prev)
@@ -493,7 +488,7 @@ float2 ComputeVitaboyVelocity(float4 curr, float4 prev)
     float2 currNDC = curr.xy / currW - JitterNDC;
     float2 prevNDC = prev.xy / prevW;
     float2 v = (currNDC - prevNDC) * float2(0.5, -0.5);
-    return clamp(v, -0.5, 0.5); // was +/-0.05 (fit the meta byte encode) — 0.05 UV = ~64px/frame, routinely EXCEEDED by fast drags/rotation at 30fps: every writer saturated and reprojection undershot by the excess = the displaced-silhouette / motion-ghosting saga. fp16 buffer holds +/-0.5 losslessly; the meta encode still saturates itself on store (desirable: the reactive fires during ultra-fast motion).
+    return clamp(v, -0.5, 0.5); // fp16 buffer holds +/-0.5 losslessly; the meta encode saturates itself on store
 }
 PSOutputV psVitaboyV(VitaVertexOutV v)
 {
@@ -503,16 +498,14 @@ PSOutputV psVitaboyV(VitaVertexOutV v)
     if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
 #endif
     float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcess(v.modelPos) * AmbientLight);
-    // Invisible fringe texels (hair/clothing alpha=0) must not stamp avatar velocity + near depth over the
-    // background on MRT1 — AlphaBlend leaves color untouched but velocity.a=1 hard-overwrites, producing
-    // halo-shaped disocclusion/ghost boxes around sims in the TAA. Matches RCObject.fx's discard.
+    // Fringe texels (alpha~0) must not stamp velocity/near depth on MRT1 — the blend leaves color
+    // untouched but velocity.a=1 overwrites, causing halo ghosting in TAA.
     if (color.a < 0.01) discard;
     color.rgb *= pow((dot(normalize(v.normal), float3(0, 1, 0)) + 1) / 2, 0.5)*0.5 + 0.5f;
     o.color = color;
-    // velocity.b = normalized LINEAR view distance (clip.w / far=800), [0,1]. Linear (not NDC clip.z/clip.w)
-    // so half-float depth precision stays ~distance*2^-10 — NDC banding broke SSAO. See RCObject.PackDepth.
+    // velocity.b = normalized linear view distance (clip.w / far=800); see RCObject.PackDepth.
     o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
-    // World-space normal for screen-space AO. v.normal already transformed by World in the VS.
+    // World-space normal for screen-space AO.
     o.normal = float4(normalize(v.normal), 1);
     return o;
 }
@@ -530,13 +523,8 @@ technique DrawWithVelocity
     }
 }
 
-// psVitaboyV always shades via lightProcess() (non-directional, ambient/omni-only - matches psVitaboyAdv).
-// When Directional Lighting is on, the non-velocity path picks psVitaboyDir (lightProcessDirection, actual
-// N.L against a sampled light direction) instead - see WorldEntities.DrawAvatars' `advDir`/`pass` selection.
-// The velocity path had no equivalent, so turning on TAA/motion-blur (which forces DrawWithVelocity) silently
-// dropped directional shading back to the flat/ambient model - visible as the light appearing to come from
-// the wrong direction. This mirrors psVitaboyV but with lightProcessDirection, so the velocity path can
-// respect the same setting.
+// psVitaboyV with lightProcessDirection, so the velocity path matches psVitaboyDir when directional
+// lighting is on.
 PSOutputV psVitaboyDirV(VitaVertexOutV v)
 {
     PSOutputV o;
@@ -545,7 +533,7 @@ PSOutputV psVitaboyDirV(VitaVertexOutV v)
     if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
 #endif
     float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirection(v.modelPos, normalize(v.normal)) * AmbientLight);
-    if (color.a < 0.01) discard; // see psVitaboyV — fringe texels must not stamp velocity/depth
+    if (color.a < 0.01) discard; // see psVitaboyV
     o.color = color;
     o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
     o.normal = float4(normalize(v.normal), 1);
@@ -565,15 +553,8 @@ technique DrawWithVelocityDirection
     }
 }
 
-// psVitaboyV/psVitaboyDirV both shade via lightProcess()/lightProcessDirection() - the lightmap-sampling
-// model that's only valid when Advanced Lighting is actually on (WorldEntities.DrawAvatars picks psVitaboyAdv
-// /psVitaboyDir for the non-velocity path in that case). When Advanced Lighting is OFF, the non-velocity path
-// instead picks psVitaboyNoSSAA - a flat AmbientLight-only multiply, no lightmap sampling at all (AmbientLight
-// itself already carries the room's ambient color in that mode - see AvatarComponent.DrawAvatarMesh). The
-// velocity path had no equivalent and always forced the lightProcess-based shading regardless of the Advanced
-// Lighting setting, which sampled a lightmap that isn't maintained when Advanced Lighting is off (near-zero),
-// crushing sims to near-black the moment TAA/motion-blur (which forces a velocity technique) was turned on.
-// This mirrors psVitaboyNoSSAA but with velocity output, so the velocity path can respect the setting too.
+// psVitaboyNoSSAA with velocity output: with advanced lighting off the lightmap is not maintained, so
+// the velocity path must use the flat AmbientLight-only shading too.
 PSOutputV psVitaboyNoSSAAV(VitaVertexOutV v)
 {
     PSOutputV o;
@@ -582,7 +563,7 @@ PSOutputV psVitaboyNoSSAAV(VitaVertexOutV v)
     if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
 #endif
     float4 color = tex2D(TexSampler, v.texCoord) * AmbientLight;
-    if (color.a < 0.01) discard; // see psVitaboyV — fringe texels must not stamp velocity/depth
+    if (color.a < 0.01) discard; // see psVitaboyV
     color.rgb *= pow((dot(normalize(v.normal), float3(0, 1, 0)) + 1) / 2, 0.5)*0.5 + 0.5f;
     o.color = color;
     o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);

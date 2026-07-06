@@ -7,25 +7,18 @@ using FSO.Common.Rendering.Framework.Camera;
 namespace FSO.LotView.Utils
 {
     /// <summary>
-    /// GTAO (Ground-Truth Ambient Occlusion) post-process. Three-pass orchestrator:
-    ///   1. GTAO       — noisy single-frame AO into AOTarget (uses velocity-buffer depth + ddx/ddy normals)
-    ///   2. Blur       — depth-aware cross-bilateral 3x3 into AOTarget2 (denoise)
-    ///   3. Composite  — multiply scene * (1 - (1-AO) * Intensity) into the chain's destination
-    ///
-    /// Slots into the resolve chain at PPXDepthEngine.AOFunc, before bloom — AO darkens crevices BEFORE
-    /// bloom adds highlights (standard order).
+    /// GTAO post-process: noisy AO pass, depth-aware blur, temporal accumulation, composite.
+    /// Runs at PPXDepthEngine.AOFunc, before bloom (AO darkens before bloom adds highlights).
     /// </summary>
     public static class AOPass
     {
-        // Frame counter for per-frame noise rotation (helps temporal averaging through TAA).
+        // frame counter for per-frame noise rotation
         private static int _Frame;
 
-        // Diagnostic mode, set transiently from graphics options: 0 = normal composite, 1 = raw AO
-        // (pre blur/temporal) as grayscale, 2 = G-buffer world normals as colour, 3 = depth as grayscale.
+        // debug: 0 = normal, 1 = blurred AO grayscale, 2 = normals, 3 = depth
         public static int DebugMode;
 
-        // Active camera projection params — set by World.PreDraw each frame so the AO shader can
-        // linearize depth + reconstruct view-space positions without back-referencing the camera.
+        // camera projection params, set by World.PreDraw each frame
         public static float NearPlane = 1.0f;
         public static float FarPlane = 800.0f;
         public static float TanHalfFovY = 1.0f;
@@ -35,21 +28,18 @@ namespace FSO.LotView.Utils
         public static Matrix InvProjection = Matrix.Identity;
         public static Vector2 ProjScale = Vector2.One;
 
-        // LearnOpenGL SSAO data, generated once: a 64-sample hemisphere kernel (tangent space) and a 4x4
-        // noise-rotation texture tiled across the screen.
+        // 64-sample hemisphere kernel (tangent space) + 4x4 noise rotation texture
         private static Vector3[] _Kernel;
         private static Texture2D _NoiseTex;
 
         private static void EnsureSSAOData(GraphicsDevice gd)
         {
             if (_Kernel != null && _NoiseTex != null && !_NoiseTex.IsDisposed) return;
-            var rng = new Random(12345); // fixed seed -> deterministic kernel/noise
+            var rng = new Random(12345); // fixed seed
 
             _Kernel = new Vector3[64];
             for (int i = 0; i < 64; i++)
             {
-                // Hemisphere sample (z in [0,1] = along the surface normal), random length, then biased
-                // toward the origin with an accelerating curve so most samples sit near the surface.
                 var s = new Vector3(
                     (float)(rng.NextDouble() * 2.0 - 1.0),
                     (float)(rng.NextDouble() * 2.0 - 1.0),
@@ -60,7 +50,7 @@ namespace FSO.LotView.Utils
                 _Kernel[i] = s * scale;
             }
 
-            // 4x4 rotation vectors in the tangent plane (z = 0).
+            // 4x4 rotation vectors in the tangent plane (z = 0)
             var noise = new Vector4[16];
             for (int i = 0; i < 16; i++)
                 noise[i] = new Vector4((float)(rng.NextDouble() * 2.0 - 1.0), (float)(rng.NextDouble() * 2.0 - 1.0), 0f, 0f);
@@ -78,7 +68,7 @@ namespace FSO.LotView.Utils
             var ao2 = PPXDepthEngine.GetAOTarget2();
             if (effect == null || velRT == null || normalRT == null || ao == null || ao2 == null)
             {
-                // Missing dependencies -> pass scene through unchanged.
+                // missing dependencies - pass scene through unchanged
                 gd.BlendState = BlendState.Opaque;
                 using (var sb = new SpriteBatch(gd))
                 {
@@ -96,7 +86,6 @@ namespace FSO.LotView.Utils
 
             EnsureSSAOData(gd);
 
-            // Common uniforms.
             effect.Parameters["InvScreenSize"]?.SetValue(new Vector2(1f / ao.Width, 1f / ao.Height));
             effect.Parameters["FarPlane"]?.SetValue(FarPlane);
             effect.Parameters["Radius"]?.SetValue(cfg.AORadius);
@@ -111,7 +100,6 @@ namespace FSO.LotView.Utils
             effect.Parameters["normalTex"]?.SetValue(normalRT);
             effect.Parameters["noiseTex"]?.SetValue(_NoiseTex);
 
-            // DIAGNOSTIC modes 2/3: visualize a G-buffer input directly (don't need the AO computed).
             if (DebugMode == 2)
             {
                 gd.SetRenderTargets(dst);
@@ -125,16 +113,13 @@ namespace FSO.LotView.Utils
                 return;
             }
 
-            // Pass 1: noisy single-frame AO -> ao
             gd.SetRenderTarget(ao);
             ApplyDraw(gd, effect, "GTAO", verts);
 
-            // Pass 2: 4x4 box blur ao -> ao2 (cancels the noise tiling)
             gd.SetRenderTarget(ao2);
             effect.Parameters["aoTex"]?.SetValue(ao);
             ApplyDraw(gd, effect, "Blur", verts);
 
-            // DIAGNOSTIC mode 1: show the blurred AO (pre-temporal) as grayscale.
             if (DebugMode == 1)
             {
                 gd.SetRenderTargets(dst);
@@ -143,7 +128,6 @@ namespace FSO.LotView.Utils
                 return;
             }
 
-            // Pass 3: temporal accumulation (reproject prev history via velocity, blend).
             var historyPrev = PPXDepthEngine.GetAOHistoryPrev();
             var historyCurr = PPXDepthEngine.GetAOHistoryCurr();
             gd.SetRenderTarget(historyCurr);
@@ -151,7 +135,6 @@ namespace FSO.LotView.Utils
             effect.Parameters["aoHistoryTex"]?.SetValue(historyPrev);
             ApplyDraw(gd, effect, "Temporal", verts);
 
-            // Pass 4: composite scene * AO -> chain destination (or grayscale AO when debugging).
             gd.SetRenderTargets(dst);
             effect.Parameters["colorTex"]?.SetValue(src);
             effect.Parameters["aoTex"]?.SetValue(historyCurr);
@@ -161,8 +144,7 @@ namespace FSO.LotView.Utils
         }
 
         /// <summary>
-        /// Snapshot the active camera's projection params for this frame so the GTAO shader can linearize
-        /// depth + reconstruct view-space positions. Called from World.PreDraw on the active 3D camera.
+        /// Snapshot the active camera's projection params for the GTAO shader. Called from World.PreDraw.
         /// </summary>
         public static void SetCamera(BasicCamera cam, float viewportAspect)
         {
@@ -174,8 +156,7 @@ namespace FSO.LotView.Utils
             View = cam.View;
             Projection = cam.Projection;
             InvProjection = Matrix.Invert(cam.Projection);
-            // (Projection.M11, Projection.M22) = view->ndc XY scale (includes Zoom + aspect). Used to
-            // size the world-space sampling Radius into UV space at each pixel's depth.
+            // (M11, M22) = view->ndc XY scale; sizes the world-space Radius into UV space per depth
             ProjScale = new Vector2(cam.Projection.M11, cam.Projection.M22);
         }
 
