@@ -5,7 +5,7 @@
     <RootNamespace>FSO.Common.DatabaseService</RootNamespace>
     <AssemblyName>FSO.Common.DatabaseService</AssemblyName>
     <FileAlignment>512</FileAlignment>
-    <TargetFramework>net9.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>disable</Nullable>
     <IsAotCompatible>True</IsAotCompatible>

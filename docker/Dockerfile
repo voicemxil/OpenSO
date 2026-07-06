@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM mcr.microsoft.com/dotnet/sdk:9.0 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 
 # Copy ONLY the .csproj files (preserving layout) and restore first, so the NuGet restore lands in its
@@ -41,7 +41,7 @@ RUN dotnet publish TSOClient/FSO.Server.Core/FSO.Server.Core.csproj \
     -c Release --self-contained false --no-restore -o /app
 
 # Stage 2: Runtime
-FROM mcr.microsoft.com/dotnet/aspnet:9.0
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
 
 # Release version stamped into the image so the server self-reports it (ServerVersion.Get reads
 # version.txt). CI passes the release tag (e.g. dev-1) on a release build, or "edge" for main builds;

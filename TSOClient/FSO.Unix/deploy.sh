@@ -14,7 +14,7 @@ else
     echo "Unsupported platform: $OS" && exit 1
 fi
 
-PUBLISH_DIR="$SCRIPT_DIR/bin/Release/net9.0/$RID/publish"
+PUBLISH_DIR="$SCRIPT_DIR/bin/Release/net10.0/$RID/publish"
 
 echo "Building FSO.Unix for $OS..."
 dotnet publish -c Release -r "$RID" --self-contained true -p:PublishSingleFile=true
