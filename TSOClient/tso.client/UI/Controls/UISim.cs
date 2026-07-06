@@ -83,6 +83,33 @@ namespace FSO.Client.UI.Controls
 
         private WorldZoom Zoom = WorldZoom.Near;
 
+        // Perspective (CAS) targets are full-window; DPIScaleFactor is user-configurable up to 3x, so a naive
+        // windowSize*DPIScaleFactor render target can balloon to multi-thousand-pixel dimensions on a 4K/high-DPI
+        // setup. Clamp each axis to a sane preview size instead — this is a background avatar viewport, not the
+        // main scene. The orthographic thumbnail path (140x200 logical) never gets remotely this large.
+        private const int MaxPerspectiveDim = 2048;
+
+        // Mirrors the clamp PPXDepthEngine.InitScreenTargets applies to the main backbuffer: use the user's
+        // configured granular MSAALevel (0/2/4/8) instead of a hard-coded tier, and never exceed what
+        // FeatureLevelTest determined this GPU can actually resolve.
+        private static int TargetMSAA()
+        {
+            return Math.Min(GlobalSettings.Default.MSAALevel, FSOEnvironment.MaxMSAA);
+        }
+
+        private Point TargetSize()
+        {
+            var scale = FSOEnvironment.DPIScaleFactor;
+            var w = (int)(_TargetW * scale);
+            var h = (int)(_TargetH * scale);
+            if (Perspective)
+            {
+                w = Math.Min(w, MaxPerspectiveDim);
+                h = Math.Min(h, MaxPerspectiveDim);
+            }
+            return new Point(w, h);
+        }
+
         /// <summary>
         /// When was this character last cached by the client?
         /// </summary>
@@ -98,9 +125,7 @@ namespace FSO.Client.UI.Controls
             Camera = new WorldCamera(GameFacade.GraphicsDevice);
             Camera.Zoom = Zoom;
             Camera.CenterTile = new Vector3(-1, -1, 0)*FSOEnvironment.DPIScaleFactor;
-            Scene = new _3DTargetScene(GameFacade.GraphicsDevice, Camera,
-                new Point((int)(_TargetW * FSOEnvironment.DPIScaleFactor), (int)(_TargetH * FSOEnvironment.DPIScaleFactor)),
-                (GlobalSettings.Default.AntiAlias > 0)?8:0);
+            Scene = new _3DTargetScene(GameFacade.GraphicsDevice, Camera, TargetSize(), TargetMSAA());
             Scene.ID = "UISim";
 
             GameFacade.Game.GraphicsDevice.DeviceReset += new EventHandler<EventArgs>(GraphicsDevice_DeviceReset);
@@ -134,8 +159,8 @@ namespace FSO.Client.UI.Controls
                 GameFacade.Scenes.RemoveExternal(Scene);
                 Scene.Dispose();
             }
-            var size = new Point((int)(_TargetW * FSOEnvironment.DPIScaleFactor), (int)(_TargetH * FSOEnvironment.DPIScaleFactor));
-            var msaa = (GlobalSettings.Default.AntiAlias > 0) ? 8 : 0;
+            var size = TargetSize();
+            var msaa = TargetMSAA();
             if (Perspective)
             {
                 PCamera = new BasicCamera(GameFacade.GraphicsDevice, Vector3.Zero, _Focus, Vector3.Up);
@@ -227,7 +252,7 @@ namespace FSO.Client.UI.Controls
         {
             base.GameResized();
             var scale = FSOEnvironment.DPIScaleFactor;
-            Scene.SetSize(new Point((int)(_TargetW * scale), (int)(_TargetH * scale)));
+            Scene.SetSize(TargetSize());
             if (Perspective)
             {
                 Avatar.Scale = new Vector3(1f);
@@ -438,8 +463,12 @@ namespace FSO.Client.UI.Controls
             if (!Visible) return;
             if (Perspective)
             {
-                // viewport fills the control 1:1 (render target == control size)
-                DrawLocalTexture(batch, Scene.Target, null, new Vector2(), new Vector2(1f / FSOEnvironment.DPIScaleFactor, 1f / FSOEnvironment.DPIScaleFactor));
+                // Viewport fills the control 1:1. Derive the blit scale from the ACTUAL target size (not a
+                // flat 1/DPIScaleFactor) so a target clamped by MaxPerspectiveDim (see TargetSize()) still
+                // stretches to fill the control instead of leaving a blank gap on oversized high-DPI windows.
+                var sx = (Scene.Target.Width > 0) ? _TargetW / (float)Scene.Target.Width : 1f;
+                var sy = (Scene.Target.Height > 0) ? _TargetH / (float)Scene.Target.Height : 1f;
+                DrawLocalTexture(batch, Scene.Target, null, new Vector2(), new Vector2(sx, sy));
             }
             else
             {

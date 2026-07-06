@@ -65,11 +65,11 @@ namespace FSO.Client.UI.Panels
         private bool InternalChange;
 
         // --- Anti-aliasing / resolution controls (merged in from the former separate dialog) ---
-        private UICombobox AACombo, MotionBlurCombo, BloomCombo, AOCombo, UpscalerCombo, TAADebugCombo;
-        private object[] _aaObjs, _mblurObjs, _bloomObjs, _aoObjs, _upscalerObjs, _taaDbgObjs;
+        private UICombobox AACombo, MotionBlurCombo, BloomCombo, UpscalerCombo, TAADebugCombo;
+        private object[] _aaObjs, _mblurObjs, _bloomObjs, _upscalerObjs, _taaDbgObjs;
         private UILabel TAADebugRowLabel; // row hides when Cosmic TAA isn't the AA mode
-        private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
-        private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
+        private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider;
+        private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel;
         // Min 1/3 = the DLSS/FSR2 "Ultra Performance" ratio (1080p output from 360p render at 0.33x).
         private const float RENDER_SCALE_MIN = 1f / 3f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
@@ -96,6 +96,15 @@ namespace FSO.Client.UI.Panels
 
         public UIGraphicsOptionsDialog() : base(UIDialogStyle.OK, true)
         {
+            // Heal a stale on-disk PostAA==2 ("SMAA Low", removed from the AAModes table) to 3 so the saved
+            // config agrees with what the engine has always run for it (World.ChangeAAMode: PostAA >= 2 =>
+            // SMAA) — not just what CurrentAAIndex resolves it to in memory.
+            if (GlobalSettings.Default.PostAA == 2)
+            {
+                GlobalSettings.Default.PostAA = 3;
+                GlobalSettings.Default.Save();
+            }
+
             SetSize(920, 540); // widened for the anti-aliasing / resolution column on the right (compacted)
             var script = this.RenderScript("graphicspanel.uis");
 
@@ -764,58 +773,6 @@ namespace FSO.Client.UI.Panels
             if (BloomIntensitySlider != null) { BloomIntensitySlider.Value = intensity; if (BloomIntensityLabel != null) BloomIntensityLabel.Caption = intensity.ToString("0.0#"); }
         }
 
-        // AO sample radius (0..2 world units).
-        private void AddAORadiusRow(string label, int y)
-        {
-            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
-            DynamicOverlay.Add(lbl);
-            AORadiusSlider = new UISlider()
-            {
-                Orientation = 0, Texture = GetTexture(0x42500000001),
-                MinValue = 0.05f, MaxValue = 2f, AllowDecimals = true,
-                Position = new Vector2(AAX + 175, y + 8)
-            };
-            AORadiusSlider.SetSize(150f, 0f);
-            DynamicOverlay.Add(AORadiusSlider);
-            AORadiusLabel = new UILabel() { Caption = "0.5", Position = new Vector2(AAX + 335, y + 2) };
-            DynamicOverlay.Add(AORadiusLabel);
-            AORadiusSlider.OnChange += (elem) =>
-            {
-                if (InternalChange) return;
-                GlobalSettings.Default.AORadius = (float)(System.Math.Round(AORadiusSlider.Value * 20.0) / 20.0);
-                ApplyAndRefresh(true);
-            };
-        }
-
-        // AO composite intensity (0..2).
-        private void AddAOIntensityRow(string label, int y)
-        {
-            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
-            DynamicOverlay.Add(lbl);
-            AOIntensitySlider = new UISlider()
-            {
-                Orientation = 0, Texture = GetTexture(0x42500000001),
-                MinValue = 0f, MaxValue = 2f, AllowDecimals = true,
-                Position = new Vector2(AAX + 175, y + 8)
-            };
-            AOIntensitySlider.SetSize(150f, 0f);
-            DynamicOverlay.Add(AOIntensitySlider);
-            AOIntensityLabel = new UILabel() { Caption = "1.0", Position = new Vector2(AAX + 335, y + 2) };
-            DynamicOverlay.Add(AOIntensityLabel);
-            AOIntensitySlider.OnChange += (elem) =>
-            {
-                if (InternalChange) return;
-                GlobalSettings.Default.AOIntensity = (float)(System.Math.Round(AOIntensitySlider.Value * 20.0) / 20.0);
-                ApplyAndRefresh(true);
-            };
-        }
-
-        private void SetAOSliders(float radius, float intensity)
-        {
-            if (AORadiusSlider != null) { AORadiusSlider.Value = radius; if (AORadiusLabel != null) AORadiusLabel.Caption = radius.ToString("0.0#"); }
-            if (AOIntensitySlider != null) { AOIntensitySlider.Value = intensity; if (AOIntensityLabel != null) AOIntensityLabel.Caption = intensity.ToString("0.0#"); }
-        }
-
         private void SelectValue(UICombobox combo, object[] objs, int value)
         {
             if (combo == null || objs == null) return;
@@ -839,6 +796,12 @@ namespace FSO.Client.UI.Panels
             ApplyAndRefresh();
         }
 
+        // World.ChangeAAMode picks the SMAA pass with "cfg.PostAA >= 2" — so a legacy stored PostAA==2
+        // ("SMAA Low", dropped from the AAModes table above) still runs SMAA at the engine, but has no exact
+        // match in the table (which only has 0/1/3). Collapse it to the SMAA entry (3) so the dropdown shows
+        // what's actually running instead of falling through to the FXAA fallback below.
+        private static int NormalizedPostAA(int postAA) => (postAA >= 2) ? 3 : postAA;
+
         // Map the current (MSAALevel, PostAA, TAA) settings back to an AAModes index for the dropdown. TAA
         // wins (it's mutually exclusive in the menu); then exact match; otherwise prefer the hardware MSAA
         // tier if one is set, else the post-AA method, else Off.
@@ -848,12 +811,13 @@ namespace FSO.Client.UI.Panels
             if (s.TAA)
                 for (int i = 0; i < AAModes.Length; i++)
                     if (AAModes[i].taa == 1) return i;
+            int postAA = NormalizedPostAA(s.PostAA);
             for (int i = 0; i < AAModes.Length; i++)
-                if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == s.PostAA && AAModes[i].taa == 0) return i;
+                if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == postAA && AAModes[i].taa == 0) return i;
             if (s.MSAALevel > 0)
                 for (int i = 0; i < AAModes.Length; i++)
                     if (AAModes[i].msaa == s.MSAALevel && AAModes[i].postAA == 0 && AAModes[i].taa == 0) return i;
-            if (s.PostAA > 0)
+            if (postAA > 0)
                 for (int i = 0; i < AAModes.Length; i++)
                     if (AAModes[i].msaa == 0 && AAModes[i].postAA != 0) return i;
             return 0; // Off

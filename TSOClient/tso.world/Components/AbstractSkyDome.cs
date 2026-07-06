@@ -294,6 +294,11 @@ namespace FSO.LotView.Components
             }
             else
             {
+                // Velocity path not active this frame - invalidate the cached prev-MVP (mirrors
+                // EntityComponent.DrawHeadline3D's _PrevHeadlineWorldValid) so re-enabling TAA later
+                // doesn't replay a stale prev-MVP from before the gap as a bogus one-frame velocity smear.
+                _prevSkyMVPValid = false;
+
                 foreach (var pass in effect.CurrentTechnique.Passes)
                 {
                     pass.Apply();

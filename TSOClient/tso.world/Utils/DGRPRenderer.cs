@@ -47,7 +47,14 @@ namespace FSO.LotView.Utils
         // Previous-frame world matrix, pushed by ObjectComponent.Draw. Read by velocity-aware techniques in
         // RCObject.fx to emit per-pixel screen-space motion. When unset (e.g. first draw) it equals World.
         public Matrix PreviousWorld;
-        
+
+        // Hint set by a caller that already knows whether the velocity MRT is bound for a whole batch of
+        // Draw3D calls (see WorldEntities.DrawObjectsBatched), so Draw3D doesn't have to call
+        // GraphicsDevice.GetRenderTargets() (a fresh array allocation) for every single object. Null means
+        // "unknown" - callers that don't set this (lot thumbnail render, 2D platform, subworld direct
+        // draws) fall back to the original per-call device query, so their behavior is unchanged.
+        public static bool? VelocityHint;
+
         public DGRPRenderer(DGRP group, OBJD source)
         {
             this.DrawGroup = group;
@@ -313,8 +320,10 @@ namespace FSO.LotView.Utils
             // passes like the lot-thumbnail render (WorldPlatform3D.GetLotThumb) bind only their own target,
             // and writing the velocity/normal outputs into unbound slots corrupts the visible color (black bg
             // + noise) on level_9_3. The normal scene pass always has the MRT bound, so it's unaffected.
-            var drawTech = (FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null
-                && device.GetRenderTargets().Length > 1)
+            // Use VelocityHint when the caller has provided one (avoids a GetRenderTargets() alloc per
+            // object in the hot batched-draw loop); otherwise fall back to querying the device directly.
+            bool mrtBound = VelocityHint ?? (device.GetRenderTargets().Length > 1);
+            var drawTech = (FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null && mrtBound)
                 ? RCObjectTechniques.DrawWithVelocity
                 : RCObjectTechniques.Draw;
 
