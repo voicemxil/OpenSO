@@ -795,7 +795,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // (noisy, constant near any motion) were nuking locks screen-adjacent to movers every frame,
         // re-fizzling fine geometry that was never actually invalidated (the post-ghost-fix aliasing).
         osc *= 1.0 - smoothstep(0.4, 0.85, max(max(depthReject, ghostReject), max(reactive, featReject)));
-        float newSgn = lerp(prevSgn, sgn, mag * testify); // hold the sign bit through quiet/blind frames
+        // Sign bit MUST stay binary (0 or 1): under TAAU testify is sampleConf, a continuous [0,1] weight,
+        // so a lerp here produced a FRACTIONAL sign whenever 0 < mag*testify < 1 — that fraction then
+        // aliased into the osc EMA field below (packedA mixes newSgn*0.5 with osc*0.498) and fabricated
+        // lock-grade evidence (or lost the sign) on decode next frame. Select instead of lerp: hold the
+        // sign through quiet/blind frames (mag*testify <= 0.5) and only adopt the new sign once the
+        // weighted evidence tips past half.
+        float newSgn = (mag * testify > 0.5) ? sgn : prevSgn;
         packedA = reprojectable ? saturate(newSgn * 0.5 + osc * 0.498) : 0.0; // off-screen = evidence reset
     }
 

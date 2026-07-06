@@ -336,7 +336,7 @@ float2 CityComputeVel(float4 curr, float4 prev)
 	float pw = max(prev.w, 1e-4);
 	float2 c = curr.xy / cw - JitterNDC;
 	float2 p = prev.xy / pw;
-	return clamp((c - p) * float2(0.5, -0.5), -0.05, 0.05);
+	return clamp((c - p) * float2(0.5, -0.5), -0.5, 0.5); // was +/-0.05 — see Vitaboy.fx ComputeVitaboyVelocity note (the saturating-clamp motion bug)
 }
 
 CityPSOutV CityObjPSFogV(ObjVertexOutV Input)
