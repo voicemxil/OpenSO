@@ -75,7 +75,7 @@ float TuneStillGateFloor = 0.25;     // stillGate suspicion velocity scale floor
 float TuneMoveGateLo = 0.6;          // moveGate smoothstep lower edge (native px/frame)
 float TuneMoveGateHi = 2.0;          // moveGate smoothstep upper edge (native px/frame)
 float TuneRespEnd = 0.60;            // responsive end of the diff-driven blend lerp (full-diff history weight)
-float TuneMotionTrustCap = 0.72;     // motion trust cap at upscale (interior-texture ghost lever)
+float TuneMotionTrustCap = 0.65;     // motion trust cap at upscale (interior-texture ghost lever; 0.72->0.65 final round: ~35%/frame refresh in motion, trails die in 2-3 frames as crisp Lanczos reconstruction)
 float TuneMotionClampTighten = 0.72; // motion-scaled variance-clamp tighten at upscale (self-reveal lever)
 float TuneRawSoftenOnset = 0.12;     // raw-state display soften: blend onset
 float TuneRawSoftenSlope = 2.2;      // raw-state display soften: slope past onset
@@ -1029,7 +1029,23 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // native (validated, unchanged) -> 2x base = 3.0 at ratio 3 (0.33x). The historical "every widening
     // ghosted" law predates ALL of that machinery; the lock's further widening stays multiplicative on
     // top. Live-tunable base via TuneGamma (TAATuning).
-    float GAMMA = TuneGamma * lerp(1.0, 2.0, saturate((upscaleRatio - 1.0) * 0.5));
+    // EVIDENCE-SCALED widening (2026-07-05 retune, same day): the flat ratio-widening traded a SLIGHT
+    // edge/high-frequency ghost at low res — a 3-sigma box on high-VARIANCE content is huge in absolute
+    // terms, so trail colors the 1.5-sigma box used to clip slid through. Scale the widening down with
+    // SUSPICION (the union of every contamination detector, incl. full-weight foreign here — parallax
+    // edges are exactly where the wide box leaks): clean converged content (no evidence) keeps the full
+    // supersampled box; anything carrying trail/disocclusion/ring/disparity evidence collapses toward
+    // the validated 1.5 baseline exactly where ghosts live. The lab win (foliage distinctness at rest)
+    // is evidence-silent -> unaffected.
+    float suspGamma = max(suspicion, foreign); // foreign at FULL weight for the box (0.35-demoted in suspicion)
+    // + MOTION DECAY (2026-07-05, third notch — the last high-frequency/leaf trace): osc-proven clutter
+    // (foliage) has its rejects deliberately authority-muted (phase churn), so it is evidence-silent BY
+    // DESIGN and suspicion can't protect it — the wide box held a faint trail there that nothing else
+    // can reach. Narrow the widening partially while the pixel is IN MOTION (when trails are painted;
+    // 0.6 strength keeps some in-motion distinctness), full width returns at rest where the supersampled
+    // foliage win lives.
+    float GAMMA = TuneGamma * lerp(1.0, 2.0,
+        saturate((upscaleRatio - 1.0) * 0.5) * (1.0 - suspGamma) * (1.0 - 0.6 * moveGate));
     // FSR2-style "LOCK" via the oscillation signal (fine-geometry stability, matters most under TAAU): the
     // clamp box is built from RENDER-res taps, but the converged history holds OUTPUT-res detail — a thin
     // line that is sub-pixel at render res is DILUTED in the box statistics, so the box hugs the diluted
@@ -1311,7 +1327,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // Regime keyed on SUSPICION-scaled motion: coherent pans (evidence silent) keep most of the
         // confidence-weighted accumulation — the AA rides through the pan; flagged pixels get the full
         // motion regime. This is what stops left/right pans from stripping to raw by speed alone.
-        blend *= lerp(lerp(confFloor, 1.0, sampleConf), lerp(0.55, 1.0, sampleConf), moveGate * lerp(0.3, 1.0, suspicion));
+        // TRUST-FADED off-phase throttle (2026-07-05 final round — "new detail resolves too slowly,
+        // hazy while accumulating"): this multiplier protects CONVERGED history from information-free
+        // off-phase injection — but it throttled REBUILDING pixels identically, so at 0.33x a fresh
+        // pixel displayed mostly-old history on 8 of 9 frames and dripped the new content in at
+        // confFloor: the indistinct/hazy accumulating phase, and the old-detail inertia. Same principle
+        // as growK's prevN fade-in (a fresh pixel counts every frame — when you know nothing, every
+        // sample is information): the throttle now fades IN with accumulated evidence (minN/12), so
+        // young pixels inject their crisp reconstruction at full blend every frame (fast, clean
+        // resolve-in) and converged pixels keep the validated off-phase protection bit-exactly.
+        float confMul = lerp(lerp(confFloor, 1.0, sampleConf), lerp(0.55, 1.0, sampleConf), moveGate * lerp(0.3, 1.0, suspicion));
+        blend *= lerp(1.0, confMul, saturate(minN / 12.0));
     }
 
     // WARMUP RAMP (counter-driven): with no accumulated history (fresh clear / off-screen reset) the
@@ -1341,7 +1367,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Knee 0.65..0.98: raw injection is now reserved for NEAR-CERTAIN rejection only — the whole
     // mid-evidence band is handled by clamp TIGHTENING instead (see rejTighten at the clamp: the stale
     // color snaps to the filtered neighborhood statistics — ghost scrubbed AND smooth, no raw needed).
-    blend = max(blend, smoothstep(0.65, 0.98, max(depthReject, ghostReject)));
+    // Knee 0.65..0.98 -> 0.45..0.85 (2026-07-05 final round — mover-EDGE ghosting during character
+    // animation): the near-certainty-only knee left the whole mid-evidence band (constant grazing
+    // partial rejects along animated silhouettes — the stored depth is dilated) to clamp-tightening
+    // alone, which reads as edge GHOST rather than reconstruction. Under the crisp-motion regime the
+    // injected current displays as the deringed Lanczos reconstruction (spatial AA), NOT the raw
+    // per-phase speckle that killed the earlier 0.5..0.9 attempt (that predates the Lanczos+hull and
+    // motion-suppressed soften). Revert signature: speckle/aliasing riding animated silhouettes.
+    blend = max(blend, smoothstep(0.45, 0.85, max(depthReject, ghostReject)));
 
     // TEXTURE-DETAIL blend floor (pairs with the raw-sample input lean above): even with a raw input, the
     // CONVERGED value is the temporal mean over the jitter footprint, which wipes single-texel texture

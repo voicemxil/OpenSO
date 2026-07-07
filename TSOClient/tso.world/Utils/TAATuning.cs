@@ -23,7 +23,11 @@ namespace FSO.LotView.Utils
         // historyWeight = lerp(deepEnd, RespEnd, diff) — the full-diff responsive end (TAA_Core only)
         public static float RespEnd = 0.60f;
         // historyWeight = min(historyWeight, lerp(1, MotionTrustCap, moveGate * upscale fade))
-        public static float MotionTrustCap = 0.72f;
+        // 0.72 -> 0.65 (2026-07-05 final round, paired with the honest-disocclusion knee widening to
+        // 0.45..0.85): moving pixels refresh ~35%/frame so mover-edge trails die in 2-3 frames, shown
+        // through the crisp Lanczos reconstruction (user law: edges under motion must read as
+        // reconstruction, not ghost).
+        public static float MotionTrustCap = 0.65f;
         // gammaEff *= lerp(1, MotionClampTighten, moveGate * 0.8 * upscale fade)
         public static float MotionClampTighten = 0.72f;
         // rawSoften = saturate((blend - Onset) * Slope) * (1 - moveGate * MotionSup)
