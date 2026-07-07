@@ -27,7 +27,9 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: |
+            9.0.x
+            10.0.x
       # Shader compilation is deterministic in its inputs (the .fx sources, the compile script, and the
       # pinned mgcb tool version), so cache the compiled .xnb output keyed on exactly those. Most pushes
       # don't touch shaders — on a hit we skip the whole mgcb compile (the slowest part of this job).
@@ -78,7 +80,9 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: |
+            9.0.x
+            10.0.x
       # Cache the NuGet package store so restore only downloads what changed. Keyed on every .csproj
       # (the repo doesn't use packages.lock.json, so setup-dotnet's built-in cache can't be used); the
       # restore-key falls back to the newest previous cache so a csproj edit still starts ~warm.
@@ -134,7 +138,9 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: 9.0.x
+          dotnet-version: |
+            9.0.x
+            10.0.x
       # Same NuGet cache as build-client (no packages.lock.json in the repo, so actions/cache it is).
       - name: Cache NuGet packages
         uses: actions/cache@v4
