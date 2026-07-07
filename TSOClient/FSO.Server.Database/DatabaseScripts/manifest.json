@@ -285,6 +285,14 @@
       "requires": [
         "bec36bbc-1774-44cb-a7c5-03f4a00e801c"
       ]
+    },
+    {
+      "id": "5372e279-69bd-4a6d-b932-4f45b63ad315",
+      "script": "changes/0032_email_confirm_tries.sql",
+      "idempotent": false,
+      "requires": [
+        "49b2791e-7e2d-4219-94d5-000ba8a53c47"
+      ]
     }
   ]
 }

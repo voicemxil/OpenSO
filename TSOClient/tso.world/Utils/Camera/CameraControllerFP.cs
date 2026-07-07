@@ -98,8 +98,9 @@ namespace FSO.LotView.Utils.Camera
 
                 world.Scroll(new Vector2(FPCamVelocity.X * FSOEnvironment.DeltaTime, FPCamVelocity.Z * FSOEnvironment.DeltaTime));
                 FPCamHeight = Math.Max((terrainHeight - CamHeight) - 2, FPCamHeight + (FPCamVelocity.Y * 3) * FSOEnvironment.DeltaTime);
-                for (int i = 0; i < FSOEnvironment.RefreshRate / 60; i++)
-                    FPCamVelocity *= 0.9f;
+                //frame-rate independent decay: pow(0.9, dt*60) reduces to a single 0.9 multiply at 60fps,
+                //but no longer drops to zero iterations (and never decaying) when running below 60fps.
+                FPCamVelocity *= (float)Math.Pow(0.9, FSOEnvironment.DeltaTime * 60.0);
             }
         }
 

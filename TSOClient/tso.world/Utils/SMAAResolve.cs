@@ -30,6 +30,20 @@ namespace FSO.LotView.Utils
             }
         }
 
+        // Frees the two screen-sized intermediate targets. EdgesRT/WeightsRT otherwise only get replaced
+        // (never freed) on a resolution change, so once SMAA has run once it holds two full-screen render
+        // targets for the rest of the session even after the user switches to FXAA/off. Call this from
+        // wherever the post-AA mode is chosen (World.ChangeAAMode / ConfigureCityAA) when the resolved
+        // PostProcessFunc is no longer SMAAResolve.Draw. Safe to call repeatedly - EnsureTargets'
+        // null-checks reallocate on the next actual Draw() call.
+        public static void Dispose()
+        {
+            EdgesRT?.Dispose();
+            EdgesRT = null;
+            WeightsRT?.Dispose();
+            WeightsRT = null;
+        }
+
         public static void Draw(GraphicsDevice gd, RenderTarget2D src)
         {
             var effect = WorldContent.SMAA;

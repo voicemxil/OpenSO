@@ -24,6 +24,10 @@ namespace FSO.Server.Api.Core.Controllers
         private const int RESEND_COOLDOWN_SECS = 60;            // min seconds between (re)sends of a code for one address
         private const int CONFIRM_MAX_FAILS = 8;                // wrong-code tries per IP per window before lockout
         private const int CONFIRM_FAIL_WINDOW = 10 * 60;        // 10 minutes
+        // Wrong-email attempts allowed against a single pending code before it is invalidated and the
+        // user must request a fresh one. Caps distributed (multi-IP) attacks per-target instead of the
+        // old global all-IP counter, which let an attacker lock out ALL registrations by burning it.
+        private const int CONFIRM_MAX_TRIES_PER_CODE = 5;
 
         // Per-IP wrong-code attempt tracker (in memory; lost on restart, which is fine — codes expire anyway).
         // Throttles brute-forcing the small 6-digit code space.
@@ -291,9 +295,31 @@ namespace FSO.Server.Api.Core.Controllers
 
                 EmailConfirmation confirmation = da.EmailConfirmations.GetByToken(user.token);
 
-                if(confirmation == null)
+                // Bind the code to the email it was issued for. Without this, a guessed/brute-forced code could
+                // bind an attacker's username+password to someone else's already-verified email (account
+                // takeover of the pending registration). Both an unknown code AND a code whose bound email does
+                // not match the submitted email take the exact same path (invalid_token + brute-force counter),
+                // so the response can't be used as an oracle for which of the two was wrong.
+                var submittedEmail = (user.email ?? "").Trim();
+                if (confirmation == null
+                    || !string.Equals(submittedEmail, (confirmation.email ?? "").Trim(), System.StringComparison.OrdinalIgnoreCase))
                 {
                     RecordConfirmFail(ip);
+                    if (confirmation != null)
+                    {
+                        // The code exists but was submitted with the wrong email: count the failure against
+                        // the code itself, so a distributed (multi-IP) sweep gets at most a handful of guesses
+                        // per code. At the cap the pending confirmation is deleted, forcing the legitimate
+                        // owner to request a fresh code (the designed recovery path via /request, which is
+                        // still subject to RESEND_COOLDOWN). Unknown codes have no row to count against —
+                        // blind token guessing stays covered by the per-IP limiter above.
+                        var tries = da.EmailConfirmations.IncrementTries(confirmation.token);
+                        if (tries >= CONFIRM_MAX_TRIES_PER_CODE)
+                        {
+                            da.EmailConfirmations.Remove(confirmation.token);
+                        }
+                    }
+                    // Same response for wrong-token, wrong-email and tries-exceeded: no oracle.
                     return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
                     {
                         error = "registration_failed",
@@ -419,6 +445,11 @@ namespace FSO.Server.Api.Core.Controllers
     public class RegistrationUseTokenModel
     {
         public string username { get; set; }
+        /// <summary>
+        /// The email the confirmation code was sent to. Must match the email the code is bound to
+        /// server-side; this stops a guessed code from being used against a different (victim) email.
+        /// </summary>
+        public string email { get; set; }
         /// <summary>
         /// User password.
         /// </summary>

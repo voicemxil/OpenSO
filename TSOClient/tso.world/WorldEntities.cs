@@ -84,7 +84,7 @@ namespace FSO.LotView
                 effect.SetTechnique(RCObjectTechniques.Draw);
             }
 
-            DrawObjBuf(gd, state, pxOffset);
+            DrawObjBuf(gd, state, pxOffset, useVelocity);
 
             if (useVelocity)
             {
@@ -233,7 +233,11 @@ namespace FSO.LotView
             dyn = dyn.OrderBy(x => x.DrawOrder);
 
             gd.BlendState = BlendState.NonPremultiplied;
-            DrawObjectsBatched(gd, state, dyn.ToList());
+            //reuse a scratch list instead of ToList()'ing a fresh one every frame (same pattern as
+            //the InstanceScratch buffers below).
+            _DynamicDrawScratch.Clear();
+            _DynamicDrawScratch.AddRange(dyn);
+            DrawObjectsBatched(gd, state, _DynamicDrawScratch, useVelocity);
 
             if (useVelocity)
             {
@@ -266,7 +270,7 @@ namespace FSO.LotView
             //foreach (var sub in Blueprint.SubWorlds) sub.SubDraw(gd, state, (pxOffsetSub) => sub.Entities.StaticDraw(gd, state, pxOffsetSub));
         }
 
-        private void DrawObjBuf(GraphicsDevice gd, WorldState state, Vector2 pxOffset)
+        private void DrawObjBuf(GraphicsDevice gd, WorldState state, Vector2 pxOffset, bool useVelocity)
         {
             var _2d = state._2D;
 
@@ -291,7 +295,10 @@ namespace FSO.LotView
             else staticObj = Blueprint.Changes.StaticObjects;
             staticObj = staticObj.Where(x => (x.Level <= state.Level) && x.DoDraw(state)).OrderBy(x => x.DrawOrder);
 
-            DrawObjectsBatched(gd, state, staticObj.ToList());
+            //reuse a scratch list instead of ToList()'ing a fresh one every frame.
+            _StaticDrawScratch.Clear();
+            _StaticDrawScratch.AddRange(staticObj);
+            DrawObjectsBatched(gd, state, _StaticDrawScratch, useVelocity);
 
             _2d.EndImmediate();
         }
@@ -332,62 +339,84 @@ namespace FSO.LotView
         private static Matrix[] _InstWorldScratch = new Matrix[0];
         private static Matrix[] _InstPrevWorldScratch = new Matrix[0];
 
-        private static void DrawObjectsBatched(GraphicsDevice gd, WorldState state, IList<ObjectComponent> objs)
+        // Reused across frames for the dynamic/static object draw lists, instead of LINQ .ToList()'ing a
+        // brand new List<> (+ backing array) every single frame - Clear() keeps the backing array so
+        // steady-state frames (similar object counts) settle into zero extra allocation here.
+        private static readonly List<ObjectComponent> _DynamicDrawScratch = new List<ObjectComponent>();
+        private static readonly List<ObjectComponent> _StaticDrawScratch = new List<ObjectComponent>();
+
+        private static void DrawObjectsBatched(GraphicsDevice gd, WorldState state, IList<ObjectComponent> objs, bool useVelocity)
         {
-            if (!WorldConfig.Current.ObjectInstancing || objs.Count < InstanceBatchMinSize)
+            // Let DGRPRenderer.Draw3D know whether the velocity MRT is bound for this whole batch, so it
+            // doesn't have to call GetRenderTargets() (a fresh array alloc) once per object - the caller
+            // above already knows the answer for the whole loop. Save/restore (not just null on exit) in
+            // case a future reentrant draw (e.g. a subworld/portal) nests another DrawObjectsBatched call.
+            var prevHint = DGRPRenderer.VelocityHint;
+            DGRPRenderer.VelocityHint = useVelocity;
+            try
             {
-                for (int i = 0; i < objs.Count; i++) objs[i].Draw(gd, state);
-                return;
-            }
-
-            var keys = new InstanceKey?[objs.Count];
-            Dictionary<InstanceKey, List<int>> groups = null;
-            for (int i = 0; i < objs.Count; i++)
-            {
-                var obj = objs[i];
-                if (!obj.CanInstance(state)) continue;
-                var mesh = obj.EnsureMesh3D();
-                if (mesh == null) continue;
-
-                var key = new InstanceKey(mesh, obj.DynamicSpriteFlags, obj.DynamicSpriteFlags2, obj.Level);
-                keys[i] = key;
-
-                groups ??= new Dictionary<InstanceKey, List<int>>();
-                if (!groups.TryGetValue(key, out var idxList))
+                // Instancing requires true 3D depth-sorted geometry - ObjectComponent.CanInstance() always
+                // returns false in 2D mode, so the grouping pass below would just burn allocations for
+                // nothing. Skip it entirely and go straight to the per-object path.
+                if (!WorldConfig.Current.ObjectInstancing || objs.Count < InstanceBatchMinSize || state.CameraMode == CameraRenderMode._2D)
                 {
-                    idxList = new List<int>();
-                    groups[key] = idxList;
+                    for (int i = 0; i < objs.Count; i++) objs[i].Draw(gd, state);
+                    return;
                 }
-                idxList.Add(i);
-            }
 
-            if (groups == null)
-            {
-                for (int i = 0; i < objs.Count; i++) objs[i].Draw(gd, state);
-                return;
-            }
-
-            var flushed = new bool[objs.Count];
-            for (int i = 0; i < objs.Count; i++)
-            {
-                if (flushed[i]) continue;
-
-                List<int> idxList = null;
-                if (keys[i].HasValue) groups.TryGetValue(keys[i].Value, out idxList);
-
-                if (idxList != null && idxList.Count >= InstanceBatchMinSize)
+                var keys = new InstanceKey?[objs.Count];
+                Dictionary<InstanceKey, List<int>> groups = null;
+                for (int i = 0; i < objs.Count; i++)
                 {
-                    FlushInstanceGroup(state, objs, idxList);
-                    foreach (var j in idxList) flushed[j] = true;
+                    var obj = objs[i];
+                    if (!obj.CanInstance(state)) continue;
+                    var mesh = obj.EnsureMesh3D();
+                    if (mesh == null) continue;
+
+                    var key = new InstanceKey(mesh, obj.DynamicSpriteFlags, obj.DynamicSpriteFlags2, obj.Level);
+                    keys[i] = key;
+
+                    groups ??= new Dictionary<InstanceKey, List<int>>();
+                    if (!groups.TryGetValue(key, out var idxList))
+                    {
+                        idxList = new List<int>();
+                        groups[key] = idxList;
+                    }
+                    idxList.Add(i);
                 }
-                else
+
+                if (groups == null)
                 {
-                    objs[i].Draw(gd, state);
+                    for (int i = 0; i < objs.Count; i++) objs[i].Draw(gd, state);
+                    return;
                 }
+
+                var flushed = new bool[objs.Count];
+                for (int i = 0; i < objs.Count; i++)
+                {
+                    if (flushed[i]) continue;
+
+                    List<int> idxList = null;
+                    if (keys[i].HasValue) groups.TryGetValue(keys[i].Value, out idxList);
+
+                    if (idxList != null && idxList.Count >= InstanceBatchMinSize)
+                    {
+                        FlushInstanceGroup(state, objs, idxList, useVelocity);
+                        foreach (var j in idxList) flushed[j] = true;
+                    }
+                    else
+                    {
+                        objs[i].Draw(gd, state);
+                    }
+                }
+            }
+            finally
+            {
+                DGRPRenderer.VelocityHint = prevHint;
             }
         }
 
-        private static void FlushInstanceGroup(WorldState state, IList<ObjectComponent> objs, List<int> idxList)
+        private static void FlushInstanceGroup(WorldState state, IList<ObjectComponent> objs, List<int> idxList, bool useVelocity)
         {
             int count = idxList.Count;
             if (_InstWorldScratch.Length < count)
@@ -395,12 +424,6 @@ namespace FSO.LotView
                 _InstWorldScratch = new Matrix[count];
                 _InstPrevWorldScratch = new Matrix[count];
             }
-
-            // Same condition DGRPRenderer.Draw3D uses per-object to pick the velocity-writing technique -
-            // replicated here so the batched path stays behaviorally identical to the per-object path.
-            var device = state.Device;
-            bool useVelocity = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null
-                && device.GetRenderTargets().Length > 1;
 
             DGRP3DMesh mesh = null;
             ulong flags = 0, flags2 = 0;

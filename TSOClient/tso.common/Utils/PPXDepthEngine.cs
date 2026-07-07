@@ -37,7 +37,7 @@ namespace FSO.Common.Utils
         public static Vector2 TAAJitterNDC = Vector2.Zero;
 
         // Bloom mip chain (half, quarter, ... of viewport res). HalfVector4 so blurred highlights don't
-        // clip while accumulating. Allocated in InitScreenTargets, used by BloomPass.
+        // clip while accumulating. Allocated on demand by EnableBloomTargets, used by BloomPass.
         public const int BLOOM_MIPS = 5;
         private static RenderTarget2D[] BloomMip;
         public static RenderTarget2D GetBloomMip(int i) => (BloomMip != null && i < BloomMip.Length) ? BloomMip[i] : null;
@@ -56,6 +56,11 @@ namespace FSO.Common.Utils
 
         public static void InitGD(GraphicsDevice gd)
         {
+            // Idempotent: only (re)create the SpriteBatch when the device actually changes. ConfigureCityAA
+            // calls this every frame on the 3D city; the old unconditional `new SpriteBatch` abandoned a
+            // finalizable batch per frame.
+            if (GD == gd && SB != null) return;
+            SB?.Dispose();
             GD = gd;
             SB = new SpriteBatch(gd);
         }
@@ -78,11 +83,8 @@ namespace FSO.Common.Utils
                 BackbufferDepth = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, w, h, DepthFormat.None);
             Backbuffer = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, w, h, DepthFormat.Depth24Stencil8);
             // Screen-res intermediate (no MSAA) used to chain a sharpen pass after the scale/post-AA resolve.
-            int rw = System.Math.Max(1, GD.Viewport.Width / scale), rh = System.Math.Max(1, GD.Viewport.Height / scale);
-            if (ResolveTarget != null) ResolveTarget.Dispose();
-            ResolveTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
-            if (ResolveTarget2 != null) ResolveTarget2.Dispose();
-            ResolveTarget2 = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
+            // ResolveTarget / ResolveTarget2 (2x screen RGBA8) are now allocated lazily by EnsureResolveTargets
+            // the first frame any post stage runs — they were wasted VRAM for everyone with AA/post off.
             // RENDER-res intermediate for the upscaling path: spatial AA (FXAA/SMAA) must run at RENDER
             // resolution BEFORE the upscaler (AMD FSR1 guideline — EASU/TAAU want anti-aliased input on the
             // render grid; running them post-upscale smooths already-reconstructed pixels instead of the
@@ -91,28 +93,9 @@ namespace FSO.Common.Utils
             if (SSAA < 0.999f)
                 RenderPostTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, w, h, DepthFormat.None);
 
-            // Bloom mip chain: half, quarter, ... of viewport res. HalfVector4 keeps highlights from clipping.
-            if (BloomMip != null) foreach (var m in BloomMip) m?.Dispose();
-            BloomMip = new RenderTarget2D[BLOOM_MIPS];
-            for (int i = 0; i < BLOOM_MIPS; i++)
-            {
-                int mw = System.Math.Max(1, rw >> (i + 1));
-                int mh = System.Math.Max(1, rh >> (i + 1));
-                BloomMip[i] = new RenderTarget2D(GD, mw, mh, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-            }
-
-            // GTAO targets: SurfaceFormat.Color (R8 isn't universal). Four screen-res targets — noisy AO,
-            // depth-aware spatial blur, and a temporal history ping-pong (absorbs the per-frame variation
-            // from TAA-jittered depth/normals so AO doesn't flicker).
-            AOTarget?.Dispose();
-            AOTarget2?.Dispose();
-            AOHistoryA?.Dispose();
-            AOHistoryB?.Dispose();
-            AOTarget = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-            AOTarget2 = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-            AOHistoryA = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-            AOHistoryB = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-            _AOHistoryAIsPrev = true;
+            // Bloom mip chain and GTAO targets are allocated on demand (EnableBloomTargets / EnableAOTargets,
+            // driven by World.ChangeAAMode / ConfigureCityAA) so they cost nothing when bloom is off / AO is
+            // disabled. Resize is handled inside those methods (size-checked, called after InitScreenTargets).
 
             // Per-pixel screen-space velocity for TAA / motion blur. Only meaningful in 3D mode (the 2D path
             // is cached sprites with no per-object motion). HalfVector4: 2 channels for velocity is enough,
@@ -121,6 +104,77 @@ namespace FSO.Common.Utils
             if (VelocityTarget != null) { VelocityTarget.Dispose(); VelocityTarget = null; }
             if (MBTileMax != null) { MBTileMax.Dispose(); MBTileMax = null; }
             if (MBNeighborMax != null) { MBNeighborMax.Dispose(); MBNeighborMax = null; }
+        }
+
+        // The two screen-res (no-MSAA) ping-pong intermediates the resolve chain draws through. Allocated
+        // the first frame a post stage actually runs (DrawBackbuffer, before the ResolveTarget-dependent
+        // doBloom/doSharpen guards), sized to the viewport; size-checked so a resize reallocates. When AA /
+        // post is entirely off they're never created (~16MB saved at 1080p).
+        private static void EnsureResolveTargets()
+        {
+            if (GD == null) return;
+            int rw = System.Math.Max(1, GD.Viewport.Width), rh = System.Math.Max(1, GD.Viewport.Height);
+            if (ResolveTarget == null || ResolveTarget.Width != rw || ResolveTarget.Height != rh)
+            {
+                ResolveTarget?.Dispose();
+                ResolveTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
+            }
+            if (ResolveTarget2 == null || ResolveTarget2.Width != rw || ResolveTarget2.Height != rh)
+            {
+                ResolveTarget2?.Dispose();
+                ResolveTarget2 = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
+            }
+        }
+
+        // Bloom mip chain (half, quarter, ... of viewport, HalfVector4). Allocated only while bloom is
+        // enabled (World.ChangeAAMode / ConfigureCityAA pass the bloom flag); size-checked so a resize
+        // reallocates. BloomPass.Draw passes the scene through untouched when the chain is absent
+        // (BloomMipCount < 2), so a transient null is safe.
+        public static void EnableBloomTargets(bool enable)
+        {
+            if (!enable)
+            {
+                if (BloomMip != null) { foreach (var m in BloomMip) m?.Dispose(); BloomMip = null; }
+                return;
+            }
+            if (GD == null) return;
+            int rw = System.Math.Max(1, GD.Viewport.Width), rh = System.Math.Max(1, GD.Viewport.Height);
+            int m0w = System.Math.Max(1, rw >> 1), m0h = System.Math.Max(1, rh >> 1);
+            if (BloomMip != null && BloomMip.Length == BLOOM_MIPS && BloomMip[0] != null
+                && BloomMip[0].Width == m0w && BloomMip[0].Height == m0h) return; //already correct size
+            if (BloomMip != null) foreach (var m in BloomMip) m?.Dispose();
+            BloomMip = new RenderTarget2D[BLOOM_MIPS];
+            for (int i = 0; i < BLOOM_MIPS; i++)
+            {
+                int mw = System.Math.Max(1, rw >> (i + 1));
+                int mh = System.Math.Max(1, rh >> (i + 1));
+                BloomMip[i] = new RenderTarget2D(GD, mw, mh, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            }
+        }
+
+        // GTAO targets (four screen-res Color buffers, ~32MB at 1080p). Allocated only when AO is actually
+        // enabled — currently never (const AOEnabled=false in World.ChangeAAMode), so this frees/leaves them
+        // null. Both consumers null-check: AOPass.Draw passes through and DrawBackbuffer's doAO gates off.
+        // Flip AOEnabled to re-enable and these allocate again on the next config apply.
+        public static void EnableAOTargets(bool enable)
+        {
+            if (!enable)
+            {
+                AOTarget?.Dispose(); AOTarget = null;
+                AOTarget2?.Dispose(); AOTarget2 = null;
+                AOHistoryA?.Dispose(); AOHistoryA = null;
+                AOHistoryB?.Dispose(); AOHistoryB = null;
+                return;
+            }
+            if (GD == null) return;
+            int rw = System.Math.Max(1, GD.Viewport.Width), rh = System.Math.Max(1, GD.Viewport.Height);
+            if (AOTarget != null && AOTarget.Width == rw && AOTarget.Height == rh) return; //already correct size
+            AOTarget?.Dispose(); AOTarget2?.Dispose(); AOHistoryA?.Dispose(); AOHistoryB?.Dispose();
+            AOTarget = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            AOTarget2 = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            AOHistoryA = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            AOHistoryB = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            _AOHistoryAIsPrev = true;
         }
 
         // Allocate / dispose the velocity MRT (+ motion-blur tile intermediates) on demand. Engine binds
@@ -533,6 +587,14 @@ namespace FSO.Common.Utils
             bool doMotionBlur = MotionBlurFunc != null && postOk;
             bool doPost = PostProcessFunc != null && postOk;
             bool doTAA = TAAFunc != null && postOk;
+            // Lazily allocate the resolve ping-pong the moment any post stage could run. Done BEFORE the
+            // ResolveTarget-dependent doBloom/doSharpen guards so they see the freshly-allocated targets
+            // (otherwise a bloom/sharpen-only frame would never allocate them and stay off forever). anyPost
+            // is a strict superset of the chain-entry condition below, so whenever the chain runs the targets
+            // exist -> no NRE; when everything is off they're never created.
+            bool anyPost = nonNative || doMotionBlur || doPost || doTAA
+                || (AOFunc != null && postOk) || (BloomFunc != null && postOk) || (SharpenFunc != null && postOk);
+            if (anyPost) EnsureResolveTargets();
             bool doAO = AOFunc != null && AOTarget != null && AOTarget2 != null && AOHistoryA != null && AOHistoryB != null && VelocityTarget != null && postOk;
             bool doBloom = BloomFunc != null && ResolveTarget != null && ResolveTarget2 != null && postOk;
             bool doSharpen = SharpenFunc != null && ResolveTarget != null && ResolveTarget2 != null && postOk;

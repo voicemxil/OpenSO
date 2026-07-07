@@ -1239,6 +1239,7 @@ namespace FSO.LotView
             if (postFn == null && cfg.TAA && WorldContent.TAA == null && WorldContent.FXAA != null)
                 postFn = PostProcessAA.Draw;
             PPXDepthEngine.PostProcessFunc = postFn;
+            if (postFn != SMAAResolve.Draw) SMAAResolve.Dispose(); //free SMAA edge/weight targets when SMAA isn't the active spatial pass (reallocated on next use)
 
             // Temporal AA: separate resolve-chain stage applied AFTER the spatial AA above, so FXAA/SMAA and
             // TAA compose (spatial edge smoothing + temporal stabilization) instead of being mutually
@@ -1297,6 +1298,7 @@ namespace FSO.LotView
             // Bloom: post-process, independent of velocity/3D. Enabled when on with a non-zero intensity
             // and the shader is present.
             bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
+            PPXDepthEngine.EnableBloomTargets(bloom); //allocate the mip chain only when bloom is on
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
             // GTAO/SSAO: functional but DISABLED for now — the path and its UI are hidden until the grass
@@ -1305,6 +1307,9 @@ namespace FSO.LotView
             // re-enable.
             const bool AOEnabled = false;
             bool ao = AOEnabled && wantVelocity && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null;
+            // Allocate the four AO targets only when AO is actually wanted (currently never). Keyed off the
+            // same predicate as the force-enable block below so a re-enable brings them back automatically.
+            PPXDepthEngine.EnableAOTargets(AOEnabled && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null && State.CameraMode == CameraRenderMode._3D);
             PPXDepthEngine.AOFunc = ao ? Utils.AOPass.Draw : null;
             // AO needs the velocity buffer too — force-enable it even when TAA/motion blur are off.
             if (AOEnabled && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null && State.CameraMode == CameraRenderMode._3D)
@@ -1373,8 +1378,10 @@ namespace FSO.LotView
             else if (cfg.PostAA >= 1 && WorldContent.FXAA != null)
                 postFn = PostProcessAA.Draw;
             PPXDepthEngine.PostProcessFunc = postFn;
+            if (postFn != SMAAResolve.Draw) SMAAResolve.Dispose(); //free SMAA edge/weight targets when SMAA isn't the active spatial pass (reallocated on next use)
 
             bool bloom = cfg.Bloom && cfg.BloomIntensity > 0f && WorldContent.Bloom != null;
+            PPXDepthEngine.EnableBloomTargets(bloom); //allocate the mip chain only when bloom is on
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
             // RCAS sharpen — user-controlled, available at any render scale (the downscale resolve uses the
@@ -1418,6 +1425,7 @@ namespace FSO.LotView
             bool taaReady = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null
                             && PPXDepthEngine.GetVelocityTarget() != null && PPXDepthEngine.GetHistoryPrev() != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
+            PPXDepthEngine.EnableAOTargets(false); //AO is never used in the city view
             PPXDepthEngine.AOFunc = null;
 
             // Debug selection mirrors ChangeAAMode: TAA meta/trust view from the TAA dropdown (cfg.TAADebug),

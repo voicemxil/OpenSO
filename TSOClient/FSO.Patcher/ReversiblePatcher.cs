@@ -11,6 +11,7 @@ namespace FSO.Patcher
     {
         public List<string> FileChanges;
         public HashSet<string> Extracted;
+        public HashSet<string> Removed;
         public HashSet<ZipArchiveEntry> ToExtract;
         public List<string> Errors;
 
@@ -25,6 +26,7 @@ namespace FSO.Patcher
             ToExtract = new HashSet<ZipArchiveEntry>(zip.Entries);
             Total = ToExtract.Count;
             Extracted = new HashSet<string>();
+            Removed = new HashSet<string>();
 
             try
             {
@@ -153,6 +155,55 @@ namespace FSO.Patcher
             }
         }
 
+        // Deletes files this patch step's manifest says were removed (see UpdateManifest.GetRemovedPaths),
+        // backing each up first under updateBackup/ (same convention as ExtractEntry) so Revert() can bring
+        // them back. Paths come from a downloaded JSON file, so every one is validated relative-safe before
+        // it's allowed anywhere near File.Delete -- never trust it to stay within the install directory.
+        public void RemoveFiles(IEnumerable<string> paths)
+        {
+            foreach (var raw in paths)
+            {
+                var rel = SafeRelativePath(raw);
+                if (rel == null)
+                {
+                    Status($"Skipped unsafe removal path from manifest: {raw}");
+                    continue;
+                }
+                var targPath = Path.Combine("./", rel);
+                if (!File.Exists(targPath)) continue; //already gone (or never existed here) -- nothing to do
+
+                try
+                {
+                    var backupPath = Path.Combine("updateBackup/", targPath);
+                    Directory.CreateDirectory(Path.GetDirectoryName(backupPath));
+                    File.Copy(targPath, backupPath, true);
+                    File.Delete(targPath);
+                    Removed.Add(targPath);
+                    Status(targPath + " Removed...");
+                }
+                catch (Exception e)
+                {
+                    Status($"Could not remove {targPath}: {e.Message}");
+                    Errors.Add($"{targPath}: {e.Message}");
+                }
+            }
+        }
+
+        // Rejects anything not safely relative to the install root: absolute/rooted paths and ".." segments.
+        // The manifest is built by our own CI, but it arrives as a downloaded file, so treat it as untrusted.
+        private static string SafeRelativePath(string raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            var p = raw.Replace('\\', '/');
+            while (p.StartsWith("./")) p = p.Substring(2); //DiffGenerator prefixes root-level files with "./"
+            if (p.Length == 0 || Path.IsPathRooted(p)) return null;
+            foreach (var seg in p.Split('/'))
+            {
+                if (seg.Length == 0 || seg == "..") return null;
+            }
+            return p;
+        }
+
         public bool Revert()
         {
             bool success = true;
@@ -171,6 +222,25 @@ namespace FSO.Patcher
                 catch (Exception e)
                 {
                     Status($"Could not restore backup for {file}: {e.Message}");
+                    Errors.Add($"{file}: {e.Message}");
+                    success = false;
+                }
+            }
+            foreach (var file in Removed)
+            {
+                var backupPath = Path.Combine("updateBackup/", file);
+                try
+                {
+                    Status($"Restoring removed file {file}...");
+                    File.Copy(backupPath, file, true);
+                }
+                catch (FileNotFoundException)
+                {
+                    Status($"Backup for {file} not found, skipping...");
+                }
+                catch (Exception e)
+                {
+                    Status($"Could not restore removed file {file}: {e.Message}");
                     Errors.Add($"{file}: {e.Message}");
                     success = false;
                 }

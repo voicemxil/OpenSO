@@ -61,6 +61,22 @@ namespace FSO.LotView.Utils
         // lock/evidence machinery. Set by World.ChangeAAMode / World.ConfigureCityAA alongside DebugAccum.
         public static bool LiteMode;
 
+        // Reusable blit SpriteBatch. The pass-through / final-copy blits below run every frame on the main
+        // resolve path; a per-frame `new SpriteBatch` leaked a finalizable object each frame. Created lazily,
+        // recreated only if the GraphicsDevice changes.
+        private static SpriteBatch _blitSB;
+        private static GraphicsDevice _blitGD;
+        private static SpriteBatch BlitSB(GraphicsDevice gd)
+        {
+            if (_blitSB == null || _blitGD != gd)
+            {
+                _blitSB?.Dispose();
+                _blitSB = new SpriteBatch(gd);
+                _blitGD = gd;
+            }
+            return _blitSB;
+        }
+
         public static void Draw(GraphicsDevice gd, RenderTarget2D src)
         {
             var effect = WorldContent.TAA;
@@ -88,12 +104,10 @@ namespace FSO.LotView.Utils
                 }
                 // Shader / buffers missing -> fall through to plain blit so the frame still renders.
                 gd.BlendState = BlendState.Opaque;
-                using (var sb = new SpriteBatch(gd))
-                {
-                    sb.Begin(blendState: BlendState.Opaque);
-                    sb.Draw(src, new Rectangle(0, 0, gd.Viewport.Width, gd.Viewport.Height), Color.White);
-                    sb.End();
-                }
+                var sb = BlitSB(gd);
+                sb.Begin(blendState: BlendState.Opaque);
+                sb.Draw(src, new Rectangle(0, 0, gd.Viewport.Width, gd.Viewport.Height), Color.White);
+                sb.End();
                 return;
             }
 
@@ -194,12 +208,10 @@ namespace FSO.LotView.Utils
                 // Copy the result to whatever target the chain originally bound (screen or next ping-pong
                 // RT). Destination rect = current viewport so the blit matches the chain's working surface.
                 gd.BlendState = BlendState.Opaque;
-                using (var sb = new SpriteBatch(gd))
-                {
-                    sb.Begin(blendState: BlendState.Opaque);
-                    sb.Draw(DebugAccum ? metaCurr : historyCurr, new Rectangle(0, 0, gd.Viewport.Width, gd.Viewport.Height), Color.White);
-                    sb.End();
-                }
+                var sb = BlitSB(gd);
+                sb.Begin(blendState: BlendState.Opaque);
+                sb.Draw(DebugAccum ? metaCurr : historyCurr, new Rectangle(0, 0, gd.Viewport.Width, gd.Viewport.Height), Color.White);
+                sb.End();
             }
 
             // Rotate history roles for next frame: currCurr becomes "prev", the other becomes "curr".

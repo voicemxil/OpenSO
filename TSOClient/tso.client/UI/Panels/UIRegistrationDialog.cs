@@ -126,7 +126,7 @@ namespace FSO.Client.UI.Panels
                 if (user.Length < 3) { MsgLabel.Caption = "Username must be at least 3 characters."; return; }
                 if (pass.Length == 0) { MsgLabel.Caption = "Please choose a password."; return; }
                 SetBusy(true, "Creating account...");
-                _ = Client.ConfirmCode(code, user, pass, OnConfirmResult);
+                _ = Client.ConfirmCode(code, PendingEmail, user, pass, OnConfirmResult);
             }
         }
 
