@@ -93,6 +93,20 @@ float TuneConfFadeN = 20.0;          // evidence depth (minN) at which the off-p
 float TuneGrowOffPhase = 0.3;        // off-phase growth discount floor for the evidence counter (witness-rule strength)
 float TuneDeepCapBase = 0.992;       // Kalman deep-end cap at native/mild upscale (memory depth off the freeze asymptote)
 
+// ---- TAALite tunables (2026-07-07 promotion — user wants Lite tunable too, its "raw motion resolve"
+// Switch-2-DLSS-lite character is the DESIGN TARGET; defaults = the shipped literals, TAATuning.cs is
+// the C# single source. Only consumed by TAALite_PS.) ----
+float LiteGamma = 1.5;               // variance box base width (sigma) at native
+float LiteGammaScale = 2.0;          // resolution ramp target multiplier at ratio >= 3 (1.5 -> 3.0)
+float LiteDeepCap = 0.985;           // counter deep-end trust cap
+float LiteRespEnd = 0.68;            // full-diff responsive end
+float LiteMotionBoost = 0.35;        // speed-proportional current boost strength
+float LiteConfFloor = 0.14;          // off-phase sample-confidence injection floor
+float LiteMoveGateLo = 0.6;          // motion gate lower edge (native px/frame)
+float LiteMoveGateHi = 2.0;          // motion gate upper edge
+float LiteHonestLo = 0.65;           // honest-disocclusion raw-injection knee, lower edge
+float LiteHonestHi = 0.98;           // honest-disocclusion raw-injection knee, upper edge
+
 texture colorTex;
 sampler colorSampler = sampler_state {
     texture = <colorTex>;
@@ -1598,8 +1612,9 @@ TAAOut TAALite_PS(VSOut input)
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
     // 1.5-sigma box at native, RESOLUTION-SCALED to 3.0 at ratio 3 (matches TAA_Core — lab-validated
     // 2026-07-05: the fixed width re-clipped render-res-diluted converged detail at upscale; wider box =
-    // the clean supersampled look). Branch-free ramp; native bit-exact at ratio 1.
-    float GAMMA = 1.5 * lerp(1.0, 2.0, saturate((upscaleRatio - 1.0) * 0.5));
+    // the clean supersampled look). Branch-free ramp; native bit-exact at ratio 1. Live-tunable
+    // (LiteTune promotion 2026-07-07).
+    float GAMMA = LiteGamma * lerp(1.0, LiteGammaScale, saturate((upscaleRatio - 1.0) * 0.5));
     float3 cmin = m1 - GAMMA * sigma;
     float3 cmax = m1 + GAMMA * sigma;
 
@@ -1659,7 +1674,7 @@ TAAOut TAALite_PS(VSOut input)
     float2 histUV = uv - velocity + JitterDelta;
     float inBounds = step(0.0, histUV.x) * step(histUV.x, 1.0) * step(0.0, histUV.y) * step(histUV.y, 1.0);
     float velPx = length(velocity / InvScreenSize) * VelGatePxScale; // NATIVE px
-    float moveGate = smoothstep(0.6, 2.0, velPx);
+    float moveGate = smoothstep(LiteMoveGateLo, LiteMoveGateHi, velPx);
 
     // Bicubic (Catmull-Rom) history fetch for detail preservation + a POINT tap for the packed
     // depth in alpha (LINEAR would mix two surfaces' depths at every silhouette — see sampler
@@ -1693,21 +1708,23 @@ TAAOut TAALite_PS(VSOut input)
     float diff = saturate(abs(lumaC - lumaH) / max(0.2, max(lumaC, lumaH)));
     diff = max(diff, depthReject);
     // Counter-driven deep end replaces the flat floor: proven-stable pixels earn N/(N+1) trust
-    // (capped 0.985), never below the baseline 1-BlendFactor.
-    float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), 0.985);
-    float historyWeight = lerp(deepEnd, 0.68, diff);
+    // (capped), never below the baseline 1-BlendFactor. Live-tunable (LiteTune 2026-07-07).
+    float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), LiteDeepCap);
+    float historyWeight = lerp(deepEnd, LiteRespEnd, diff);
 
     // Motion-adaptive: lean more on current when moving fast (less lag/ghosting under motion).
-    float motionBoost = saturate(length(velocity) * 20.0) * 0.35;
+    // This speed-proportional boost IS the "raw motion resolve" character (the user's Switch-2-
+    // DLSS-lite anchor) — tune to taste, not to zero.
+    float motionBoost = saturate(length(velocity) * 20.0) * LiteMotionBoost;
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
     // Sample-confidence injection gate: frames whose kernel barely covers this pixel inject
     // little (their estimate is an amplified tail) — except under motion, where responsiveness
     // wins. Exactly 1 at native (see sampleConf note).
-    blend *= lerp(lerp(0.14, 1.0, sampleConf), 1.0, moveGate);
+    blend *= lerp(lerp(LiteConfFloor, 1.0, sampleConf), 1.0, moveGate);
     // Honest disocclusion: strong depth evidence forces the current frame through regardless of
     // accumulated trust.
-    blend = max(blend, smoothstep(0.65, 0.98, depthReject));
+    blend = max(blend, smoothstep(LiteHonestLo, LiteHonestHi, depthReject));
     // Warmup: a young history (small N) cannot claim deep trust yet.
     blend = max(blend, 1.0 / (minN + 1.0));
 

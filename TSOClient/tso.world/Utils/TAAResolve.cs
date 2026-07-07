@@ -171,6 +171,18 @@ namespace FSO.LotView.Utils
             effect.Parameters["TuneConfFadeN"]?.SetValue(TAATuning.ConfFadeN);
             effect.Parameters["TuneGrowOffPhase"]?.SetValue(TAATuning.GrowOffPhase);
             effect.Parameters["TuneDeepCapBase"]?.SetValue(TAATuning.DeepCapBase);
+            // TAALite tunables (2026-07-07 promotion — Lite is a first-class tunable tier now; its
+            // raw-motion character is the design target, see TAATuning).
+            effect.Parameters["LiteGamma"]?.SetValue(TAATuning.LiteGamma);
+            effect.Parameters["LiteGammaScale"]?.SetValue(TAATuning.LiteGammaScale);
+            effect.Parameters["LiteDeepCap"]?.SetValue(TAATuning.LiteDeepCap);
+            effect.Parameters["LiteRespEnd"]?.SetValue(TAATuning.LiteRespEnd);
+            effect.Parameters["LiteMotionBoost"]?.SetValue(TAATuning.LiteMotionBoost);
+            effect.Parameters["LiteConfFloor"]?.SetValue(TAATuning.LiteConfFloor);
+            effect.Parameters["LiteMoveGateLo"]?.SetValue(TAATuning.LiteMoveGateLo);
+            effect.Parameters["LiteMoveGateHi"]?.SetValue(TAATuning.LiteMoveGateHi);
+            effect.Parameters["LiteHonestLo"]?.SetValue(TAATuning.LiteHonestLo);
+            effect.Parameters["LiteHonestHi"]?.SetValue(TAATuning.LiteHonestHi);
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
             // Technique selection. TAALite is now a user-facing lighter option on ALL backends ("Cosmic
