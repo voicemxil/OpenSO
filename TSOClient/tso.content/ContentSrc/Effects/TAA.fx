@@ -85,6 +85,13 @@ float TuneTexDetailFloor = 0.28;     // texture-detail blend floor / low-varianc
 float TuneConfFloor = 0.14;          // TAAU sample-confidence floor (the <=2x-ratio endpoint)
 float TuneRingLo = 0.03;             // ringContam own-vs-dilated color knee, lower edge
 float TuneRingHi = 0.10;             // ringContam own-vs-dilated color knee, upper edge
+// ---- STRUCTURAL constants (2026-07-07 promotion — the full-vs-lite haze/ghost hunt) ----
+float TuneDirectClampMix = 0.75;     // motion direct-clamp share vs phase-coherent rectification (ghost scrub <-> contrast-edge fizzle)
+float TuneKarisFade = 1.0;           // scales the Karis anti-flicker motion fade (1 = full fade to plain lerp under motion)
+float TuneGammaMotionDecay = 0.6;    // wide-box narrowing strength while in motion (foliage-trail lever)
+float TuneConfFadeN = 20.0;          // evidence depth (minN) at which the off-phase confidence throttle is fully armed
+float TuneGrowOffPhase = 0.3;        // off-phase growth discount floor for the evidence counter (witness-rule strength)
+float TuneDeepCapBase = 0.992;       // Kalman deep-end cap at native/mild upscale (memory depth off the freeze asymptote)
 
 texture colorTex;
 sampler colorSampler = sampler_state {
@@ -990,7 +997,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // trail behind all motion, worst at 0.33x where witnessing frames are rarest. A fresh pixel counts
     // every frame (all samples are information when you know nothing); the off-phase discount fades in
     // with minN as there is real history for off-phase frames to falsely accuse.
-    float growK = agreeK * lerp(1.0, lerp(0.3, 1.0, testify), saturate(prevN / 8.0));
+    float growK = agreeK * lerp(1.0, lerp(TuneGrowOffPhase, 1.0, testify), saturate(prevN / 8.0));
     float newN = reprojectable ? min(prevN * collapse + growK, MaxAccum) : 0.0;
     // Ghost-side reject now RESETS the counter (was a soft-cap to 2): the surface that wrote the history has
     // provably left, so the honest treatment is the same as off-screen — raw current, then the warmup ramp
@@ -1044,8 +1051,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // can reach. Narrow the widening partially while the pixel is IN MOTION (when trails are painted;
     // 0.6 strength keeps some in-motion distinctness), full width returns at rest where the supersampled
     // foliage win lives.
+    // MOTION MEMORY (fourth notch — "could the high gamma be contributing?"): keying the decay on
+    // CURRENT moveGate alone left two windows where the 3.0 box held residue: the instant motion STOPS
+    // (box springs back to full width while the trail is still in history — the wide box then preserves
+    // it at rest, leaving only slow diff decay) and sub-gate creep. Use remembered motion too
+    // (storedMove, the meta-velocity trick that fixed the same one-frame hole in the ghost test): a
+    // just-stopped pixel keeps the narrowed box one extra frame — long enough for the scrub to finish —
+    // and genuine rest (no motion this frame or last) keeps the full supersampled width.
+    float gammaMotion = max(moveGate, storedMove);
     float GAMMA = TuneGamma * lerp(1.0, 2.0,
-        saturate((upscaleRatio - 1.0) * 0.5) * (1.0 - suspGamma) * (1.0 - 0.6 * moveGate));
+        saturate((upscaleRatio - 1.0) * 0.5) * (1.0 - suspGamma) * (1.0 - TuneGammaMotionDecay * gammaMotion));
     // FSR2-style "LOCK" via the oscillation signal (fine-geometry stability, matters most under TAAU): the
     // clamp box is built from RENDER-res taps, but the converged history holds OUTPUT-res detail — a thin
     // line that is sub-pixel at render res is DILUTED in the box statistics, so the box hugs the diluted
@@ -1128,7 +1143,28 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     {
         // hLow fetched with the rejection-authority block above (same 4-tap render-texel average).
         float3 hLowC = ClipAABB(cmin, cmax, hLow);
-        history = ClipAABB(m1 - 2.0 * gammaEff * sigma, m1 + 2.0 * gammaEff * sigma, historyRaw + (hLowC - hLow));
+        // MOTION-FADED SPLIT RECTIFICATION (2026-07-05, ported from TAALite — the last reprojection
+        // ghost during motion): the split clamps only the LOW component and lets sub-pixel detail ride
+        // inside a loose 2x-gammaEff safety hull — correct at REST (a ghost is wrong in its low
+        // component; converged detail is zero-mean around it), but under MOTION a stale trail's own
+        // STRUCTURE rides the protected detail component through the hull, immune to every trust lever
+        // (it is never clipped at all). TAALite clamps the FULL history into the 1x box — which is
+        // exactly why lite's moving edges never carried this residue. Blend to lite's direct full clamp
+        // by moveGate: rest keeps the detail-preserving rectification bit-exactly (the thin-line
+        // stillness it was built for), motion gets the hard scrub.
+        float3 rectified = ClipAABB(m1 - 2.0 * gammaEff * sigma, m1 + 2.0 * gammaEff * sigma, historyRaw + (hLowC - hLow));
+        float3 directCl  = ClipAABB(cmin, cmax, historyRaw);
+        // max(moveGate, storedMove): a just-stopped pixel keeps the direct clamp one extra frame so
+        // the trail finishes scrubbing before the detail-protecting rectification returns (same
+        // motion-memory reasoning as the gamma decay above).
+        // PARTIAL (0.75, 2026-07-07): the FULL direct clamp under motion re-clips history to a
+        // per-phase-changing box — at high-contrast (dark<->light) transitions the clamp target jumps
+        // every frame and the clipped value churns: the dark-to-light fizzle. 75% direct still bounds
+        // ghost structure to ~the box (trails die), while the remaining rectified share keeps the
+        // clamp value phase-coherent. If ghost returns, raise toward 0.9; if contrast-edge fizzle
+        // persists, drop toward 0.6 (and see the motion-faded Karis weighting at the final blend —
+        // the other half of this same symptom).
+        history = lerp(rectified, directCl, TuneDirectClampMix * max(moveGate, storedMove));
         // RESOLUTION-MATCHED DIFF (TSR: compare at INPUT resolution): m1 is a render-res mean but the
         // sharp history is output-res — for converged thin geometry they disagree FOREVER (the line is
         // diluted in m1), a permanent phantom "content change" that held every line pixel at a 5-10%
@@ -1200,7 +1236,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // full Halton cycle is the shallowest window that still hides the converged limit cycle.
     // Failure signature if too shallow: faint repeating cycle shimmer on locked converged content.
     float cycleWindow = clamp(1.0 - 1.0 / (1.0 * JitterPhases), 0.965, 0.99);
-    float deepCap = lerp(0.992, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio));
+    float deepCap = lerp(TuneDeepCapBase, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio));
     float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), deepCap);
     // Responsive end 0.68 (was 0.55 = 45% raw/frame -> fully raw in 2-3 frames on ANY luma mismatch —
     // "too quick to go fully raw on objects"): pre-structural-rejects, luma-diff carried disocclusion
@@ -1337,7 +1373,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // young pixels inject their crisp reconstruction at full blend every frame (fast, clean
         // resolve-in) and converged pixels keep the validated off-phase protection bit-exactly.
         float confMul = lerp(lerp(confFloor, 1.0, sampleConf), lerp(0.55, 1.0, sampleConf), moveGate * lerp(0.3, 1.0, suspicion));
-        blend *= lerp(1.0, confMul, saturate(minN / 12.0));
+        blend *= lerp(1.0, confMul, saturate(minN / TuneConfFadeN));// 12->20 (2026-07-07 "slow to fill"): full-speed reconstruction injection persists deeper into accumulation before the converged-pixel off-phase throttle takes over
     }
 
     // WARMUP RAMP (counter-driven): with no accumulated history (fresh clear / off-screen reset) the
@@ -1367,14 +1403,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Knee 0.65..0.98: raw injection is now reserved for NEAR-CERTAIN rejection only — the whole
     // mid-evidence band is handled by clamp TIGHTENING instead (see rejTighten at the clamp: the stale
     // color snaps to the filtered neighborhood statistics — ghost scrubbed AND smooth, no raw needed).
-    // Knee 0.65..0.98 -> 0.45..0.85 (2026-07-05 final round — mover-EDGE ghosting during character
-    // animation): the near-certainty-only knee left the whole mid-evidence band (constant grazing
-    // partial rejects along animated silhouettes — the stored depth is dilated) to clamp-tightening
-    // alone, which reads as edge GHOST rather than reconstruction. Under the crisp-motion regime the
-    // injected current displays as the deringed Lanczos reconstruction (spatial AA), NOT the raw
-    // per-phase speckle that killed the earlier 0.5..0.9 attempt (that predates the Lanczos+hull and
-    // motion-suppressed soften). Revert signature: speckle/aliasing riding animated silhouettes.
-    blend = max(blend, smoothstep(0.45, 0.85, max(depthReject, ghostReject)));
+    // Knee settled at 0.55..0.9 (2026-07-05/07 tuning arc): 0.65..0.98 (near-certainty-only) left
+    // mid-evidence mover-edge trails to clamp-tightening alone = edge ghost; the 0.45..0.85 push then
+    // over-rawed animated silhouettes once the direct motion clamp landed (which scrubs the same trails
+    // itself, ghost-free). Middle ground: moderate-confidence rejects still buy reconstruction
+    // injection, grazing partials lean on the (now hard) motion clamp — treated edges, no ghost, no raw.
+    blend = max(blend, smoothstep(0.55, 0.9, max(depthReject, ghostReject)));
 
     // TEXTURE-DETAIL blend floor (pairs with the raw-sample input lean above): even with a raw input, the
     // CONVERGED value is the temporal mean over the jitter footprint, which wipes single-texel texture
@@ -1423,8 +1457,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #endif
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
-    float wc = blend * (1.0 / (1.0 + max(lumaC, 0.0)));
-    float wh = (1.0 - blend) * (1.0 / (1.0 + max(lumaH, 0.0)));
+    // MOTION-FADED (2026-07-07 — the dark-to-light ghost fizzle): this weighting is structurally
+    // DARK-BIASED — history weight scales by 1/(1+lumaH), so DARK stale history gets BOOSTED exactly
+    // where the current content is bright: on dark->light reveals during motion the ghost was
+    // over-weighted, scrubbed, re-boosted — fizzle from dark into light regions. The sparkle it
+    // suppresses is a REST-state artifact (converged sub-pixel glints); under motion fade to a plain
+    // energy-honest lerp so a bright reveal displaces dark history at its true blend weight.
+    float lumaFade = max(moveGate, storedMove) * TuneKarisFade;
+    float wc = blend * lerp(1.0 / (1.0 + max(lumaC, 0.0)), 1.0, lumaFade);
+    float wh = (1.0 - blend) * lerp(1.0 / (1.0 + max(lumaH, 0.0)), 1.0, lumaFade);
     float3 blended = (dispCurr * wc + history * wh) / max(wc + wh, 1e-5);
 
     float3 outYCoCg = reprojectable ? blended : dispCurr;

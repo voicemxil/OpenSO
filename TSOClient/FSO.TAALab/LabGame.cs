@@ -11,8 +11,8 @@ namespace FSO.TAALab
     /// <summary>
     /// Interactive TAA tuning lab. Renders a synthetic animated scene at render resolution (output *
     /// renderScale), builds an exact per-object velocity buffer, then runs the game's REAL compiled TAA
-    /// resolve (Content/DX/Effects/TAA.xnb, technique "TAA" = TAA_Core; the SM4 build, so ALL 16 Tune*
-    /// uniforms incl. the #if SM4 RawSoften*/Ring* ones are live) on it exactly the way
+    /// resolve (Content/DX/Effects/TAA.xnb, technique "TAA" = TAA_Core or "TAALite" — live A/B combo;
+    /// the SM4 build, so ALL 22 Tune* uniforms incl. the #if SM4-only ones are live) on it exactly the way
     /// TAAResolve.Draw does — history/meta ping-pong at OUTPUT res (Cosmic TAAU when renderScale < 1) —
     /// with every promoted Tune* uniform live-adjustable from the keyboard.
     ///
@@ -65,6 +65,11 @@ namespace FSO.TAALab
         private bool TAAEnabled = true;
         private float SpeedMul = 1f;
         private bool NeedHistoryReset = true;
+        // Resolve technique A/B: 0 = "TAA" (full Cosmic resolve, TAA_Core), 1 = "TAALite". The two write
+        // DIFFERENT meta semantics (lite has no lock/evidence machinery), so switching resets history/meta.
+        private int TechIdx;
+        private static readonly string[] TechLabels = { "Full Cosmic TAA", "TAA Lite" };
+        private static readonly string[] TechNames = { "TAA", "TAALite" };
 
         // --- scene objects (positions in OUTPUT pixel space; velocity = per-frame delta / output size) ---
         private Vector2 CheckerPos = new Vector2(120, 120);
@@ -151,6 +156,13 @@ namespace FSO.TAALab
             public float ConfFloor = 0.14f;
             public float RingLo = 0.03f;
             public float RingHi = 0.10f;
+            // structural constants (2026-07-07 promotion — the full-vs-lite haze/ghost hunt)
+            public float DirectClampMix = 0.75f;
+            public float KarisFade = 1.0f;
+            public float GammaMotionDecay = 0.6f;
+            public float ConfFadeN = 20.0f;
+            public float GrowOffPhase = 0.3f;
+            public float DeepCapBase = 0.992f;
         }
         private readonly Tunables Tune = new Tunables();
         // Pristine copy: the field initializers above ARE the TAATuning.cs defaults, so a fresh
@@ -313,8 +325,9 @@ namespace FSO.TAALab
         }
 
         /// <summary>
-        /// Startup sanity check: report which of the 16 Tune* uniforms resolved in the loaded TAA.xnb.
-        /// On the DX/SM4 build all 16 must bind; the OGL build strips the 5 #if SM4 ones.
+        /// Startup sanity check: report which of the 22 Tune* uniforms resolved in the loaded TAA.xnb.
+        /// On the DX/SM4 build all 22 must bind; the OGL build strips the #if SM4-only ones
+        /// (RawSoften*/Ring* plus TuneDirectClampMix — its only reference is the SM4 rectified branch).
         /// </summary>
         private void LogParamBindings()
         {
@@ -323,7 +336,9 @@ namespace FSO.TAALab
                 "TuneMotionBoostFloor", "TuneMotionBoostMax", "TuneStillGateFloor", "TuneMoveGateLo",
                 "TuneMoveGateHi", "TuneRespEnd", "TuneMotionTrustCap", "TuneMotionClampTighten",
                 "TuneRawSoftenOnset", "TuneRawSoftenSlope", "TuneRawSoftenMotionSup", "TuneGamma",
-                "TuneTexDetailFloor", "TuneConfFloor", "TuneRingLo", "TuneRingHi"
+                "TuneTexDetailFloor", "TuneConfFloor", "TuneRingLo", "TuneRingHi",
+                "TuneDirectClampMix", "TuneKarisFade", "TuneGammaMotionDecay", "TuneConfFadeN",
+                "TuneGrowOffPhase", "TuneDeepCapBase"
             };
             var bound = new List<string>();
             var missing = new List<string>();
@@ -629,8 +644,14 @@ namespace FSO.TAALab
                 TAA.Parameters["TuneConfFloor"]?.SetValue(Tune.ConfFloor);
                 TAA.Parameters["TuneRingLo"]?.SetValue(Tune.RingLo);
                 TAA.Parameters["TuneRingHi"]?.SetValue(Tune.RingHi);
+                TAA.Parameters["TuneDirectClampMix"]?.SetValue(Tune.DirectClampMix);
+                TAA.Parameters["TuneKarisFade"]?.SetValue(Tune.KarisFade);
+                TAA.Parameters["TuneGammaMotionDecay"]?.SetValue(Tune.GammaMotionDecay);
+                TAA.Parameters["TuneConfFadeN"]?.SetValue(Tune.ConfFadeN);
+                TAA.Parameters["TuneGrowOffPhase"]?.SetValue(Tune.GrowOffPhase);
+                TAA.Parameters["TuneDeepCapBase"]?.SetValue(Tune.DeepCapBase);
 
-                TAA.CurrentTechnique = TAA.Techniques["TAA"];
+                TAA.CurrentTechnique = TAA.Techniques[TechNames[TechIdx]];
                 TAA.CurrentTechnique.Passes[0].Apply();
                 GraphicsDevice.SetVertexBuffer(FSQuad);
                 GraphicsDevice.DrawPrimitives(PrimitiveType.TriangleStrip, 0, 2);
@@ -677,7 +698,8 @@ namespace FSO.TAALab
             const float sc = 2f;
             SB.Draw(White, new Rectangle(4, 4, 470, 26), Color.Black * 0.62f);
             string status = string.Format(CultureInfo.InvariantCulture,
-                "TAA {0}  {1}  SCALE {2:0.00}  {3}X{4}  {5:0} FPS", TAAEnabled ? "ON" : "OFF",
+                "TAA {0}  {1}  SCALE {2:0.00}  {3}X{4}  {5:0} FPS",
+                TAAEnabled ? (TechIdx == 1 ? "LITE" : "FULL") : "OFF",
                 Paused ? "PAUSED" : "RUN", RenderScale, RW, RH, SmoothedFps);
             Font.Draw(SB, status, new Vector2(10, 8), Color.Yellow, sc);
             SB.End();
@@ -700,6 +722,14 @@ namespace FSO.TAALab
                 {
                     ScaleIdx = idx;
                     RecreateTargets();
+                }
+                // Live full-vs-lite A/B. The two techniques write DIFFERENT meta semantics (lite has no
+                // lock/evidence machinery), so a switch goes through the history-reset path.
+                int tech = TechIdx;
+                if (ImGui.Combo("Technique", ref tech, TechLabels, TechLabels.Length) && tech != TechIdx)
+                {
+                    TechIdx = tech;
+                    NeedHistoryReset = true;
                 }
                 bool raw = !TAAEnabled;
                 if (ImGui.Checkbox("TAA off (raw)", ref raw))
@@ -779,6 +809,22 @@ namespace FSO.TAALab
                 }
             }
 
+            if (ImGui.CollapsingHeader("Structural", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                ImGui.SliderFloat("DirectClampMix", ref Tune.DirectClampMix, 0f, 1f, "%.3f");
+                ImGui.SliderFloat("KarisFade", ref Tune.KarisFade, 0f, 1f, "%.3f");
+                ImGui.SliderFloat("GammaMotionDecay", ref Tune.GammaMotionDecay, 0f, 1f, "%.3f");
+                ImGui.SliderFloat("ConfFadeN", ref Tune.ConfFadeN, 1f, 64f, "%.1f");
+                ImGui.SliderFloat("GrowOffPhase", ref Tune.GrowOffPhase, 0f, 1f, "%.3f");
+                ImGui.SliderFloat("DeepCapBase", ref Tune.DeepCapBase, 0.9f, 0.999f, "%.4f");
+                if (ImGui.Button("Reset to defaults##structural"))
+                {
+                    Tune.DirectClampMix = Defaults.DirectClampMix; Tune.KarisFade = Defaults.KarisFade;
+                    Tune.GammaMotionDecay = Defaults.GammaMotionDecay; Tune.ConfFadeN = Defaults.ConfFadeN;
+                    Tune.GrowOffPhase = Defaults.GrowOffPhase; Tune.DeepCapBase = Defaults.DeepCapBase;
+                }
+            }
+
             ImGui.Separator();
             if (ImGui.Button("Reset ALL to defaults"))
             {
@@ -792,6 +838,9 @@ namespace FSO.TAALab
                 Tune.Gamma = Defaults.Gamma; Tune.TexDetailFloor = Defaults.TexDetailFloor;
                 Tune.ConfFloor = Defaults.ConfFloor;
                 Tune.RingLo = Defaults.RingLo; Tune.RingHi = Defaults.RingHi;
+                Tune.DirectClampMix = Defaults.DirectClampMix; Tune.KarisFade = Defaults.KarisFade;
+                Tune.GammaMotionDecay = Defaults.GammaMotionDecay; Tune.ConfFadeN = Defaults.ConfFadeN;
+                Tune.GrowOffPhase = Defaults.GrowOffPhase; Tune.DeepCapBase = Defaults.DeepCapBase;
             }
             ImGui.TextDisabled("Space pause  R reset hist  T TAA A/B  P print  Esc quit");
 
@@ -801,9 +850,9 @@ namespace FSO.TAALab
         private void PrintCheatsheet()
         {
             Console.WriteLine("==================== OpenSO TAA Lab ====================");
-            Console.WriteLine("Runs the game's REAL compiled TAA resolve (DX/SM4 TAA.xnb, technique TAA)");
-            Console.WriteLine("on a synthetic scene. History/meta at output res; TAAU when scale < 1.");
-            Console.WriteLine("All 16 Tune* uniforms are live (incl. the SM4-only RawSoften*/Ring* set).");
+            Console.WriteLine("Runs the game's REAL compiled TAA resolve (DX/SM4 TAA.xnb, technique TAA or");
+            Console.WriteLine("TAALite — live A/B combo) on a synthetic scene. History/meta at output res;");
+            Console.WriteLine("TAAU when scale < 1. All 22 Tune* uniforms are live (incl. the SM4-only set).");
             Console.WriteLine();
             Console.WriteLine("Primary UI: the ImGui 'TAA Tuning' window (sliders, per-group + global");
             Console.WriteLine("defaults reset, scene controls, Print C# block).");
@@ -843,6 +892,12 @@ namespace FSO.TAALab
             F("ConfFloor", Tune.ConfFloor);
             F("RingLo", Tune.RingLo);
             F("RingHi", Tune.RingHi);
+            F("DirectClampMix", Tune.DirectClampMix);
+            F("KarisFade", Tune.KarisFade);
+            F("GammaMotionDecay", Tune.GammaMotionDecay);
+            F("ConfFadeN", Tune.ConfFadeN);
+            F("GrowOffPhase", Tune.GrowOffPhase);
+            F("DeepCapBase", Tune.DeepCapBase);
             Console.WriteLine(sb.ToString());
         }
     }

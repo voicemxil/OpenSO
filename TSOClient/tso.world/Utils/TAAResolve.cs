@@ -165,6 +165,12 @@ namespace FSO.LotView.Utils
             effect.Parameters["TuneConfFloor"]?.SetValue(TAATuning.ConfFloor);
             effect.Parameters["TuneRingLo"]?.SetValue(TAATuning.RingLo);
             effect.Parameters["TuneRingHi"]?.SetValue(TAATuning.RingHi);
+            effect.Parameters["TuneDirectClampMix"]?.SetValue(TAATuning.DirectClampMix);
+            effect.Parameters["TuneKarisFade"]?.SetValue(TAATuning.KarisFade);
+            effect.Parameters["TuneGammaMotionDecay"]?.SetValue(TAATuning.GammaMotionDecay);
+            effect.Parameters["TuneConfFadeN"]?.SetValue(TAATuning.ConfFadeN);
+            effect.Parameters["TuneGrowOffPhase"]?.SetValue(TAATuning.GrowOffPhase);
+            effect.Parameters["TuneDeepCapBase"]?.SetValue(TAATuning.DeepCapBase);
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
             // Technique selection. TAALite is now a user-facing lighter option on ALL backends ("Cosmic
