@@ -192,6 +192,18 @@ namespace FSO.TAALab
             public float ConfFadeN = 20.0f;
             public float GrowOffPhase = 0.3f;
             public float DeepCapBase = 0.992f;
+            // TAALite tunables (take effect ONLY under the "TAALite" technique — 2026-07-07 promotion;
+            // canonical defaults/comments: TAATuning.cs bottom section)
+            public float LiteGamma = 1.5f;
+            public float LiteGammaScale = 2.0f;
+            public float LiteDeepCap = 0.985f;
+            public float LiteRespEnd = 0.68f;
+            public float LiteMotionBoost = 0.35f;
+            public float LiteConfFloor = 0.14f;
+            public float LiteMoveGateLo = 0.6f;
+            public float LiteMoveGateHi = 2.0f;
+            public float LiteHonestLo = 0.65f;
+            public float LiteHonestHi = 0.98f;
         }
         private readonly Tunables Tune = new Tunables();
         // Pristine copy: the field initializers above ARE the TAATuning.cs defaults, so a fresh
@@ -237,6 +249,44 @@ namespace FSO.TAALab
         {
             var t = new Tunables();
             ApplyVector(v, t);
+            return t;
+        }
+
+        // --- 10-parameter Lite* vector view (TAALite technique). Same treatment: order matches the
+        //     print block, bounds are the slider ranges, paired gates keep lo <= hi. ---
+        private static readonly string[] LiteParamNames =
+        {
+            "LiteGamma", "LiteGammaScale", "LiteDeepCap", "LiteRespEnd", "LiteMotionBoost",
+            "LiteConfFloor", "LiteMoveGateLo", "LiteMoveGateHi", "LiteHonestLo", "LiteHonestHi"
+        };
+        private static readonly float[] LiteParamLo = { 0.5f, 1f, 0.9f, 0.4f, 0f, 0f, 0f, 0.5f, 0.2f, 0.5f };
+        private static readonly float[] LiteParamHi = { 3f, 3f, 0.999f, 0.9f, 1f, 1f, 4f, 6f, 0.9f, 1f };
+        private static float[] ToLiteVector(Tunables t) => new[]
+        {
+            t.LiteGamma, t.LiteGammaScale, t.LiteDeepCap, t.LiteRespEnd, t.LiteMotionBoost,
+            t.LiteConfFloor, t.LiteMoveGateLo, t.LiteMoveGateHi, t.LiteHonestLo, t.LiteHonestHi
+        };
+        private static void ApplyLiteVector(float[] v, Tunables t)
+        {
+            t.LiteGamma = v[0]; t.LiteGammaScale = v[1]; t.LiteDeepCap = v[2]; t.LiteRespEnd = v[3];
+            t.LiteMotionBoost = v[4]; t.LiteConfFloor = v[5];
+            t.LiteMoveGateLo = v[6]; t.LiteMoveGateHi = Math.Max(v[7], v[6]); // lo <= hi, like the sliders
+            t.LiteHonestLo = v[8]; t.LiteHonestHi = Math.Max(v[9], v[8]);     // lo <= hi
+        }
+
+        // --- technique-aware search space: the tuner optimizes the param set the SELECTED technique
+        //     actually reads (22 Tune* under "TAA", 10 Lite* under "TAALite"). RunLite is captured at
+        //     StartTuning and describes BestVec until the next run. ---
+        private bool RunLite;
+        private string[] ActiveNames => RunLite ? LiteParamNames : ParamNames;
+        private float[] ActiveLo => RunLite ? LiteParamLo : ParamLo;
+        private float[] ActiveHi => RunLite ? LiteParamHi : ParamHi;
+        private float[] ActiveDefaults => RunLite ? ToLiteVector(Defaults) : ToVector(Defaults);
+        private void ActiveApply(float[] v, Tunables t) { if (RunLite) ApplyLiteVector(v, t); else ApplyVector(v, t); }
+        private Tunables ActiveFromVector(float[] v)
+        {
+            var t = new Tunables();
+            ActiveApply(v, t);
             return t;
         }
 
@@ -397,9 +447,10 @@ namespace FSO.TAALab
         }
 
         /// <summary>
-        /// Startup sanity check: report which of the 22 Tune* uniforms resolved in the loaded TAA.xnb.
-        /// On the DX/SM4 build all 22 must bind; the OGL build strips the #if SM4-only ones
-        /// (RawSoften*/Ring* plus TuneDirectClampMix — its only reference is the SM4 rectified branch).
+        /// Startup sanity check: report which of the 32 tunable uniforms (22 Tune* + 10 Lite*) resolved
+        /// in the loaded TAA.xnb. On the DX/SM4 build all 32 must bind; the OGL build strips the
+        /// #if SM4-only ones (RawSoften*/Ring* plus TuneDirectClampMix — its only reference is the SM4
+        /// rectified branch).
         /// </summary>
         private void LogParamBindings()
         {
@@ -410,12 +461,15 @@ namespace FSO.TAALab
                 "TuneRawSoftenOnset", "TuneRawSoftenSlope", "TuneRawSoftenMotionSup", "TuneGamma",
                 "TuneTexDetailFloor", "TuneConfFloor", "TuneRingLo", "TuneRingHi",
                 "TuneDirectClampMix", "TuneKarisFade", "TuneGammaMotionDecay", "TuneConfFadeN",
-                "TuneGrowOffPhase", "TuneDeepCapBase"
+                "TuneGrowOffPhase", "TuneDeepCapBase",
+                // TAALite tunables (2026-07-07 promotion, commit c2979599)
+                "LiteGamma", "LiteGammaScale", "LiteDeepCap", "LiteRespEnd", "LiteMotionBoost",
+                "LiteConfFloor", "LiteMoveGateLo", "LiteMoveGateHi", "LiteHonestLo", "LiteHonestHi"
             };
             var bound = new List<string>();
             var missing = new List<string>();
             foreach (var n in names) (TAA.Parameters[n] != null ? bound : missing).Add(n);
-            Console.WriteLine($"[TAALab] TAA.xnb Tune* uniform binding: {bound.Count}/{names.Length} bound.");
+            Console.WriteLine($"[TAALab] TAA.xnb Tune*/Lite* uniform binding: {bound.Count}/{names.Length} bound.");
             Console.WriteLine("[TAALab]   bound:   " + string.Join(", ", bound));
             Console.WriteLine(missing.Count == 0
                 ? "[TAALab]   missing: (none — DX/SM4 build confirmed)"
@@ -577,11 +631,12 @@ namespace FSO.TAALab
 
         protected override void Draw(GameTime gameTime)
         {
-            // Smoke mode (TAALAB_SMOKE=1): auto-start a capped quick run on the first frame, exit after.
+            // Smoke mode (TAALAB_SMOKE=1 full / =lite TAALite): capped run on the first frame, exit after.
             if (SmokeMode && !SmokeStarted && TState == TuneState.Idle)
             {
                 SmokeStarted = true;
-                Console.WriteLine($"[AutoTune] SMOKE MODE: auto-starting capped run (2 determinism evals + {SmokeEvals} optimizer evals), exiting on completion.");
+                if (SmokeLite && TechIdx != 1) { TechIdx = 1; NeedHistoryReset = true; }
+                Console.WriteLine($"[AutoTune] SMOKE MODE ({TechNames[TechIdx]}): auto-starting capped run (2 determinism evals + {SmokeEvals} optimizer evals), exiting on completion.");
                 StartTuning(TuneMode.Smoke);
             }
 
@@ -836,6 +891,18 @@ namespace FSO.TAALab
             TAA.Parameters["TuneConfFadeN"]?.SetValue(t.ConfFadeN);
             TAA.Parameters["TuneGrowOffPhase"]?.SetValue(t.GrowOffPhase);
             TAA.Parameters["TuneDeepCapBase"]?.SetValue(t.DeepCapBase);
+            // TAALite tunables (read only by the "TAALite" technique — uploaded every frame like the
+            // game's TAAResolve.Draw, harmless under TAA_Core)
+            TAA.Parameters["LiteGamma"]?.SetValue(t.LiteGamma);
+            TAA.Parameters["LiteGammaScale"]?.SetValue(t.LiteGammaScale);
+            TAA.Parameters["LiteDeepCap"]?.SetValue(t.LiteDeepCap);
+            TAA.Parameters["LiteRespEnd"]?.SetValue(t.LiteRespEnd);
+            TAA.Parameters["LiteMotionBoost"]?.SetValue(t.LiteMotionBoost);
+            TAA.Parameters["LiteConfFloor"]?.SetValue(t.LiteConfFloor);
+            TAA.Parameters["LiteMoveGateLo"]?.SetValue(t.LiteMoveGateLo);
+            TAA.Parameters["LiteMoveGateHi"]?.SetValue(t.LiteMoveGateHi);
+            TAA.Parameters["LiteHonestLo"]?.SetValue(t.LiteHonestLo);
+            TAA.Parameters["LiteHonestHi"]?.SetValue(t.LiteHonestHi);
 
             TAA.CurrentTechnique = TAA.Techniques[TechNames[TechIdx]];
             TAA.CurrentTechnique.Passes[0].Apply();
@@ -875,7 +942,10 @@ namespace FSO.TAALab
         private TuneState TState = TuneState.Idle;
         private TuneMode TMode;
         private bool StopRequested;
-        private readonly bool SmokeMode = Environment.GetEnvironmentVariable("TAALAB_SMOKE") == "1";
+        // TAALAB_SMOKE=1 -> smoke run on the current (full) technique; TAALAB_SMOKE=lite -> TAALite.
+        private static readonly string SmokeEnv = Environment.GetEnvironmentVariable("TAALAB_SMOKE");
+        private readonly bool SmokeMode = !string.IsNullOrEmpty(SmokeEnv) && SmokeEnv != "0";
+        private readonly bool SmokeLite = string.Equals(SmokeEnv, "lite", StringComparison.OrdinalIgnoreCase);
         private bool SmokeStarted;
         private bool ShowControl; // debug: present the supersampled control instead of the TAA output
 
@@ -962,6 +1032,7 @@ namespace FSO.TAALab
             RestartCount = mode == TuneMode.Full ? FullRestarts : 1;
             RestartBudget = mode == TuneMode.Full ? FullEvalsPerRestart : mode == TuneMode.Quick ? QuickEvals : SmokeEvals;
             Opt = null;
+            RunLite = TechIdx == 1; // technique-aware search space, captured for the whole run
             EnsureTuningTargets();
             PrevFixedTimeStep = IsFixedTimeStep;
             IsFixedTimeStep = false; // no fixed-step catch-up spiral while Draw calls take ~0.2s
@@ -969,7 +1040,8 @@ namespace FSO.TAALab
 
             bool meshes = MeshesEnabled && MeshesAvailable;
             Console.WriteLine($"[AutoTune] run started: mode {mode}, {RestartCount} restart(s) x {RestartBudget} evals, " +
-                $"scale {RenderScale.ToString("0.00", CultureInfo.InvariantCulture)}, technique {TechNames[TechIdx]}, meshes {(meshes ? "on" : "off")}, " +
+                $"scale {RenderScale.ToString("0.00", CultureInfo.InvariantCulture)}, technique {TechNames[TechIdx]}, " +
+                $"optimizing {ActiveNames.Length} params ({(RunLite ? "Lite*" : "Tune*")}), meshes {(meshes ? "on" : "off")}, " +
                 $"weights spatial {SpatialWeight} / temporal {TemporalWeight}, metric grid {MetricW}x{MetricH}.");
             if (!ControlCacheValid || ControlCacheMeshes != meshes)
             {
@@ -990,13 +1062,13 @@ namespace FSO.TAALab
         private void BeginDeterminismCheck()
         {
             TState = TuneState.Evaluating;
-            BeginEval(ToVector(Defaults));
+            BeginEval(ActiveDefaults);
         }
 
         private void BeginEval(float[] vec)
         {
             CurVec = vec;
-            EvalTune = FromVector(vec);
+            EvalTune = ActiveFromVector(vec); // untuned set stays at defaults (inert for this technique)
             for (int i = 0; i < 4; i++) { PhaseS[i] = 0; PhaseT[i] = 0; }
             EvalFrame = 0;
             HistCurr = 0;          // fixed ping-pong start (identical target usage every eval)
@@ -1119,15 +1191,15 @@ namespace FSO.TAALab
             Console.WriteLine($"[AutoTune] eval #{EvalsDone}: new best — {Fmt(sc)}");
         }
 
-        private static float[] RestartStart(int idx)
+        private float[] RestartStart(int idx)
         {
-            var d = ToVector(Defaults);
+            var d = ActiveDefaults;
             if (idx == 0) return d; // restart 1 = exact defaults
             var rng = new Random(7777 * idx + 1); // FIXED seed per restart — runs stay reproducible
             for (int i = 0; i < d.Length; i++)
             {
-                d[i] += (float)((rng.NextDouble() * 2 - 1) * 0.10) * (ParamHi[i] - ParamLo[i]);
-                d[i] = Math.Clamp(d[i], ParamLo[i], ParamHi[i]);
+                d[i] += (float)((rng.NextDouble() * 2 - 1) * 0.10) * (ActiveHi[i] - ActiveLo[i]);
+                d[i] = Math.Clamp(d[i], ActiveLo[i], ActiveHi[i]);
             }
             return d;
         }
@@ -1135,7 +1207,7 @@ namespace FSO.TAALab
         private void StartRestart()
         {
             RestartEvals = 0;
-            Opt = new NelderMeadOptimizer(RestartStart(RestartIdx), ParamLo, ParamHi);
+            Opt = new NelderMeadOptimizer(RestartStart(RestartIdx), ActiveLo, ActiveHi);
             Console.WriteLine($"[AutoTune] restart {RestartIdx + 1}/{RestartCount} " +
                 $"({(RestartIdx == 0 ? "defaults start" : "defaults +/-10% jitter start")}) — budget {RestartBudget} evals.");
             BeginEval(Opt.Ask());
@@ -1155,8 +1227,8 @@ namespace FSO.TAALab
                     DetPhase = 1;
                     DetA = sc;
                     DefaultsScores = sc; HaveDefaultsScores = true;
-                    Console.WriteLine($"[AutoTune] defaults baseline: {Fmt(sc)}");
-                    BeginEval(ToVector(Defaults)); // second identical-params eval — THE determinism check
+                    Console.WriteLine($"[AutoTune] defaults baseline ({(RunLite ? "Lite*" : "Tune*")}): {Fmt(sc)}");
+                    BeginEval(ActiveDefaults); // second identical-params eval — THE determinism check
                 }
                 else
                 {
@@ -1167,7 +1239,7 @@ namespace FSO.TAALab
                     Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                         "[AutoTune] determinism check (identical params, two evals): eval1 total={0:R} eval2 total={1:R} -> {2}",
                         DetA.Total, sc.Total, identical ? "IDENTICAL (PASS)" : "MISMATCH (FAIL) — scores are not trustworthy!"));
-                    Consider(ToVector(Defaults), sc); // defaults are the baseline best
+                    Consider(ActiveDefaults, sc); // defaults are the baseline best
                     StartRestart();
                 }
                 return;
@@ -1204,8 +1276,8 @@ namespace FSO.TAALab
             if (HaveDefaultsScores) Console.WriteLine($"[AutoTune] defaults: {Fmt(DefaultsScores)}");
             if (BestVec != null)
             {
-                Console.WriteLine($"[AutoTune] best:     {Fmt(BestScoresV)} (eval #{BestEvalNum})");
-                PrintTuningBlock(FromVector(BestVec), AutoTuneHeader);
+                Console.WriteLine($"[AutoTune] best:     {Fmt(BestScoresV)} (eval #{BestEvalNum}, {(RunLite ? "Lite*" : "Tune*")} space)");
+                PrintTuningBlock(ActiveFromVector(BestVec), AutoTuneHeader);
             }
             TState = TuneState.Idle;
             IsFixedTimeStep = PrevFixedTimeStep;
@@ -1402,6 +1474,32 @@ namespace FSO.TAALab
                 }
             }
 
+            if (ImGui.CollapsingHeader("Lite (TAALite technique only)", ImGuiTreeNodeFlags.DefaultOpen))
+            {
+                if (TechIdx != 1)
+                    ImGui.TextDisabled("inert now — select the 'TAA Lite' technique to see these take effect");
+                ImGui.SliderFloat("LiteGamma", ref Tune.LiteGamma, 0.5f, 3f, "%.3f");
+                ImGui.SliderFloat("LiteGammaScale", ref Tune.LiteGammaScale, 1f, 3f, "%.3f");
+                ImGui.SliderFloat("LiteDeepCap", ref Tune.LiteDeepCap, 0.9f, 0.999f, "%.4f");
+                ImGui.SliderFloat("LiteRespEnd", ref Tune.LiteRespEnd, 0.4f, 0.9f, "%.3f");
+                ImGui.SliderFloat("LiteMotionBoost", ref Tune.LiteMotionBoost, 0f, 1f, "%.3f");
+                ImGui.SliderFloat("LiteConfFloor", ref Tune.LiteConfFloor, 0f, 1f, "%.3f");
+                ImGui.SliderFloat("LiteMoveGateLo", ref Tune.LiteMoveGateLo, 0f, 4f, "%.3f");
+                ImGui.SliderFloat("LiteMoveGateHi", ref Tune.LiteMoveGateHi, 0.5f, 6f, "%.3f");
+                Tune.LiteMoveGateHi = Math.Max(Tune.LiteMoveGateHi, Tune.LiteMoveGateLo); // keep lo <= hi
+                ImGui.SliderFloat("LiteHonestLo", ref Tune.LiteHonestLo, 0.2f, 0.9f, "%.3f");
+                ImGui.SliderFloat("LiteHonestHi", ref Tune.LiteHonestHi, 0.5f, 1f, "%.3f");
+                Tune.LiteHonestHi = Math.Max(Tune.LiteHonestHi, Tune.LiteHonestLo); // keep lo <= hi
+                if (ImGui.Button("Reset to defaults##lite"))
+                {
+                    Tune.LiteGamma = Defaults.LiteGamma; Tune.LiteGammaScale = Defaults.LiteGammaScale;
+                    Tune.LiteDeepCap = Defaults.LiteDeepCap; Tune.LiteRespEnd = Defaults.LiteRespEnd;
+                    Tune.LiteMotionBoost = Defaults.LiteMotionBoost; Tune.LiteConfFloor = Defaults.LiteConfFloor;
+                    Tune.LiteMoveGateLo = Defaults.LiteMoveGateLo; Tune.LiteMoveGateHi = Defaults.LiteMoveGateHi;
+                    Tune.LiteHonestLo = Defaults.LiteHonestLo; Tune.LiteHonestHi = Defaults.LiteHonestHi;
+                }
+            }
+
             ImGui.Separator();
             if (ImGui.Button("Reset ALL to defaults"))
             {
@@ -1418,6 +1516,11 @@ namespace FSO.TAALab
                 Tune.DirectClampMix = Defaults.DirectClampMix; Tune.KarisFade = Defaults.KarisFade;
                 Tune.GammaMotionDecay = Defaults.GammaMotionDecay; Tune.ConfFadeN = Defaults.ConfFadeN;
                 Tune.GrowOffPhase = Defaults.GrowOffPhase; Tune.DeepCapBase = Defaults.DeepCapBase;
+                Tune.LiteGamma = Defaults.LiteGamma; Tune.LiteGammaScale = Defaults.LiteGammaScale;
+                Tune.LiteDeepCap = Defaults.LiteDeepCap; Tune.LiteRespEnd = Defaults.LiteRespEnd;
+                Tune.LiteMotionBoost = Defaults.LiteMotionBoost; Tune.LiteConfFloor = Defaults.LiteConfFloor;
+                Tune.LiteMoveGateLo = Defaults.LiteMoveGateLo; Tune.LiteMoveGateHi = Defaults.LiteMoveGateHi;
+                Tune.LiteHonestLo = Defaults.LiteHonestLo; Tune.LiteHonestHi = Defaults.LiteHonestHi;
             }
             ImGui.TextDisabled("Space pause  R reset hist  T TAA A/B  P print  Esc quit");
 
@@ -1433,6 +1536,8 @@ namespace FSO.TAALab
                 "score = {0:0.0} x spatial MSE + {1:0.0} x temporal diff, vs 2x supersampled control",
                 SpatialWeight, TemporalWeight));
             ImGui.TextDisabled("sequence: 60 rest / 60 motion / 60 reveal+rest / 60 slow (240 @ virtual 60Hz)");
+
+            ImGui.TextDisabled($"search space follows the technique combo: {(TechIdx == 1 ? "10 Lite* params" : "22 Tune* params")}");
 
             if (idle)
             {
@@ -1466,30 +1571,32 @@ namespace FSO.TAALab
             if (BestVec != null)
             {
                 ImGui.Text(string.Format(CultureInfo.InvariantCulture,
-                    "best     {0:0.000000}  (R {1:0.0000} M {2:0.0000} V {3:0.0000} S {4:0.0000})  eval #{5}",
-                    BestScoresV.Total, BestScoresV.Rest, BestScoresV.Motion, BestScoresV.Reveal, BestScoresV.Slow, BestEvalNum));
+                    "best     {0:0.000000}  (R {1:0.0000} M {2:0.0000} V {3:0.0000} S {4:0.0000})  eval #{5} [{6}]",
+                    BestScoresV.Total, BestScoresV.Rest, BestScoresV.Motion, BestScoresV.Reveal, BestScoresV.Slow,
+                    BestEvalNum, RunLite ? "Lite*" : "Tune*"));
                 if (idle)
                 {
                     if (ImGui.Button("Load best into sliders"))
                     {
-                        ApplyVector(BestVec, Tune);
+                        ActiveApply(BestVec, Tune); // into the param set the run actually tuned
                         NeedHistoryReset = true;
                     }
                     ImGui.SameLine();
-                    if (ImGui.Button("Print best C# block")) PrintTuningBlock(FromVector(BestVec), AutoTuneHeader);
+                    if (ImGui.Button("Print best C# block")) PrintTuningBlock(ActiveFromVector(BestVec), AutoTuneHeader);
                 }
                 if (ImGui.TreeNode("Best vs defaults (deltas)"))
                 {
-                    var def = ToVector(Defaults);
+                    var def = ActiveDefaults;
+                    var names = ActiveNames;
                     bool any = false;
-                    for (int i = 0; i < ParamNames.Length; i++)
+                    for (int i = 0; i < names.Length; i++)
                     {
                         float dv = BestVec[i] - def[i];
                         if (Math.Abs(dv) < 1e-4f) continue;
                         any = true;
                         ImGui.Text(string.Format(CultureInfo.InvariantCulture,
                             "{0}: {1:0.####} -> {2:0.####}  ({3}{4:0.####})",
-                            ParamNames[i], def[i], BestVec[i], dv >= 0 ? "+" : "", dv));
+                            names[i], def[i], BestVec[i], dv >= 0 ? "+" : "", dv));
                     }
                     if (!any) ImGui.TextDisabled("(best == defaults)");
                     ImGui.TreePop();
@@ -1504,7 +1611,8 @@ namespace FSO.TAALab
             Console.WriteLine("==================== OpenSO TAA Lab ====================");
             Console.WriteLine("Runs the game's REAL compiled TAA resolve (DX/SM4 TAA.xnb, technique TAA or");
             Console.WriteLine("TAALite — live A/B combo) on a synthetic scene. History/meta at output res;");
-            Console.WriteLine("TAAU when scale < 1. All 22 Tune* uniforms are live (incl. the SM4-only set).");
+            Console.WriteLine("TAAU when scale < 1. All 32 tunable uniforms are live (22 Tune* incl. the");
+            Console.WriteLine("SM4-only set + 10 Lite* for the TAALite technique).");
             Console.WriteLine();
             Console.WriteLine("Primary UI: the ImGui 'TAA Tuning' window (sliders, per-group + global");
             Console.WriteLine("defaults reset, scene controls, Print C# block).");
@@ -1520,10 +1628,11 @@ namespace FSO.TAALab
             Console.WriteLine("real game 3D meshes (christmastree spin, plumbob pedestal rocking self-reveal,");
             Console.WriteLine("bannerlamp slow spin) with per-pixel matrix-pair velocity + clip.w/800 depth.");
             Console.WriteLine();
-            Console.WriteLine("Auto-tune (ImGui section): Nelder-Mead over all 22 params vs a 2x supersampled");
-            Console.WriteLine("no-TAA control on a fixed 240-frame rest/motion/reveal/slow script. Every run");
-            Console.WriteLine("evaluates the defaults twice first (bit-identical or it flags FAIL). Env");
-            Console.WriteLine("TAALAB_SMOKE=1 auto-runs a capped 10-eval smoke pass and exits.");
+            Console.WriteLine("Auto-tune (ImGui section): Nelder-Mead vs a 2x supersampled no-TAA control on");
+            Console.WriteLine("a fixed 240-frame rest/motion/reveal/slow script. TECHNIQUE-AWARE: tunes the");
+            Console.WriteLine("22 Tune* params under Full Cosmic TAA, the 10 Lite* params under TAA Lite.");
+            Console.WriteLine("Every run evaluates the defaults twice first (bit-identical or it flags FAIL).");
+            Console.WriteLine("Env TAALAB_SMOKE=1 (full) / =lite (TAALite) runs a capped 10-eval pass + exits.");
             Console.WriteLine("=========================================================");
         }
 
@@ -1534,10 +1643,15 @@ namespace FSO.TAALab
         {
             var sb = new StringBuilder();
             sb.AppendLine(header);
-            var vec = ToVector(t);
-            for (int i = 0; i < ParamNames.Length; i++)
-                sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
-                    "        public static float {0} = {1}f;", ParamNames[i], Math.Round(vec[i], 4)));
+            void Section(string[] names, float[] vec)
+            {
+                for (int i = 0; i < names.Length; i++)
+                    sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
+                        "        public static float {0} = {1}f;", names[i], Math.Round(vec[i], 4)));
+            }
+            Section(ParamNames, ToVector(t));
+            sb.AppendLine("        // TAALite tunables:");
+            Section(LiteParamNames, ToLiteVector(t));
             Console.WriteLine(sb.ToString());
         }
     }
