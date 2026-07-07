@@ -63,6 +63,16 @@ namespace FSO.Server.Database.DA.EmailConfirmation
             return (BitConverter.ToUInt32(bytes, 0) % 1000000u).ToString("000000");
         }
 
+        /// <summary>
+        /// Records a failed confirm attempt against a pending confirmation and returns the new
+        /// attempt count (0 if no such token exists).
+        /// </summary>
+        public int IncrementTries(string token)
+        {
+            Context.Connection.Execute("UPDATE fso_email_confirm SET tries = tries + 1 WHERE token = @token", new { token = token });
+            return Context.Connection.Query<int>("SELECT tries FROM fso_email_confirm WHERE token = @token", new { token = token }).FirstOrDefault();
+        }
+
         public void Remove(string token)
         {
             Context.Connection.Execute("DELETE FROM fso_email_confirm WHERE token = @token", new { token = token });

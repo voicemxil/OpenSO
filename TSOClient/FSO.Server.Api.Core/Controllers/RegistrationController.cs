@@ -24,11 +24,10 @@ namespace FSO.Server.Api.Core.Controllers
         private const int RESEND_COOLDOWN_SECS = 60;            // min seconds between (re)sends of a code for one address
         private const int CONFIRM_MAX_FAILS = 8;                // wrong-code tries per IP per window before lockout
         private const int CONFIRM_FAIL_WINDOW = 10 * 60;        // 10 minutes
-        // Global wrong-code cap across ALL IPs per window, so the 6-digit space can't be swept from many IPs
-        // within a code's lifetime. Legit users almost never submit wrong codes, so this is generous headroom
-        // for real traffic while holding an attacker to <=CONFIRM_GLOBAL_MAX_FAILS guesses per window (~2400
-        // over a code's 2-hour life) against a 10^6 space — negligible even before the email-binding check.
-        private const int CONFIRM_GLOBAL_MAX_FAILS = 200;
+        // Wrong-email attempts allowed against a single pending code before it is invalidated and the
+        // user must request a fresh one. Caps distributed (multi-IP) attacks per-target instead of the
+        // old global all-IP counter, which let an attacker lock out ALL registrations by burning it.
+        private const int CONFIRM_MAX_TRIES_PER_CODE = 5;
 
         // Per-IP wrong-code attempt tracker (in memory; lost on restart, which is fine — codes expire anyway).
         // Throttles brute-forcing the small 6-digit code space.
@@ -36,19 +35,10 @@ namespace FSO.Server.Api.Core.Controllers
         private static readonly System.Collections.Generic.Dictionary<string, (int count, uint window)> ConfirmFails
             = new System.Collections.Generic.Dictionary<string, (int, uint)>();
 
-        // Global (all-IP) wrong-code counter for the current window. Guarded by the same ConfirmLock.
-        private static int ConfirmGlobalCount = 0;
-        private static uint ConfirmGlobalWindow = 0;
-
         private static bool IsConfirmLocked(string ip)
         {
             lock (ConfirmLock)
                 return ConfirmFails.TryGetValue(ip, out var e) && Epoch.Now - e.window <= CONFIRM_FAIL_WINDOW && e.count >= CONFIRM_MAX_FAILS;
-        }
-        private static bool IsConfirmGloballyLocked()
-        {
-            lock (ConfirmLock)
-                return Epoch.Now - ConfirmGlobalWindow <= CONFIRM_FAIL_WINDOW && ConfirmGlobalCount >= CONFIRM_GLOBAL_MAX_FAILS;
         }
         private static void RecordConfirmFail(string ip)
         {
@@ -59,15 +49,6 @@ namespace FSO.Server.Api.Core.Controllers
                     ConfirmFails[ip] = (e.count + 1, e.window);
                 else
                     ConfirmFails[ip] = (1, now);
-
-                // Same fail also counts toward the global cap (covers wrong codes AND email/code mismatches).
-                if (now - ConfirmGlobalWindow <= CONFIRM_FAIL_WINDOW)
-                    ConfirmGlobalCount++;
-                else
-                {
-                    ConfirmGlobalWindow = now;
-                    ConfirmGlobalCount = 1;
-                }
             }
         }
 
@@ -302,9 +283,8 @@ namespace FSO.Server.Api.Core.Controllers
             {
                 var ip = ApiUtils.GetIP(Request);
 
-                // Throttle brute-forcing the 6-digit code: reject once an IP racks up too many wrong codes,
-                // or once the global (all-IP) cap for this window is hit (blocks distributed sweeps).
-                if (IsConfirmLocked(ip) || IsConfirmGloballyLocked())
+                // Throttle brute-forcing the 6-digit code: reject once an IP racks up too many wrong codes.
+                if (IsConfirmLocked(ip))
                 {
                     return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
                     {
@@ -325,6 +305,21 @@ namespace FSO.Server.Api.Core.Controllers
                     || !string.Equals(submittedEmail, (confirmation.email ?? "").Trim(), System.StringComparison.OrdinalIgnoreCase))
                 {
                     RecordConfirmFail(ip);
+                    if (confirmation != null)
+                    {
+                        // The code exists but was submitted with the wrong email: count the failure against
+                        // the code itself, so a distributed (multi-IP) sweep gets at most a handful of guesses
+                        // per code. At the cap the pending confirmation is deleted, forcing the legitimate
+                        // owner to request a fresh code (the designed recovery path via /request, which is
+                        // still subject to RESEND_COOLDOWN). Unknown codes have no row to count against —
+                        // blind token guessing stays covered by the per-IP limiter above.
+                        var tries = da.EmailConfirmations.IncrementTries(confirmation.token);
+                        if (tries >= CONFIRM_MAX_TRIES_PER_CODE)
+                        {
+                            da.EmailConfirmations.Remove(confirmation.token);
+                        }
+                    }
+                    // Same response for wrong-token, wrong-email and tries-exceeded: no oracle.
                     return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
                     {
                         error = "registration_failed",

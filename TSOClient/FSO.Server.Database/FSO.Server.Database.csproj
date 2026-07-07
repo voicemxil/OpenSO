@@ -79,6 +79,9 @@
     <Content Include="DatabaseScripts\changes\0031_global_cooldowns.sql">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="DatabaseScripts\changes\0032_email_confirm_tries.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="DatabaseScripts\changes\0030_tokens.sql">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

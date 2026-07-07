@@ -22,6 +22,11 @@
         /// Timestamp when the confirmation token will expire.
         /// </summary>
         public uint expires { get; set; }
+        /// <summary>
+        /// Number of failed confirm attempts made against this token. Once this
+        /// hits the controller's per-code cap the pending confirmation is deleted.
+        /// </summary>
+        public int tries { get; set; }
     }
 
     public enum ConfirmationType
