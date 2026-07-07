@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    FSO.TAALab — standalone interactive TAA tuning harness. Runs the project's ACTUAL compiled TAA
+    resolve (Content/DX/Effects/TAA.xnb, the WindowsDX/SM4 build) on a synthetic animated scene with
+    live-adjustable Tune* uniforms (see TAA.fx "LIVE-TUNING UNIFORMS" + TAATuning.cs), so temporal-
+    resolve constants can be refined visually without full game restarts.
+
+    WindowsDX ON PURPOSE: five tunables (TuneRawSoftenOnset/Slope/MotionSup, TuneRingLo/Hi) live in
+    #if SM4 blocks in TAA.fx — the MojoShader/OGL xnb strips them, only the DX xnb binds all 16.
+    Unlike FSO.Windows this project references WindowsDX directly (no MonogameLinker DLL swap).
+
+    Deliberately dependency-free of tso.*: the jitter generator and resolve driver are small, and are
+    mirrored here verbatim from R2Jitter.cs / TAAResolve.cs (comments mark each mirrored piece).
+    OutputType is Exe (not WinExe) ON PURPOSE: the harness prints the "Print C# block" ready-to-paste
+    TAATuning snapshot and the parameter-binding report to the console.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <RootNamespace>FSO.TAALab</RootNamespace>
+    <AssemblyName>TAALab</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><!-- ImGuiRenderer draw-list marshalling -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.5-preview.6" />
+    <!-- Pinned known-good with the canonical MonoGame ImGuiRenderer sample API. -->
+    <PackageReference Include="ImGui.NET" Version="1.89.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The game's REAL compiled TAA resolve (DX/SM4 target — all 16 Tune* uniforms present) + the
+         lab-only constant-velocity writer (LabVelocity.fx, compiled by the same shared shader script
+         because MonoGame cannot compile effects at runtime). -->
+    <Content Include="..\tso.content\Content\DX\Effects\TAA.xnb" Link="Content\Effects\TAA.xnb" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\tso.content\Content\DX\Effects\LabVelocity.xnb" Link="Content\Effects\LabVelocity.xnb" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Real game 3D object meshes (.fsom remesh files + their custom PNG textures), loaded by the
+         lab's own standalone parser (LabMesh.cs) — still no tso.* project references. -->
+    <Content Include="..\tso.content\Content\MeshReplace\**" Link="Content\MeshReplace\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>
