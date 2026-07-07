@@ -233,7 +233,7 @@ namespace FSO.Client.UI.Panels.EODs
                 AbstractTextureRef MazeXTrackTextureRef = new FileTextureRef("Content/Textures/EOD/mazextrack.bmp");
                 MazeXTrackTexture = MazeXTrackTextureRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 var blue = Script.Create<UIImage>("BlueIcon");
                 MazeXTrackTexture = blue.Texture;

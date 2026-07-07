@@ -107,7 +107,7 @@ namespace FSO.Server.Debug
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
             }
         }

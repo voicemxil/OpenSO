@@ -191,7 +191,7 @@ namespace FSO.Client.UI.Panels.LotControls
                         response += "Unknown command.";
                         break;
                 }
-            } catch (Exception e)
+            } catch (Exception)
             {
                 response += "Bad command.";
             }

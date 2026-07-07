@@ -171,7 +171,7 @@ namespace FSO.Client.UI.Panels.EODs
                 AbstractTextureRef lightsframeredhRef = new FileTextureRef("Content/Textures/EOD/Buzzer/eod_lightsframered.png");
                 LightsframeredTex = lightsframeredhRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Lightsframe1Tex = null;
                 Lightsframe2Tex = null;

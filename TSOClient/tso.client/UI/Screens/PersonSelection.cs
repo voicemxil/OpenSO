@@ -207,7 +207,7 @@ namespace FSO.Client.UI.Screens
                     var thumbData = Cache.Get<byte[]>(thumbKey).Result;
                     var thumb = ImageLoader.FromStream(GameFacade.GraphicsDevice, new MemoryStream(thumbData));
                     return thumb;
-                }catch(Exception ex)
+                }catch (Exception)
                 {
                     //Handles cases where the cache file got corrupted
                     var thumb = TextureUtils.TextureFromFile(GameFacade.GraphicsDevice, GameFacade.GameFilePath("userdata/houses/defaulthouse.bmp"));

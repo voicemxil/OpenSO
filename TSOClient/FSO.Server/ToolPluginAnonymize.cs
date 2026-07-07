@@ -553,7 +553,7 @@ namespace FSO.Server
                         Message = parsed.Text
                     };
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     return null;
                 }
@@ -580,7 +580,7 @@ namespace FSO.Server
                         CardContents = [.. parsed.CardText],
                     };
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
                     return null;
                 }

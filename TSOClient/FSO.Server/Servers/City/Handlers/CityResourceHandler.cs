@@ -96,7 +96,7 @@ namespace FSO.Server.Servers.City.Handlers
                     }
                 });
             }
-            catch (NullReferenceException e)
+            catch (NullReferenceException)
             {
                 return null;
             }
@@ -126,7 +126,7 @@ namespace FSO.Server.Servers.City.Handlers
 
                 return ndat;
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 return new byte[0];
             }
@@ -156,7 +156,7 @@ namespace FSO.Server.Servers.City.Handlers
 
                 return ndat;
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 return new byte[0];
             }

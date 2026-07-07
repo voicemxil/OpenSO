@@ -176,7 +176,7 @@ namespace FSO.Server.Utils
                         return false;
                     }
                 }
-            }catch(Exception ex){
+            }catch (Exception){
             }
 
             return true;

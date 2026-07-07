@@ -147,7 +147,7 @@ namespace FSODroid.Resources.Layout
             {
                 File.Delete(Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.MyDocuments), "The Sims Online.zip"));
             }
-            catch (Exception e) { }
+            catch (Exception) { }
             ReDownload = true;
             if (DownloadClient != null) DownloadClient.Dispose();
         }

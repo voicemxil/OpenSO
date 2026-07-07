@@ -159,7 +159,7 @@ namespace FSO.Server.Servers.City.Handlers
                 try
                 {
                     newId = db.Avatars.Create(newAvatar);
-                } catch (Exception e)
+                } catch (Exception)
                 {
                     //unique name error or avatar limit exceeded.
                     //todo: special error for avatar limit? exception is thrown from BEFORE INSERT trigger.
@@ -203,7 +203,7 @@ namespace FSO.Server.Servers.City.Handlers
                         outfit_source = Database.DA.Outfits.DbOutfitSource.cas
                     });
                 }
-                catch(Exception e){
+                catch (Exception){
                     session.Write(new CreateASimResponse
                     {
                         Status = CreateASimStatus.FAILED,

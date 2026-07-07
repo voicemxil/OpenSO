@@ -399,7 +399,7 @@ namespace FSO.Files.RC
                         using (var io2 = File.Open(Path.Combine(path, oname + ".png"), FileMode.Create))
                             Pixel.SaveAsPng(io2, Pixel.Width, Pixel.Height);
                     }
-                    catch (Exception e)
+                    catch (Exception)
                     {
 
                     }

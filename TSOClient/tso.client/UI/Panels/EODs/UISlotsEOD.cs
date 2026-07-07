@@ -133,7 +133,7 @@ namespace FSO.Client.UI.Panels.EODs
                 AbstractTextureRef wheel4ImageRef = new FileTextureRef("Content/Textures/EOD/eod_slots_wheelandspin4.bmp");
                 Wheel4Image = wheel4ImageRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Wheel4Image = Wheel3Image;
             }
@@ -143,7 +143,7 @@ namespace FSO.Client.UI.Panels.EODs
                 AbstractTextureRef wheel4LegendImageRef = new FileTextureRef("Content/Textures/EOD/eod_slots_wheellegend4.bmp");
                 Wheel4LegendImage = wheel4LegendImageRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Wheel4LegendImage = Wheel3LegendImage;
             }
@@ -154,7 +154,7 @@ namespace FSO.Client.UI.Panels.EODs
                 AbstractTextureRef wheel5ImageRef = new FileTextureRef("Content/Textures/EOD/eod_slots_wheelandspin5.bmp");
                 Wheel5Image = wheel5ImageRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Wheel5Image = Wheel3Image;
             }
@@ -164,7 +164,7 @@ namespace FSO.Client.UI.Panels.EODs
                 AbstractTextureRef wheel5LegendImageRef = new FileTextureRef("Content/Textures/EOD/eod_slots_wheellegend5.bmp");
                 Wheel5LegendImage = wheel5LegendImageRef.Get(gd);
             }
-            catch (Exception e)
+            catch (Exception)
             {
                 Wheel5LegendImage = Wheel3LegendImage;
             }

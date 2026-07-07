@@ -15,4 +15,18 @@
     <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
+  <!--
+    Silence the trim / AOT / single-file analyzers repo-wide. OpenSO is a reflection-heavy engine
+    (DataService reflects over fields, IFF chunk types are Activator-created, Newtonsoft everywhere)
+    and is NEVER published trimmed, AOT-compiled, or single-file — the self-contained publish still
+    runs these analyzers, so they emit hundreds of non-actionable IL2xxx/IL3xxx warnings that bury the
+    real ones. Disabling the analyzers (rather than NoWarn-listing every code) is the targeted fix.
+    Re-enable if trimming/AOT is ever adopted.
+  -->
+  <PropertyGroup>
+    <EnableTrimAnalyzer>false</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>false</EnableAotAnalyzer>
+    <EnableSingleFileAnalyzer>false</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
 </Project>

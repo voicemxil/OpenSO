@@ -744,7 +744,7 @@ namespace FSO.LotView.Facade
                         using (var io2 = File.Open(Path.Combine(path, oname + ".png"), FileMode.Create))
                             tex.SaveAsPng(io2, tex.Width, tex.Height);
                     }
-                    catch (Exception e)
+                    catch (Exception)
                     {
 
                     }

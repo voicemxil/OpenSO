@@ -662,7 +662,7 @@ namespace FSO.IDE.ResourceBrowser.ResourceEditors
                     GraphicChunk.ChunkParent.Get<SPR2>(GraphicChunk.ChunkID);
                     UpdateGraphics();
                 }
-                catch (Exception ex) {
+                catch (Exception) {
                     MessageBox.Show("Failed to import TGAs! Make sure ...Alpha.tga is also present.");
                 }
             }

@@ -2034,7 +2034,7 @@ namespace FSO.Server.Servers.Lot.Domain
             {
                 ReturnInvalidObjects();
             }
-            catch (Exception e) { }
+            catch (Exception) { }
             SaveRing();
 
             //if we have a null owner, this lot needs to be deleted.

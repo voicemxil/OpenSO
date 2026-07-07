@@ -414,7 +414,7 @@ namespace FSO.Server.Servers.Lot.Domain
                     {
                         visitor.Write(messages);
                     }
-                    catch (Exception ex)
+                    catch (Exception)
                     {
                     }
                 }

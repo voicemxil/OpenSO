@@ -812,12 +812,12 @@ namespace FSO.Client.UI.Panels.EODs.Utils
                     eventMessage = VMEODSlotsInputErrorTypes.Unknown.ToString();
                 }
             }
-            catch (ArgumentNullException nullException)
+            catch (ArgumentNullException)
             {
                 eventName = null;
                 eventMessage = VMEODSlotsInputErrorTypes.Null.ToString();
             }
-            catch (FormatException formatException)
+            catch (FormatException)
             {
                 eventName = null;
                 if (userInput.Length == 0)
@@ -825,7 +825,7 @@ namespace FSO.Client.UI.Panels.EODs.Utils
                 else
                     eventMessage = VMEODSlotsInputErrorTypes.Invalid.ToString();
             }
-            catch (OverflowException overFlowException)
+            catch (OverflowException)
             {
                 eventName = null;
                 eventMessage = VMEODSlotsInputErrorTypes.Overflow.ToString();

@@ -1077,7 +1077,7 @@ namespace FSO.Client.UI.Framework
             {
                 return Content.Content.Get().UIGraphics.Get(id).Get(GameFacade.GraphicsDevice);
             }
-            catch (Exception e)
+            catch (Exception)
             {
             }
             //TODO: darren wants to return null here. that might break some existing code
@@ -1090,7 +1090,7 @@ namespace FSO.Client.UI.Framework
             {
                 return Content.Content.Get().CustomUI.Get(Path.GetFileName(path)).Get(GameFacade.GraphicsDevice);
             }
-            catch (Exception e)
+            catch (Exception)
             {
             }
             //TODO: darren wants to return null here. that might break some existing code

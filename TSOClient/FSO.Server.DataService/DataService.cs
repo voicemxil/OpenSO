@@ -541,7 +541,7 @@ namespace FSO.Common.DataService
                         field.ID
                     }));
                 }
-                catch(Exception ex){
+                catch (Exception){
                 }
             }
             return result;

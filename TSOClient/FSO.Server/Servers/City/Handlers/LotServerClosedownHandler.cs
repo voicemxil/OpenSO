@@ -42,7 +42,7 @@ namespace FSO.Server.Servers.City.Handlers
                         db.LotClaims.Delete(request.ClaimId, request.FromOwner);
                     }
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     //probably already unclaimed. do nothing.
                 }

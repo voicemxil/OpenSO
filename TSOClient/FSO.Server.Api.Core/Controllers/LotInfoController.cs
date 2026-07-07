@@ -69,7 +69,7 @@ namespace FSO.Server.Api.Core.Controllers
                         return da.Lots.GetByLocation(shardid, ikey).lot_id;
                     }
                 });
-            } catch (NullReferenceException e)
+            } catch (NullReferenceException)
             {
                 return null;
             }
@@ -101,7 +101,7 @@ namespace FSO.Server.Api.Core.Controllers
 
                     return File(ndat, "image/png");
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     return NotFound();
                 }
@@ -512,7 +512,7 @@ namespace FSO.Server.Api.Core.Controllers
 
                     return NotFound();
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     return NotFound();
                 }
@@ -546,7 +546,7 @@ namespace FSO.Server.Api.Core.Controllers
                     MemoryCacher.Add("lf" + shardid + ":" + id, ndat, DateTime.Now.Add(new TimeSpan(1, 0, 0)));
                     return File(ndat, "application/octet-stream");
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     return NotFound();
                 }
@@ -589,7 +589,7 @@ namespace FSO.Server.Api.Core.Controllers
                     stream.Write(data, 0, data.Length);
                     return Ok();
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     return NotFound();
                 }
@@ -632,7 +632,7 @@ namespace FSO.Server.Api.Core.Controllers
                     stream.Write(data, 0, data.Length);
                     return Ok();
                 }
-                catch (Exception e)
+                catch (Exception)
                 {
                     return NotFound();
                 }
