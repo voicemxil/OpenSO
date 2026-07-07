@@ -85,6 +85,8 @@ namespace FSO.Client.UI.Panels
         // technique: fewer fetches, no lock/evidence machinery; for weaker GPUs).
         // Mutually exclusive with the other modes here (the engine composes spatial+temporal internally, but
         // the menu presents one AA choice; TAA forces MSAA off anyway — multisampled velocity corrupts it).
+        // NOTE (user decision 2026-07-05): the Cosmic TAA rows deliberately keep PostAA=0 — no FXAA
+        // pre-pass before the temporal resolve, even though the chain would compose them.
         private static readonly (string label, int msaa, int postAA, int taa)[] AAModes =
         {
             ("Off",                 0, 0, 0),

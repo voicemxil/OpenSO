@@ -63,6 +63,29 @@ float  VelGatePxScale;
 // cycle-aware trust ceiling in the blend section.
 float  JitterPhases;
 
+// ---- LIVE-TUNING UNIFORMS (TAA_Core / full resolve ONLY — TAALite keeps its own literals). ----
+// Promoted from tuned literals so the FSO.TAALab harness can adjust the temporal-resolve motion
+// lifecycle (raw -> hazy -> converged) interactively. SINGLE SOURCE OF TRUTH for the defaults is
+// FSO.LotView.Utils.TAATuning, which TAAResolve.Draw uploads every frame with these exact values —
+// the initializers here are only a fallback so a driver that doesn't set them (or an older build)
+// behaves identically to the pre-promotion shader. Do NOT retune here; retune in TAATuning.
+float TuneMotionBoostFloor = 0.12;   // motionBoost suspicion floor (clean-motion raw drip share)
+float TuneMotionBoostMax = 0.22;     // motionBoost peak scale (evidence-flagged motion raw boost)
+float TuneStillGateFloor = 0.25;     // stillGate suspicion velocity scale floor (lock survival on clean pans)
+float TuneMoveGateLo = 0.6;          // moveGate smoothstep lower edge (native px/frame)
+float TuneMoveGateHi = 2.0;          // moveGate smoothstep upper edge (native px/frame)
+float TuneRespEnd = 0.60;            // responsive end of the diff-driven blend lerp (full-diff history weight)
+float TuneMotionTrustCap = 0.72;     // motion trust cap at upscale (interior-texture ghost lever)
+float TuneMotionClampTighten = 0.72; // motion-scaled variance-clamp tighten at upscale (self-reveal lever)
+float TuneRawSoftenOnset = 0.12;     // raw-state display soften: blend onset
+float TuneRawSoftenSlope = 2.2;      // raw-state display soften: slope past onset
+float TuneRawSoftenMotionSup = 0.85; // raw-state display soften: suppression under coherent motion
+float TuneGamma = 1.5;               // variance clamp base width (sigma) — TAA_Core's GAMMA
+float TuneTexDetailFloor = 0.28;     // texture-detail blend floor / low-variance anti-ghost backstop
+float TuneConfFloor = 0.14;          // TAAU sample-confidence floor (the <=2x-ratio endpoint)
+float TuneRingLo = 0.03;             // ringContam own-vs-dilated color knee, lower edge
+float TuneRingHi = 0.10;             // ringContam own-vs-dilated color knee, upper edge
+
 texture colorTex;
 sampler colorSampler = sampler_state {
     texture = <colorTex>;
@@ -140,6 +163,25 @@ float MitchellK(float x)
     float outer = ((-7.0 / 3.0) * x3 + 12.0 * x2 - 20.0 * x + 32.0 / 3.0) / 6.0; // 1 <= |x| < 2
     return max((x < 1.0) ? inner : outer, 0.0);
 }
+
+#if SM4
+// Lanczos2 polynomial approximation — FSR2's reconstruction kernel (Lanczos2ApproxSqNoClamp from the
+// FidelityFX-FSR2 SDK's ffx_fsr2_sample.h, evaluated here on distance not squared-distance). Peak k(0)=1,
+// zeros at x=1 and x=2, negative lobe ~-0.13 near x~1.4. The negative lobes are the DISTINCTNESS that
+// lobe-clamped Mitchell gives up (Lanczos2 ~ Catmull-Rom-class passband vs Mitchell's ~-1.5dB mid-band,
+// and our clamped Mitchell is softer still — the user-observed "indistinct" TAAU look). Ringing from the
+// lobes is controlled FSR2-style at the USE site: the reconstructed value is clamped to the 3x3 tap hull
+// (see the reconstruction loop) — the same dering recipe the Catmull-Rom history fetch already uses.
+// SM4/upscale-only: native keeps validated Mitchell bit-exactly; the SM3/GL tier keeps Mitchell too
+// (register budget + no hull there). Cap x2 at 4 = kernel support edge.
+float LanczosK(float x)
+{
+    float x2 = min(x * x, 4.0);
+    float a = 0.4 * x2 - 1.0;
+    float b = 0.25 * x2 - 1.0;
+    return (1.5625 * a * a - 0.5625) * (b * b);
+}
+#endif
 
 // Catmull-Rom (bicubic) history sampling — preserves high frequencies across reprojection so the jittered
 // samples build a sharp supersampled image (plain bilinear would low-pass every frame into mush).
@@ -317,8 +359,21 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float clutter = smoothstep(0.10, 0.25, sigma.x) * (1.0 - dirCoherence);
     float kscaleEff = kscale * lerp(1.0, 0.78, clutter * saturate(upscaleRatio - 1.5));
     // Tap k in {-1,0,1} sits at distance fracd + k; at 1:1, fracd == the jitter shift (old jShiftPx).
-    float3 kx3 = float3(MitchellK(abs(fracd.x - 1.0) * kscaleEff), MitchellK(abs(fracd.x) * kscaleEff), MitchellK(abs(fracd.x + 1.0) * kscaleEff));
-    float3 ky3 = float3(MitchellK(abs(fracd.y - 1.0) * kscaleEff), MitchellK(abs(fracd.y) * kscaleEff), MitchellK(abs(fracd.y + 1.0) * kscaleEff));
+    // KERNEL SELECT (2026-07-05, FSR2-parity distinctness): at UPSCALE the reconstruction kernel is the
+    // FSR2 Lanczos2 approximation (negative lobes kept — Catmull-Rom-class passband; the lobe-clamped
+    // Mitchell was the "indistinct TAAU" root: pure-positive = guaranteed low-pass). Ringing is bounded
+    // by the 3x3 tap-hull clamp at the reconstruction site (FSR2's own dering recipe). NATIVE keeps
+    // Mitchell bit-exactly (user-validated look; also the kernel there is jitter-only-wide, where
+    // Mitchell's anti-sparkle convexity matters more than passband). SM3/GL keeps Mitchell everywhere
+    // (register budget; no hull clamp there to bound lobes).
+#if SM4
+    float useLan = step(1.001, upscaleRatio); // branch-free select; SM4/DX only — MojoShader never sees it
+    #define RECONK(x) lerp(MitchellK(x), LanczosK(x), useLan)
+#else
+    #define RECONK(x) MitchellK(x)
+#endif
+    float3 kx3 = float3(RECONK(abs(fracd.x - 1.0) * kscaleEff), RECONK(abs(fracd.x) * kscaleEff), RECONK(abs(fracd.x + 1.0) * kscaleEff));
+    float3 ky3 = float3(RECONK(abs(fracd.y - 1.0) * kscaleEff), RECONK(abs(fracd.y) * kscaleEff), RECONK(abs(fracd.y + 1.0) * kscaleEff));
     // Render-texel-scale weights (kscale 1) for the SOFT display reconstruction (see loop).
     // SM4-ONLY (ps_3_0 temp-register budget — CI X4505 on OGL): the soft display path and several other
     // register-heavy quality features below are gated to SM4. SM3/OGL runs the lean "classic" resolve —
@@ -328,6 +383,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float3 ky1 = float3(MitchellK(abs(fracd.y - 1.0)), MitchellK(abs(fracd.y)), MitchellK(abs(fracd.y + 1.0)));
     float3 filtSoft = 0;
     float wsumSoft = 0;
+    // 3x3 tap hull for the Lanczos dering clamp (FSR2 recipe): the negative lobes may only sharpen
+    // WITHIN the local data range, never overshoot past it. Taps are already fetched — ALU only.
+    float3 reconHullMin = 1e9;
+    float3 reconHullMax = -1e9;
 #endif
     float3 filt = 0;
     float wsum = 0;
@@ -385,6 +444,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float wSoft = kx1[dx + 1] * ky1[dy + 1];
         filtSoft += craw * wSoft;
         wsumSoft += wSoft;
+        reconHullMin = min(reconHullMin, craw);
+        reconHullMax = max(reconHullMax, craw);
 #endif
         float w = kx3[dx + 1] * ky3[dy + 1];
         if (edgeAniso > 0.001)
@@ -392,7 +453,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
             float2 vtap = fracd + float2(dx, dy);
             float dAcross = dot(vtap, en);
             float dAlong = dot(vtap, et);
-            float wAni = MitchellK(sqrt(dAcross * dAcross + dAlong * dAlong * 0.25) * kscaleEff);
+            float wAni = RECONK(sqrt(dAcross * dAcross + dAlong * dAlong * 0.25) * kscaleEff);
             w = lerp(w, wAni, edgeAniso);
         }
         // DEPTH-AWARE KERNEL WEIGHT (FSR2/DLSS upsampling principle, upscale-only): unweighted, the 9
@@ -431,7 +492,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Threshold is KSCALE-AWARE (0.15 tuned at kscale <= 2): at kscale 3 a frame whose kernel catches
     // only the tail of one sample yields filt/wsum with tiny wsum — one distant sample AMPLIFIED.
     float3 stationaryC = crawC;
+#if SM4
+    // Lanczos dering + negative-lobe wsum safety (2026-07-05): with real lobes, wsum can cancel toward
+    // (or through) zero on adversarial jitter phases. The saturate() fallback factor already returns 0
+    // for wsum <= 0 (pure crawC — correct: no real coverage), the raised 1e-3 epsilon bounds the divide,
+    // and the hull clamp bounds the reconstructed value absolutely — a lobe can sharpen within the local
+    // data range but never ring past it (FSR2's dering). At native useLan = 0 -> weights are the same
+    // all-positive Mitchell as before and the hull clamp is a no-op by construction (a convex combination
+    // cannot leave the hull), so this path stays visually identical there.
+    float3 recon = clamp(filt / max(wsum, 1e-3), reconHullMin, reconHullMax);
+    float3 curr = lerp(stationaryC, recon, saturate(wsum / (0.15 * kscale)));
+#else
     float3 curr = lerp(stationaryC, filt / max(wsum, 1e-4), saturate(wsum / (0.15 * kscale)));
+#endif
 
     // TEXTURE-DETAIL PRESERVATION: TAA area-averages EVERYWHERE — unlike MSAA, which only supersamples
     // edges and leaves texture interiors alone — so fine texture detail (sand speckles) converges to a
@@ -489,7 +562,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // (the reference behavior; previously ANY motion discarded history to raw). Walking sims (~2-4 px/f)
     // still arm everything fully; genuine slow-creep contamination is caught by the ungated evidence
     // paths (Kalman collapse, feature comparison) and the variance clamp.
-    float moveGate = smoothstep(0.6, 2.0, velPx);
+    float moveGate = smoothstep(TuneMoveGateLo, TuneMoveGateHi, velPx);
     // FOREIGN-VELOCITY REPROJECTION FIX (anti dilation-halo): the nearest-depth dilation gives the RING of
     // background pixels around a mover's silhouette the MOVER's velocity — their (background) history
     // reprojected from the wrong place and passed every depth test, because at a silhouette the 3x3 depth
@@ -522,7 +595,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // COLOR keeps the dilated velocity (edge quality — switching color to own-velocity tore parallax
     // edges when tried); the DEPTH/STRUCTURE TESTS reproject with the pixel's OWN velocity, so a
     // background pixel tests its stored depth at the position its own surface actually occupied.
-    float2 histUV = uv - velocity + JitterDelta;
+    // MAGNITUDE-GATED OWN-VELOCITY COLOR REPROJECTION (2026-07-05 — the character-INTERIOR ghost):
+    // inside a deforming character, limbs overlap the torso at different depths and slightly different
+    // velocities, so nearest-depth dilation hands interior pixels a NEIGHBORING BONE's velocity — a
+    // systematic sub-pixel-to-few-px reprojection error every frame, too small to arm foreign at slow
+    // speeds: the persistent interior fizzle/ghost during movement. This is NOT the retired binary
+    // own-velocity override (whose failure lived at LARGE disagreements — fg/bg parallax at silhouettes,
+    // where per-texel velocity flipping tore edges): the gate keys on the disagreement MAGNITUDE. Small
+    // disagreement (intra-character deformation) -> the pixel's OWN velocity, exact reprojection; large
+    // disagreement (true silhouette parallax) -> dilated, bit-identical to the shipped behavior the
+    // edge-tear fix demanded. The 1.5..3.0 native-px knee sits above foreign's arm point so the blend is
+    // smooth through the transition band. Invalid centers (unwritten velocity) keep dilated as before.
+    float2 histVel = lerp((centerDepth >= 0.0) ? centerVel : velocity, velocity, smoothstep(1.5, 3.0, velFgnPx));
+    float2 histUV = uv - histVel + JitterDelta;
     float2 ownVel = (centerDepth >= 0.0) ? centerVel : velocity;
     float2 histUVDepth = uv - ownVel + JitterDelta;
     bool reprojectable = (histUV.x >= 0) && (histUV.x <= 1) && (histUV.y >= 0) && (histUV.y <= 1);
@@ -548,7 +633,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     if (!debugMeta && upscaleRatio > 1.001)
     {
         float3 histOwn = RGB_to_YCoCg(historyPoint.rgb);
-        ringContam = foreign * smoothstep(0.04, 0.15, length(histOwn - historyRaw));
+        // Knee 0.04..0.15 -> 0.03..0.10 (2026-07-05): user still saw a slight edge halo/ringing GHOST at
+        // mover silhouettes under TAAU — same-palette halos (hair-over-skin, skin-over-wall) produce a
+        // smaller own-vs-dilated color disagreement than the old knee needed to arm fully. Earlier onset +
+        // full strength by 0.10 scrubs the subtle ring; clean pans stay silent (both reprojections land on
+        // the same background -> length ~ 0 regardless of knee). Revert signature: edge crunch/rejection
+        // bands on mover silhouettes during ordinary walking.
+        ringContam = foreign * smoothstep(TuneRingLo, TuneRingHi, length(histOwn - historyRaw));
     }
 #endif
 
@@ -721,12 +812,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         reactive = smoothstep(dispLo, dispLo + 4.5, velDispPx);
     }
 
-    // Center tap's ACTUAL kernel weight normalized by that kernel's peak (separable k(0)^2 = 0.7901,
-    // radial k(0) = 0.8889): 1 = this frame's nearest real sample sits on the output pixel. Hoisted here
-    // for the WITNESS RULE, used by both the oscillation detector and the Kalman counter below: under
-    // TAAU, off-phase frames are interpolation, not observation — they may neither testify against
-    // history nor (for the oscillation EMA) build/decay alternation evidence.
+    // Center tap's ACTUAL kernel weight normalized by that kernel's peak: 1 = this frame's nearest real
+    // sample sits on the output pixel. Mitchell peaks: separable k(0)^2 = 0.7901 (1/0.7901 = 1.2656),
+    // radial k(0) = 0.8889 (1/0.8889 = 1.125). Lanczos2 peaks at exactly 1 (separable AND radial), so
+    // under the upscale kernel select the normalization is 1.0 — and wC can now go slightly NEGATIVE
+    // when the center tap lands in a lobe (kscale*|fracd| > 1): saturate reads that as "no real
+    // coverage", which is truthful. Hoisted here for the WITNESS RULE, used by both the oscillation
+    // detector and the Kalman counter below: under TAAU, off-phase frames are interpolation, not
+    // observation — they may neither testify against history nor build/decay alternation evidence.
+#if SM4
+    float sampleConf = saturate(wC * lerp(lerp(1.2656, 1.125, edgeAniso), 1.0, useLan));
+#else
     float sampleConf = saturate(wC * lerp(1.2656, 1.125, edgeAniso)); // upscaleRatio hoisted to the kernel block
+#endif
     float testify = (upscaleRatio > 1.001) ? sampleConf : 1.0;
 
     // SUSPICION: the union of every contamination/disocclusion detector. THE motion-trust variable —
@@ -878,7 +976,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
                       * (1.0 - smoothstep(0.05, 0.35, velPx))
                       * (1.0 - smoothstep(0.04, 0.12, sigma.x))
                       * saturate(upscaleRatio - 1.0);
-    agreeK = min(agreeK, 1.0 - 0.35 * biasPenalty);
+    // Dock 0.35 -> 0.55 (2026-07-05): pushing the documented lever — user still saw slight fizzly
+    // ghosting on SIMILAR-COLOR content under TAAU (exactly this penalty's domain: low-osc,
+    // small-but-real one-sided innovation on a static flat pixel). The three gates (low-osc band,
+    // near-static velPx, low sigma) stay untouched, so the known mis-fire modes (slow drift, edge
+    // halos) remain excluded. Failure signature if too strong: faint noise on low-osc flat detail
+    // (gradients/logos) at upscale.
+    agreeK = min(agreeK, 1.0 - 0.55 * biasPenalty);
     float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
     // GROWTH is witness-gated only once EVIDENCE exists: the witness rule protects CONVERGED history from
     // off-phase false testimony — but it was also throttling REBUILDING to ~0.3/frame under TAAU, so every
@@ -916,7 +1020,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // to 1.3 on the theory that depth rejection would catch ghosting instead — but depth rejection is now
     // motion-gated at rest, so the tighter box only re-clipped converged high-frequency history for no
     // anti-ghost benefit. Restoring the baseline width is not trust-widening beyond baseline; it IS baseline.
-    const float GAMMA = 1.5;
+    // RESOLUTION-SCALED clamp width (2026-07-05, TAALab user finding — THE low-scale distinctness lever):
+    // at upscale the box statistics come from render-res taps, so converged OUTPUT-res detail is diluted
+    // in its own box and a fixed 1.5-sigma width re-clips it every frame — the fizzly/indistinct low-res
+    // look. Lab-validated at 0.33x: gamma up to 3.0 "smartly decides between samples", producing a clean
+    // SUPERSAMPLED look with the modern reject machinery (honest disocclusion, ghost tests, Kalman
+    // collapse, ring signal, motion trust cap) policing ghosts instead of the tight box. Base 1.5 at
+    // native (validated, unchanged) -> 2x base = 3.0 at ratio 3 (0.33x). The historical "every widening
+    // ghosted" law predates ALL of that machinery; the lock's further widening stays multiplicative on
+    // top. Live-tunable base via TuneGamma (TAATuning).
+    float GAMMA = TuneGamma * lerp(1.0, 2.0, saturate((upscaleRatio - 1.0) * 0.5));
     // FSR2-style "LOCK" via the oscillation signal (fine-geometry stability, matters most under TAAU): the
     // clamp box is built from RENDER-res taps, but the converged history holds OUTPUT-res detail — a thin
     // line that is sub-pixel at render res is DILUTED in the box statistics, so the box hugs the diluted
@@ -929,9 +1042,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // sub-pixel drift and slow pans, reprojecting through the movement instead of dumping to raw (the
     // "fully discards history on slight motion" report). Real movement still breaks locks; ghosts still
     // can't hold them (monotonic + evidence wipe). SUSPICION-SCALED velocity: coherent motion (no
-    // evidence flags) counts at 40% speed for lock purposes — locks ride through clean pans (left/right
-    // pans previously stripped all locks by raw speed alone); any flagged pixel counts at full speed.
-    float stillGate = 1.0 - smoothstep(0.8, 2.0, velPx * lerp(0.4, 1.0, suspicion));
+    // evidence flags) counts at reduced speed for lock purposes — locks ride through clean pans (left/
+    // right pans previously stripped all locks by raw speed alone); any flagged pixel counts at full speed.
+    // Suspicion floor 0.4 -> 0.25 (flicker pass, 2026-07-05): at 0.4 the effective knee sat at ~2.0-5.0
+    // raw px/frame — INSIDE the canonical 2-4 px/f "clean walking sim" band (see moveGate's comment), so
+    // ordinary walking/pans were already suppressing locks and re-fizzling converged fine geometry
+    // (foliage/fences) — the "flicker during motion" half of the full-vs-lite tradeoff. 0.25 moves the
+    // knee to ~3.2-8.0 px/f, clearing the walk band. Ghost-safe: stillGate feeds oscLock only, which
+    // still requires proven sign-alternation AND zero depth/ghost/reactive/foreign/feat rejects; any
+    // evidence flag restores full-speed lock breaking. Revert signature: ghost-timing changes behind a
+    // mover crossing locked ground (would indicate an unexpected coupling — revert immediately).
+    float stillGate = 1.0 - smoothstep(0.8, 2.0, velPx * lerp(TuneStillGateFloor, 1.0, suspicion));
     // Lock threshold 0.32 (was 0.4): at low render scales the oscillation evidence builds unevenly (real
     // samples land on a given output pixel only on some phases), so fine geometry hovered under the lock
     // forever — the residual low-scale fizzle. TV-static-like content (~0.5 osc equilibrium) gains a bit
@@ -955,6 +1076,23 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // below is reserved for near-certain rejection only.
     float rejTighten = smoothstep(0.12, 0.6, max(depthReject, ghostReject));
     gammaEff *= lerp(1.0, 0.3, rejTighten);
+    // MOTION-SCALED CLAMP TIGHTENING, upscale-only (2026-07-05 — the SELF-REVEAL ghost): rotating
+    // geometry (the far side of a head turning into view) reveals surface with valid SAME-OBJECT depth,
+    // coherent velocity, and often similar colors — every structural detector (depth range, ghost test,
+    // disparity, foreign, ringContam) is structurally silent, so only the variance clamp scrubs the
+    // stale color, and at 1.5-sigma with a similar-color neighborhood that takes many frames. Under
+    // motion the history's sub-pixel detail advantage is smaller (it's being resampled every frame
+    // anyway), so a moderate tighten costs little AA while snapping self-reveal residue to the current
+    // neighborhood statistics within a frame or two. TIGHTEN-ONLY (the ghost-safe direction — the
+    // widening direction is the one with the revert graveyard); locks are unaffected at rest (moveGate
+    // 0); upscale-gated so native keeps the validated fixed box.
+    // Revert signature: moving surfaces at TAAU losing their converged look entirely (over-tightened —
+    // raise 0.72 toward 0.85) or motion AA crunch on clean pans.
+    // 0.72 is the validated strength ("definitely better"); a 0.60 push was tried and REVERTED same day
+    // — it crushed history detail under motion and read as ALIASING, without touching the remaining
+    // interior-texture residue (that's a TRUST-DEPTH problem — see the motion trust cap below, its
+    // correctly-shaped lever). Do not re-push this below ~0.7.
+    gammaEff *= lerp(1.0, TuneMotionClampTighten, moveGate * 0.8 * smoothstep(1.0, 1.5, upscaleRatio));
     float3 cmin = m1 - gammaEff * sigma;
     float3 cmax = m1 + gammaEff * sigma;
     // INPUT-RESOLUTION RECTIFICATION under TAAU (UE TSR mechanism — the last rest-state flicker fix): the
@@ -1040,7 +1178,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // window via oscCeil). Fades in over ratio 1.2..1.8 so native / mild upscale keep the full 0.992.
     // cycleWindow mirrors the lock path's cycleCeil (JitterPhases-driven) — this ALIGNS the two deep paths.
     // Lever to push if ghosting persists: drop the 1.2 divisor toward 1.0 (window -> exactly one cycle).
-    float cycleWindow = clamp(1.0 - 1.0 / (1.2 * JitterPhases), 0.965, 0.99);
+    // Divisor 1.2 -> 1.0 (2026-07-05): the documented push lever ("drop toward 1.0 — window ->
+    // exactly one cycle") — persistent similar-color ghost residue under TAAU is a MEMORY-DEPTH
+    // problem (small-innovation residue reads as agreement, N maxes, deep history holds it); one
+    // full Halton cycle is the shallowest window that still hides the converged limit cycle.
+    // Failure signature if too shallow: faint repeating cycle shimmer on locked converged content.
+    float cycleWindow = clamp(1.0 - 1.0 / (1.0 * JitterPhases), 0.965, 0.99);
     float deepCap = lerp(0.992, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio));
     float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), deepCap);
     // Responsive end 0.68 (was 0.55 = 45% raw/frame -> fully raw in 2-3 frames on ANY luma mismatch —
@@ -1048,7 +1191,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // duty and needed to be violent; now the rejects (depth/ghost/center/foreign/feature) own that, and
     // they enter this same lerp through the max() above at FULL strength — only pure-luma responsiveness
     // is gentled (~32%/frame, fully responsive in ~4 frames).
-    float historyWeight = lerp(deepEnd, 0.68, diff);
+    // Responsive end 0.68 -> 0.60 (2026-07-05, "rejection not strong enough"): user A/B vs TAALite —
+    // the full resolve's gentled luma responsiveness held ghost residue visibly longer than lite's raw
+    // look. 0.60 scrubs a full-diff pixel ~40%/frame (fully responsive in ~3 frames) — between the
+    // original violent 0.55 and the gentled 0.68. Revert signature: objects flashing raw on ordinary
+    // luma changes (TV screens, lighting shifts).
+    float historyWeight = lerp(deepEnd, TuneRespEnd, diff);
     // Velocity-disparity reactive caps the history trust directly (soft — 0.88 keeps a moving-content pixel
     // from pulsing aliased when the camera stops; tune toward 0.94 if a screen-wide stop-pulse shows).
     historyWeight = min(historyWeight, lerp(1.0, 0.85, reactive)); // 0.88 -> 0.85 (watch for a screen-wide pulse on camera stop; revert to 0.88 if seen)
@@ -1059,6 +1207,24 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Velocityless-overlay cap (see noVel above): headline icons / speech bubbles get an ~8-frame window
     // — fresh animation, no smear — instead of the deep trust that ghosted them under TAAU.
     historyWeight = min(historyWeight, lerp(1.0, 0.88, noVel));
+    // MOTION TRUST CAP, upscale-only (2026-07-05 — the INTERIOR-TEXTURE ghost's correctly-shaped lever):
+    // a coherently-moving surface (sim clothing/skin) accumulates sub-pixel reprojection error each frame
+    // that no detector can see (innovation below the texture's own sigma, foreign 0 on mover interiors,
+    // biasPenalty deliberately near-static-gated) — with the deep Kalman window the residue rides for
+    // seconds as surface ghosting. Cap trust to ~a 10-frame window WHILE the pixel itself is moving at
+    // upscale: the whole surface continuously refreshes (~10%/frame — gradual, and the display soften
+    // covers the injected share, so this reads as refresh, not aliasing — unlike the clamp-crush variant
+    // above, which was tried at 0.60 and re-aliased edges). At rest the cap releases and full convergence
+    // resumes. Ghost-safe by direction (only ever reduces trust). Native untouched.
+    // 0.90 -> 0.72 (2026-07-05 follow-up, user direction change): at 0.90 a continuously-moving
+    // surface sat in a muddy equilibrium — the deform-error residue regenerates faster than a
+    // 10%/frame refresh clears it, and mixed with the softened display it read "indistinct AND
+    // ghosted". The user explicitly prefers moving content CRISP (raw or spatially-AA'd). 0.72 =
+    // ~28% current per frame while moving: residue dies in 3-4 frames and the equilibrium mix is
+    // current-dominant — paired with the crisp display below (soften suppressed under motion), the
+    // moving state now reads as spatially-AA'd Lanczos reconstruction, converging deep at rest.
+    // Revert signature: shimmer on moving surfaces beyond what FSR1 upscale shows (too low).
+    historyWeight = min(historyWeight, lerp(1.0, TuneMotionTrustCap, moveGate * smoothstep(1.0, 1.5, upscaleRatio)));
 
     // --- OSCILLATION TRUST (anti-fizzle action). Every gate must pass: proven sign-alternation (a ghost
     //     fails osc), ~zero velocity (a mover fails stillGate), no disocclusion signal (a reveal fails the
@@ -1104,9 +1270,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 
     // EVIDENCE-GATED (was unconditional 0.22 by speed alone — raw insurance from before the structural
     // rejects existed): full boost only where something is actually suspicious (a reject, foreign
-    // velocity, or velocity disparity); cleanly-reprojecting moving content keeps ~a third — enough
-    // responsiveness insurance without stripping its AA. (suspicion hoisted above the osc detector.)
-    float motionBoost = saturate(vmag * 20.0) * 0.22 * lerp(0.35, 1.0, suspicion);
+    // velocity, or velocity disparity). (suspicion hoisted above the osc detector.)
+    // Clean-motion floor 0.35 -> 0.12 (flicker pass, 2026-07-05): on an evidence-silent pan the old
+    // floor still injected ~7.7% raw per frame purely by speed — visible pan shimmer with no anti-ghost
+    // payoff (real contamination drives suspicion -> 1, restoring the full 0.22). NOT zeroed: native has
+    // no other anti-lag insurance (the sample-confidence motion regime below is upscale-gated).
+    // Revert signature: soft-focus/lag trailing behind fast clean pans.
+    float motionBoost = saturate(vmag * 20.0) * TuneMotionBoostMax * lerp(TuneMotionBoostFloor, 1.0, suspicion);
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
     // --- TAAU SAMPLE CONFIDENCE (upscale mode only — the standard temporal-upscaler mechanism). At render
@@ -1128,7 +1298,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // on zero-coverage frames the floor previously injected the blurry bilinear fallback anyway, a
         // steady drip that was BOTH a blur and a flicker source (the fallback varies with jitter phase).
         // Pure history hold there; motion (moveGate) and the covering frames carry all responsiveness.
-        float confFloor = lerp(0.14, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
+        float confFloor = lerp(TuneConfFloor, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
         // LINEAR confidence curve (a squared curve was tried and REVERTED with the 192 deepening — the
         // combination starved converged pixels of correction and read as ghosting at 0.33x).
         // MOTION-SCALED, not motion-DISABLED (the "hard cutoff to raw on movement"): the motion end was a
@@ -1188,7 +1358,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // intense TAAU. Ghost-safe by the lock's own argument: ghost residue is monotonic, cannot earn the
     // lock, so the anti-ghost backstop stands exactly where it matters; the lock also dies on motion,
     // rejects, and foreign velocity, so a bypassed pixel reverts the moment anything real happens.
-    blend = max(blend, texDetail * 0.28 * (1.0 - oscLock));
+    blend = max(blend, texDetail * TuneTexDetailFloor * (1.0 - oscLock));
 
     // RAW-STATE SPATIAL SOFTENING (upscale only; ZERO ghost risk — current-frame data only, the FSR2
     // treatment of disoccluded/reactive pixels, which output the full FILTERED upsample rather than
@@ -1201,7 +1371,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #if SM4 // ps_3_0 temp-register budget (CI X4505 on OGL) — SM3 displays the sharp reconstruction as-is
     if (upscaleRatio > 1.001)
     {
-        float rawSoften = saturate((blend - 0.22) * 1.6); // earlier onset: reject-driven raw is covered sooner
+        // Onset 0.12 / slope 2.2 (2026-07-05). MOTION-SUPPRESSED (same day, final user direction:
+        // "moving content should be raw or well spatially anti-aliased, not indistinct"): the Mitchell
+        // soften stays for STATIC raw states (reveals at rest, warmup, low-coverage phases — where
+        // per-phase speckle was the complaint), but under COHERENT MOTION the display now stays on the
+        // crisp Lanczos+hull reconstruction — which IS the spatial AA (jittered 3x3 kernel, deringed),
+        // pairing with the motion trust cap above (~28% current/frame while moving) so the moving state
+        // reads sharp-and-refreshing rather than soft-and-stale. Motion masks residual per-phase
+        // variance the way it masks film grain.
+        float rawSoften = saturate((blend - TuneRawSoftenOnset) * TuneRawSoftenSlope) * (1.0 - moveGate * TuneRawSoftenMotionSup);
         // Soften target = the render-texel-scale Mitchell reconstruction (was bilinear cboxC): a real
         // smooth upscale — edge-coherent, no cross-texel mush — which is the reference response for
         // legitimately-revealed content (rotation/pan disocclusion is GENUINE every frame at speed; the
@@ -1344,9 +1522,10 @@ TAAOut TAALite_PS(VSOut input)
     float3 m1 = (cboxC + cboxW + cboxE + cboxN + cboxS) * (1.0 / 5.0);
     float3 m2 = (cboxC * cboxC + cboxW * cboxW + cboxE * cboxE + cboxN * cboxN + cboxS * cboxS) * (1.0 / 5.0);
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0));
-    // 1.5-sigma box: tight enough to reject ghosting, loose enough that high-frequency content
-    // (foliage) still accumulates instead of clipping to raw jitter every frame.
-    const float GAMMA = 1.5;
+    // 1.5-sigma box at native, RESOLUTION-SCALED to 3.0 at ratio 3 (matches TAA_Core — lab-validated
+    // 2026-07-05: the fixed width re-clipped render-res-diluted converged detail at upscale; wider box =
+    // the clean supersampled look). Branch-free ramp; native bit-exact at ratio 1.
+    float GAMMA = 1.5 * lerp(1.0, 2.0, saturate((upscaleRatio - 1.0) * 0.5));
     float3 cmin = m1 - GAMMA * sigma;
     float3 cmax = m1 + GAMMA * sigma;
 

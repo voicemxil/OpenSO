@@ -208,6 +208,12 @@ namespace FSO.LotView.Components
         {
             var effect = WorldContent.AvatarEffect;
             var technique = effect.CurrentTechnique;
+            // Only the velocity techniques consume PreviousWorld — and only they may update the snapshot
+            // below. Ungated, a second draw of the same avatar in one frame (ObjID pick pass, thumbnails)
+            // clobbered prev == curr, zeroing body-translation velocity for the actual velocity draw (the
+            // world-matrix half of the animated-character fizzle bug — see Avatar.DrawGeometry for the
+            // bone-array half and the full writeup).
+            bool velocityTech = technique.Name.StartsWith("DrawWithVelocity");
             var room = (Room > 65530 || Room == 0) ? Room : blueprint.Rooms[Room].Base;
             foreach (var pass in technique.Passes)
             {
@@ -227,8 +233,11 @@ namespace FSO.LotView.Components
 
                 Avatar.DrawGeometry(device, effect);
             }
-            _PreviousWorld = world;
-            _PrevWorldValid = true;
+            if (velocityTech)
+            {
+                _PreviousWorld = world;
+                _PrevWorldValid = true;
+            }
         }
 
         public override void Draw(GraphicsDevice device, WorldState world)

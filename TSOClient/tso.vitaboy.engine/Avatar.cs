@@ -323,21 +323,34 @@ namespace FSO.Vitaboy
         }
 
         // Previous-frame bones for the velocity-aware Vitaboy technique. First frame mirrors current so
-        // velocity = 0 (no motion). Snapshotted at the end of DrawGeometry below.
+        // velocity = 0 (no motion). Snapshotted at the end of DrawGeometry below — but ONLY by draws
+        // that actually run a DrawWithVelocity* technique (see the snapshot site for the fizzle bug this
+        // gate fixes).
         protected Matrix[] PreviousSkelBones;
+        private int _PrevBonesTick = int.MinValue; // staleness stamp for the velocity-toggle guard below
 
         public void DrawGeometry(Microsoft.Xna.Framework.Graphics.GraphicsDevice device, Effect effect)
         {
             //Effect.CurrentTechnique = Effect.Techniques[0];
             if (SkelBones == null) ReloadSkeleton();
             effect.Parameters["SkelBindings"].SetValue(SkelBones);
+            // Only the velocity techniques consume PreviousSkelBindings, and only they may UPDATE the
+            // snapshot (below) — non-velocity passes must not touch it.
+            bool velocityTech = effect.CurrentTechnique.Name.StartsWith("DrawWithVelocity");
             var prevParam = effect.Parameters["PreviousSkelBindings"];
             if (prevParam != null)
             {
-                if (PreviousSkelBones == null || PreviousSkelBones.Length != SkelBones.Length)
+                // Refresh prev = curr (velocity 0) when there's no usable snapshot: first draw, bone-count
+                // change, or a STALE snapshot — velocity draws stopped (TAA/motion blur toggled off) and
+                // resumed later; the frozen old pose would otherwise produce one frame of garbage body
+                // velocity on re-enable. 250ms comfortably exceeds any real frame time (unchecked: TickCount
+                // wraps negative after ~25 days uptime; subtraction stays correct).
+                bool stale = velocityTech && unchecked(Environment.TickCount - _PrevBonesTick) > 250;
+                if (PreviousSkelBones == null || PreviousSkelBones.Length != SkelBones.Length || stale)
                 {
-                    PreviousSkelBones = new Matrix[SkelBones.Length];
-                    System.Array.Copy(SkelBones, PreviousSkelBones, SkelBones.Length); //first draw: no motion
+                    if (PreviousSkelBones == null || PreviousSkelBones.Length != SkelBones.Length)
+                        PreviousSkelBones = new Matrix[SkelBones.Length];
+                    System.Array.Copy(SkelBones, PreviousSkelBones, SkelBones.Length); //no motion
                 }
                 prevParam.SetValue(PreviousSkelBones);
             }
@@ -368,12 +381,21 @@ namespace FSO.Vitaboy
                 }
             }
 
-            // Snapshot the current bone array for next frame's velocity — MUST be here, after the main mesh
-            // draw but BEFORE the early returns below. Otherwise with Advanced Lighting OFF (LightPositions
-            // == null) or in ObjID mode the function returns first and the previous bones stay frozen, so the
-            // velocity buffer treats the whole sim as moving from its first-frame pose -> exaggerated garbage.
-            if (PreviousSkelBones != null && PreviousSkelBones.Length == SkelBones.Length)
+            // Snapshot the current bone array for next frame's velocity — placed after the main mesh draw
+            // but BEFORE the early returns below (with Advanced Lighting OFF / ObjID the function returns
+            // first). VELOCITY-TECHNIQUE-GATED (2026-07-05 — THE animated-character fizzle root cause):
+            // this used to run on EVERY DrawGeometry call, so any second draw of the same avatar in one
+            // frame (ObjID pick pass, depth pass, thumbnail) clobbered prev == curr and the velocity draw
+            // computed ~ZERO body-animation velocity — every animated pixel then misreprojected by one
+            // animation step per frame, and the resolve half-rejected it forever: the fizzle/ghost on
+            // (even slowly) moving sims. Only the draw that CONSUMED the previous bones may update them.
+            // (The staleness guard above covers velocity draws stopping/resuming; non-velocity-only play
+            // never reads PreviousSkelBones, so its staleness is harmless.)
+            if (velocityTech && PreviousSkelBones != null && PreviousSkelBones.Length == SkelBones.Length)
+            {
                 System.Array.Copy(SkelBones, PreviousSkelBones, SkelBones.Length);
+                _PrevBonesTick = Environment.TickCount;
+            }
 
             //skip drawing shadows if we're drawing id
             if (LightPositions == null || effect.CurrentTechnique == effect.Techniques[1]) return;

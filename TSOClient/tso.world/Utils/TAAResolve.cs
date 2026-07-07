@@ -145,6 +145,26 @@ namespace FSO.LotView.Utils
             // window to EXCEED the cycle, otherwise the converged limit cycle shows as a repeating
             // shimmer (72 frames at 1/3 scale vs a ~55-frame window was exactly that artifact).
             effect.Parameters["JitterPhases"]?.SetValue((float)R2Jitter.HaltonCycle(ss));
+            // Live-tuning uniforms (TAA_Core only — TAALite keeps its literals). Defaults in TAATuning are
+            // IDENTICAL to the pre-promotion shader literals, so shipping behavior is unchanged; they exist
+            // as uniforms so the FSO.TAALab harness can tune the resolve lifecycle live. Null-safe pattern:
+            // an older xnb without these parameters just keeps its baked-in defaults.
+            effect.Parameters["TuneMotionBoostFloor"]?.SetValue(TAATuning.MotionBoostFloor);
+            effect.Parameters["TuneMotionBoostMax"]?.SetValue(TAATuning.MotionBoostMax);
+            effect.Parameters["TuneStillGateFloor"]?.SetValue(TAATuning.StillGateFloor);
+            effect.Parameters["TuneMoveGateLo"]?.SetValue(TAATuning.MoveGateLo);
+            effect.Parameters["TuneMoveGateHi"]?.SetValue(TAATuning.MoveGateHi);
+            effect.Parameters["TuneRespEnd"]?.SetValue(TAATuning.RespEnd);
+            effect.Parameters["TuneMotionTrustCap"]?.SetValue(TAATuning.MotionTrustCap);
+            effect.Parameters["TuneMotionClampTighten"]?.SetValue(TAATuning.MotionClampTighten);
+            effect.Parameters["TuneRawSoftenOnset"]?.SetValue(TAATuning.RawSoftenOnset);
+            effect.Parameters["TuneRawSoftenSlope"]?.SetValue(TAATuning.RawSoftenSlope);
+            effect.Parameters["TuneRawSoftenMotionSup"]?.SetValue(TAATuning.RawSoftenMotionSup);
+            effect.Parameters["TuneGamma"]?.SetValue(TAATuning.Gamma);
+            effect.Parameters["TuneTexDetailFloor"]?.SetValue(TAATuning.TexDetailFloor);
+            effect.Parameters["TuneConfFloor"]?.SetValue(TAATuning.ConfFloor);
+            effect.Parameters["TuneRingLo"]?.SetValue(TAATuning.RingLo);
+            effect.Parameters["TuneRingHi"]?.SetValue(TAATuning.RingHi);
             // The debug view uses a dedicated technique: meta.GB carries diagnostics there instead of the
             // prev-velocity encode, and the GB consumers are compiled out (self-consistent while debugging).
             // Technique selection. TAALite is now a user-facing lighter option on ALL backends ("Cosmic
