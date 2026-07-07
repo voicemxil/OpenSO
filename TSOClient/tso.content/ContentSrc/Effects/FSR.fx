@@ -1,12 +1,6 @@
-// FSR.fx — AMD FidelityFX Super Resolution 1.0 (EASU + RCAS) for OpenSO.
-//
-// Faithful port of AMD's reference ffx_fsr1.h (MIT licensed, Copyright (c) 2021 Advanced Micro Devices,
-// Inc.). The reference gathers 4 texels per fetch; the engine's effects target ps_4_0 (DX HiDef) / ps_3_0
-// (GL), which don't guarantee gather4, so the same 12-/5-tap kernels are sampled individually instead —
-// the arithmetic (FsrEasuSetF direction/length, FsrEasuTapF Lanczos window, dering, per-channel RCAS lobe)
-// is unchanged from the reference. Two full-screen techniques over a source texture:
-//   * EASU — Edge-Adaptive Spatial Upsampling (render scale < 1 upscale).
-//   * RCAS — Robust Contrast-Adaptive Sharpening (sharpening slider; Sharpness 0..1).
+// FSR.fx — AMD FidelityFX Super Resolution 1.0: EASU (upscale) + RCAS (sharpen).
+// Ported from AMD's ffx_fsr1.h (MIT, Copyright (c) 2021 Advanced Micro Devices, Inc.).
+// gather4 isn't guaranteed on ps_3_0/ps_4_0, so the 12-/5-tap kernels sample individually; arithmetic unchanged.
 
 float2 SourceSize;   // (1/srcW, 1/srcH) — inverse source texel size
 float  Sharpness;    // RCAS strength 0..1 (FSR con.x; 0 = none)
@@ -176,12 +170,8 @@ float4 RCAS_PS(VSOut input) : COLOR0
     float3 hitMax = (1.0 - max(mx4, e)) / (4.0 * mn4 - 4.0 - 1e-4);
     float3 lobeRGB = max(-hitMin, hitMax);
     float lobe = max(-(0.25 - 1.0 / 16.0), min(max(max(lobeRGB.r, lobeRGB.g), lobeRGB.b), 0.0)) * Sharpness;
-    // FSR_RCAS_DENOISE (AMD ffx_fsr1.h, previously omitted from this port): scale the sharpen lobe down
-    // where the center pixel deviates from its neighbour average relative to the local range — i.e. on
-    // GRAIN/ALTERNATION rather than a coherent edge. Sharpening is what turns the temporal resolve's
-    // small residual frame-to-frame alternation into visible ring/dither at low render scale; a clean
-    // edge (center consistent with its neighbours along the edge) keeps the full lobe, so genuine edge
-    // sharpness is unchanged. AMD's luma-times-2 approximation, verbatim.
+    // FSR_RCAS_DENOISE: attenuate the lobe on grain/temporal alternation (center vs neighbour average
+    // relative to local range) so sharpening doesn't amplify temporal resolve residue; edges keep full lobe.
     float bL = b.b * 0.5 + (b.r * 0.5 + b.g);
     float dL = d.b * 0.5 + (d.r * 0.5 + d.g);
     float eL = e.b * 0.5 + (e.r * 0.5 + e.g);

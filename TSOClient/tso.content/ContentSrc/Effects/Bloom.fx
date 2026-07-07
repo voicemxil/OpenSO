@@ -1,19 +1,11 @@
-// Bloom.fx — threshold bright-pass + Kawase dual-filter blur + additive composite (OpenSO post chain).
-//
-// Pipeline (driven by BloomPass.cs):
-//   Prefilter : scene -> mip0 (half res), soft-knee luminance threshold.
-//   Downsample: mip(n) -> mip(n+1) (Kawase dual-filter shrink).
-//   Upsample  : mip(n) -> mip(n-1) (Kawase dual-filter grow, additively blended).
-//   Composite : scene + mip0 * Intensity -> output.
-//
-// LDR engine, but the mips are HalfVector4 so the blurred highlights don't clip while accumulating.
+// Bloom.fx — soft-knee bright-pass + Kawase dual-filter blur mips + additive composite (see BloomPass.cs).
+// Mips are HalfVector4 so blurred highlights don't clip while accumulating (LDR engine).
 
 float2 TexelSize;   // 1 / source-texture size (set per pass)
 float  Threshold;   // luminance bright-pass threshold
 float  Knee;        // soft-knee width around the threshold
 float  Intensity;   // composite strength
-float  UpsampleBlend; // per-mip upsample contribution (0..1) — reference COD/Karis bloom uses ~0.5–0.7 so
-                    // the cascaded additive upsamples don't compound to ~MIPS× the source amplitude.
+float  UpsampleBlend; // per-mip upsample contribution (0..1, ~0.5-0.7) — keeps cascaded additive upsamples from compounding
 
 texture sourceTex;
 sampler sourceSampler = sampler_state {
@@ -41,7 +33,7 @@ VSOut VS(VSIn input)
     return o;
 }
 
-// Soft-knee bright-pass (Karis / COD). Keeps a smooth ramp into the threshold instead of a hard cutoff.
+// Soft-knee bright-pass (Karis/COD).
 float4 Prefilter_PS(VSOut input) : COLOR0
 {
     float3 c = tex2D(sourceSampler, input.Coord).rgb;
@@ -53,11 +45,11 @@ float4 Prefilter_PS(VSOut input) : COLOR0
     return float4(c * contrib, 1.0);
 }
 
-// Kawase dual-filter downsample: center (x4) + 4 diagonals, /8. TexelSize = 1/source size.
+// Kawase dual-filter downsample: center (x4) + 4 diagonals, /8.
 float4 Downsample_PS(VSOut input) : COLOR0
 {
     float2 uv = input.Coord;
-    float2 h = TexelSize; // one source texel
+    float2 h = TexelSize;
     float4 sum = tex2D(sourceSampler, uv) * 4.0;
     sum += tex2D(sourceSampler, uv + float2(-h.x, -h.y));
     sum += tex2D(sourceSampler, uv + float2( h.x, -h.y));
@@ -66,10 +58,8 @@ float4 Downsample_PS(VSOut input) : COLOR0
     return sum / 8.0;
 }
 
-// Kawase dual-filter upsample: 3x3 tent (corners x1, edges x2) /12. The result is multiplied by
-// UpsampleBlend so it's blended (not just added at full strength) onto the destination mip — additive
-// blend state means destOut = dest + tent*UpsampleBlend, which prevents the cascaded upsamples from
-// compounding to ~MIPS× the source amplitude.
+// Kawase dual-filter upsample: 3x3 tent (corners x1, edges x2) /12, scaled by UpsampleBlend
+// before the additive blend onto the destination mip.
 float4 Upsample_PS(VSOut input) : COLOR0
 {
     float2 uv = input.Coord;
@@ -85,7 +75,6 @@ float4 Upsample_PS(VSOut input) : COLOR0
     return (sum / 12.0) * UpsampleBlend;
 }
 
-// Composite: scene + bloom * Intensity.
 float4 Composite_PS(VSOut input) : COLOR0
 {
     float3 scene = tex2D(sceneSampler, input.Coord).rgb;

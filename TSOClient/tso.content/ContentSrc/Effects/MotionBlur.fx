@@ -1,21 +1,6 @@
-// MotionBlur.fx — modern reconstruction-filter motion blur for OpenSO 3D mode.
-//
-// Implements the McGuire et al. 2012 "A Reconstruction Filter for Plausible Motion Blur" pipeline (the
-// same lineage used by Jimenez's COD:AW filter and most modern engines):
-//
-//   1. TileMax       — reduce the full-res velocity buffer to KxK tiles, keeping the max-magnitude
-//                      velocity per tile.
-//   2. NeighborMax   — dilate TileMax over a 3x3 tile neighborhood so a fast object's blur can reach
-//                      into adjacent tiles (otherwise the streak would be clipped at tile borders).
-//   3. Reconstruction — for each pixel, take jittered samples along the tile's dominant velocity and
-//                      weight them with DEPTH-AWARE cone/cylinder functions. This is what makes the blur
-//                      one-directional AND silhouette-correct: a background pixel only picks up a moving
-//                      foreground's color when that foreground's velocity actually reaches it and it is
-//                      in front (depth test), so there's no symmetric double-streak and no ghost halo.
-//
-// Velocity buffer layout (HalfVector4, MRT1):  .rg = per-frame screen-space velocity (UV units),
-//   .b = NORMALIZED LINEAR view distance (clip.w / far=800), 0 near .. 1 far. .a = valid-velocity mask.
-// Unwritten pixels are cleared to (0,0,1,0): zero velocity, FAR depth, mask 0 — i.e. static far bg.
+// MotionBlur.fx — McGuire et al. 2012 reconstruction-filter motion blur (TileMax -> NeighborMax -> reconstruction).
+// Velocity buffer (HalfVector4, MRT1): .rg = per-frame screen-space velocity (UV units), .b = normalized
+// linear view distance (clip.w / far=800), .a = valid mask. Unwritten pixels clear to (0,0,1,0) = static far bg.
 
 #define TILEK 20          // tile size in velocity-buffer texels
 #define SAMPLES 15        // reconstruction taps along the dominant velocity
@@ -68,9 +53,7 @@ VSOut VS(VSIn input)
 }
 
 // ----------------------------------------------------------------------------- Pass 1: TileMax
-// Single pass: each output tile reads the KxK velocity block centered on its UV (source and tile targets
-// share [0,1] UV, so no index math needed) and keeps the largest-magnitude velocity. Output .b = that
-// magnitude (UV units) so NeighborMax can compare cheaply. Total work is O(W*H) — one full-res read.
+// Reduce velocity to KxK tiles, keeping the max-magnitude velocity. Output .b = magnitude (UV units).
 float4 TileMax_PS(VSOut input) : COLOR0
 {
     float2 best = float2(0, 0);
@@ -90,8 +73,7 @@ float4 TileMax_PS(VSOut input) : COLOR0
 }
 
 // ----------------------------------------------------------------------------- Pass 2: NeighborMax
-// 3x3 dilation of TileMax: take the max-magnitude tile velocity in the neighborhood so a fast streak
-// originating in an adjacent tile is still reconstructed in this tile.
+// 3x3 dilation of TileMax so streaks from adjacent tiles are still reconstructed here.
 float4 NeighborMax_PS(VSOut input) : COLOR0
 {
     float2 best = float2(0, 0);
@@ -108,19 +90,17 @@ float4 NeighborMax_PS(VSOut input) : COLOR0
 }
 
 // ----------------------------------------------------------------------------- Pass 3: Reconstruction
-// Interleaved gradient noise (Jimenez) — cheap per-pixel jitter to break up banding between the discrete
-// taps without a texture lookup.
+// Interleaved gradient noise (Jimenez) — per-pixel jitter to break up tap banding.
 float IGN(float2 p)
 {
     return frac(52.9829189 * frac(dot(p, float2(0.06711056, 0.00583715))));
 }
 
-// McGuire soft depth compare: ~1 when za is clearly in front of zb (smaller depth = nearer), ramps to 0
-// as they approach co-planarity within SOFT_Z.
+// McGuire soft depth compare: ~1 when za is clearly in front of zb (smaller = nearer).
 float SoftDepth(float za, float zb) { return saturate(1.0 - (za - zb) / SOFT_Z); }
-// Cone: a blurry sample of velocity magnitude `mag` (px) covers points up to `mag` away, falling off.
+// Cone: a blurry sample covers points up to its velocity magnitude away, falling off.
 float Cone(float distPx, float magPx) { return saturate(1.0 - distPx / magPx); }
-// Cylinder: ~1 inside the blur extent, falling to 0 right at the edge — for two mutually-blurry samples.
+// Cylinder: ~1 inside the blur extent — for two mutually-blurry samples.
 float Cylinder(float distPx, float magPx) { return 1.0 - smoothstep(0.95 * magPx, 1.05 * magPx + 1e-3, distPx); }
 
 float4 Reconstruction_PS(VSOut input) : COLOR0
@@ -128,12 +108,10 @@ float4 Reconstruction_PS(VSOut input) : COLOR0
     float2 uv = input.Coord;
     float4 centerColor = tex2D(colorSampler, uv);
 
-    // Dominant (neighborhood) velocity for this tile, scaled by the shutter fraction.
     float4 nm = tex2Dlod(neighborMaxSampler, float4(uv, 0, 0));
     float2 nmVel = nm.rg * ShutterScale;
     float nmMagPx = length(nmVel * ScreenSizePx);
 
-    // No meaningful motion in this neighborhood -> keep the pixel sharp.
     if (nmMagPx < 0.5) return centerColor;
 
     float4 cVel4 = tex2Dlod(velocitySampler, float4(uv, 0, 0));
@@ -143,16 +121,13 @@ float4 Reconstruction_PS(VSOut input) : COLOR0
 
     float jitter = IGN(uv * ScreenSizePx) - 0.5;
 
-    // Center contributes weighted by 1/velocity so slow/static pixels stay crisp; fast pixels let the
-    // gathered samples dominate (= more blur). This is the McGuire center-tap weighting.
+    // McGuire center-tap weighting: 1/velocity keeps slow/static pixels crisp.
     float weight = 1.0 / cMagPx;
     float4 sum = centerColor * weight;
 
     [loop] for (int i = 0; i < SAMPLES; i++)
     {
-        // t spans [-1, 1] across the dominant velocity (both directions sampled, but each sample is
-        // accepted ONLY by the depth+cone test, so the result is a correct one-sided trail rather than
-        // a naive symmetric smear).
+        // t spans [-1, 1]; the depth+cone weights make the trail one-sided despite symmetric sampling.
         float t = lerp(-1.0, 1.0, (float(i) + jitter + 1.0) / (float(SAMPLES) + 1.0));
         float2 sampUV = uv + nmVel * t;
 
@@ -167,11 +142,11 @@ float4 Reconstruction_PS(VSOut input) : COLOR0
         float back  = SoftDepth(sDepth, cDepth);  // sample in front of center
 
         float w = 0;
-        // (a) sample is a blurry FOREGROUND object whose motion smears over the center pixel.
+        // (a) blurry foreground sample smearing over the center.
         w += back  * Cone(distPx, sMagPx);
-        // (b) center is a blurry foreground; we're gathering the BACKGROUND it streaks across.
+        // (b) blurry center streaking across the background.
         w += front * Cone(distPx, cMagPx);
-        // (c) both are blurry and overlapping in the same depth range.
+        // (c) both blurry in the same depth range.
         w += 2.0 * Cylinder(distPx, sMagPx) * Cylinder(distPx, cMagPx);
 
         sum += tex2Dlod(colorSampler, float4(sampUV, 0, 0)) * w;

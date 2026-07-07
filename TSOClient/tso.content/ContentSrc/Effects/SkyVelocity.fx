@@ -1,15 +1,10 @@
-// SkyVelocity.fx — sky dome shader with velocity output for TAA / motion blur.
-//
-// Replaces MonoGame's BasicEffect for the sky dome so we can write screen-space velocity to MRT1. The
-// dome is a textured gradient (no lighting, no vertex colour) — same visual as the BasicEffect path it
-// replaces (TextureEnabled, LightingEnabled=false, DiffuseColor=1, Alpha). The sky is conceptually at
-// infinity, so velocity is purely camera-rotation-induced and depth is forced FAR (1) so the motion-blur
-// depth test treats it as background behind everything.
+// SkyVelocity.fx — sky dome (BasicEffect replacement) that also writes screen-space velocity to MRT1.
+// Sky is at infinity: velocity is camera-rotation only, depth forced FAR (1).
 
 float4x4 MVP;        // current World * View * Projection (dome uses translation-zeroed view)
 float4x4 PrevMVP;    // previous frame's MVP — velocity comes from the delta (camera rotation)
 float    Alpha;      // dome alpha (weather fade), matches BasicEffect.Alpha
-float    Exposure;   // sky brightness scale (< 1 tames the eye-burning white sun-glow band at sunrise/set)
+float    Exposure;   // sky brightness scale (< 1 tames the sunrise/sunset glow band)
 
 texture SkyTex;
 sampler SkyTexSampler = sampler_state {
@@ -38,8 +33,8 @@ VSOut SkyVS(VSIn input)
     return o;
 }
 
-// Current-frame TAA jitter (NDC). MVP is jittered (TAA sampling); subtract the jitter from the current NDC
-// so velocity is jitter-free. PrevMVP is supplied UN-jittered by AbstractSkyDome.
+// Current-frame TAA jitter (NDC). MVP is jittered; subtract so velocity is jitter-free.
+// PrevMVP is supplied un-jittered by AbstractSkyDome.
 float2 JitterNDC;
 
 float2 ComputeVelocity(float4 curr, float4 prev)
@@ -48,7 +43,7 @@ float2 ComputeVelocity(float4 curr, float4 prev)
     float pw = max(prev.w, 1e-4);
     float2 c = curr.xy / cw - JitterNDC;
     float2 p = prev.xy / pw;
-    return clamp((c - p) * float2(0.5, -0.5), -0.5, 0.5); // was +/-0.05 — see Vitaboy.fx ComputeVitaboyVelocity note (the saturating-clamp motion bug)
+    return clamp((c - p) * float2(0.5, -0.5), -0.5, 0.5); // wide clamp — a tight one saturates real motion (see Vitaboy.fx)
 }
 
 // Cheap per-pixel hash (Dave Hoskins) -> [0,1), used for dither noise.
@@ -69,10 +64,9 @@ PSOut SkyPS(VSOut input, float2 ditherPx : VPOS)
 #endif
     PSOut o;
     float4 c = tex2D(SkyTexSampler, input.texCoord);
-    c.rgb *= Exposure;       // tame the sunrise/sunset bright band (LDR; eyes burn at 1.0)
+    c.rgb *= Exposure;
     c.a *= Alpha;
-    // Kill 8-bit gradient banding: add triangular-PDF dither (~±1 LSB) before the framebuffer quantises the
-    // smooth sky gradient. Two hashes -> triangular distribution (the distortion-free ideal for 1-LSB dither).
+    // Triangular-PDF dither (~±1 LSB, two hashes) hides 8-bit banding in the smooth gradient.
     float dth = (DitherHash(ditherPx) + DitherHash(ditherPx + 41.13) - 1.0) / 255.0;
     c.rgb = saturate(c.rgb + dth);
     o.color = c;

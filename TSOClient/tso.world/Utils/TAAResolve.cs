@@ -6,28 +6,17 @@ using FSO.Common.Utils;
 namespace FSO.LotView.Utils
 {
     /// <summary>
-    /// Temporal Anti-Aliasing resolve. Samples current color + previous-frame history (reprojected via the
-    /// velocity buffer) and blends them with a neighborhood-clamp against ghosting. Slots into the resolve
-    /// chain at PPXDepthEngine.PostProcessFunc, replacing FXAA/SMAA when TAA is enabled.
-    ///
-    /// Pipeline (per frame):
-    ///   1. PPXDepthEngine.GetHistoryPrev() = last frame's TAA output (read).
-    ///   2. PPXDepthEngine.GetHistoryCurr() = this frame's destination (write).
-    ///   3. After Draw, the chain's blit takes care of getting current-history to the screen, then
-    ///      SwapHistory rotates roles for next frame.
+    /// TAA resolve: blends current color with velocity-reprojected history under a neighborhood clamp.
+    /// Runs at PPXDepthEngine.PostProcessFunc, replacing FXAA/SMAA when TAA is on. Reads HistoryPrev,
+    /// writes HistoryCurr; SwapHistory rotates roles each frame.
     /// </summary>
     public static class TAAResolve
     {
-        // Stable-area current-frame weight (the blend's diff-driven deep end is 1 - BLEND_FACTOR).
-        // 0.06 ≈ a ~16-frame accumulation window at native resolution.
+        // stable-area current-frame weight; 0.06 = ~16-frame accumulation window at native
         private const float BLEND_FACTOR = 0.06f;
 
-        // Resolution-scaled accumulation depth (FSR2-style): at render scale < 1 each pixel carries
-        // proportionally more scene content, so its per-frame sample variance is higher and it needs a
-        // DEEPER accumulation window for the same stability — the main reason low-res TAA looked worse
-        // than industry references. 0.06 (16 frames) at native -> 0.03 (~32 frames) at 0.5x. Only kicks
-        // in when upscaling (scale < 1); supersampling keeps the native window. Safe to deepen here
-        // because the filtered-input reconstruction (see TAA.fx) collapses the per-frame variance first.
+        // FSR2-style: pixels at render scale < 1 have higher per-frame variance, so deepen the
+        // accumulation window when upscaling (0.03 = ~32 frames at 0.5x)
         private static float ScaledBlendFactor()
         {
             float scale = PPXDepthEngine.SSAA;
@@ -35,26 +24,14 @@ namespace FSO.LotView.Utils
             return MathHelper.Clamp(BLEND_FACTOR * scale, 0.03f, BLEND_FACTOR);
         }
 
-        // Cap on the per-pixel accumulation counter N (meta.R). N is EVIDENCE-conditioned in the shader
-        // (Kalman counter: witnessed agreement grows it, disagreement collapses it, disocclusion resets it)
-        // and drives both the warmup ramp and the Kalman-complete deep end N/(N+1). 128 (was 64): a ~129-
-        // frame window on proven-static pixels — long enough to average the FULL 72-phase jitter cycle at
-        // 1/3 render scale (a 65-frame window could not, which was the residual TAAU shimmer). 8-bit meta
-        // encoding stays exact (2 levels per N). Must match the shader's decode (metaR * MAX_ACCUM).
-        // 128 (~129-frame window): long enough to average the full 72-phase jitter cycle at 1/3 scale.
-        // A 192 deepening was tried and REVERTED — every imperfection the rejects miss lingers longer at
-        // deeper trust, and at 0.33x that read as heavy ghosting. Must match the shader decode.
+        // cap on the per-pixel accumulation counter N (meta.R). 128 gives a window long enough to
+        // average the full 72-phase jitter cycle at 1/3 scale. Must match the shader's decode (metaR * MAX_ACCUM).
         private const float MAX_ACCUM = 128f;
 
-        // Per-frame jitter delta (UV units), set by World.PreDraw. Added back during history reprojection
-        // to cancel the jitter baked into the (jittered-projection) velocity buffer -> jitter-free reproject.
+        // per-frame jitter delta (UV), set by World.PreDraw; cancels the jitter baked into the velocity buffer
         public static Vector2 JitterDeltaUV;
 
-        // Diagnostic (graphics options motion-blur "Debug" while TAA is on): blit the META target to the
-        // screen instead of the resolved frame, via the TAADebug technique's diagnostic encode:
-        // RED = effective history trust this frame (dark = taking current / warming up, bright = deep
-        // accumulation), GREEN = depth/ghost reject strength, BLUE = non-reprojectable. The resolve itself
-        // runs untouched underneath; this only changes the meta encode + which texture hits the screen.
+        // debug: blit the meta target instead (R = history trust, G = reject strength, B = non-reprojectable)
         public static bool DebugAccum;
         // User-selected "Cosmic TAA Lite" resolve tier (cfg.TAALite): run the lighter TAALite technique
         // instead of the full Cosmic TAA/TAAU. Same I/O contract and TAAU support; fewer fetches, no
@@ -85,24 +62,22 @@ namespace FSO.LotView.Utils
             var historyCurr = PPXDepthEngine.GetHistoryCurr();
             var metaPrev = PPXDepthEngine.GetMetaPrev();
             var metaCurr = PPXDepthEngine.GetMetaCurr();
-            // Cosmic TAAU: this resolve IS the upscaler — history/output native, color/velocity render-res.
+            // TAAU: this resolve is the upscaler - history/output native, color/velocity render-res
             bool upscale = PPXDepthEngine.TAAUpscaleMode;
             if (effect == null || velocity == null || historyPrev == null || historyCurr == null
                 || metaPrev == null || metaCurr == null
-                // Size guard: history must match the surface being resolved on — the OUTPUT viewport under
-                // TAAU, the render-res src otherwise. A transient mismatch (e.g. first frame after a scale
-                // change, before ChangeAAMode re-sizes the targets) falls through rather than resolving
-                // stretched/misaligned.
+                // history must match the resolve surface; transient mismatches (e.g. the frame after a
+                // scale change) fall through rather than resolving misaligned
                 || (upscale ? (historyPrev.Width != gd.Viewport.Width || historyPrev.Height != gd.Viewport.Height)
                             : (historyPrev.Width != src.Width || historyPrev.Height != src.Height)))
             {
                 if (PPXDepthEngine.TAASkipFinalBlit)
                 {
-                    // Pre-upscale mode: pass the raw frame through to the upscaler unchanged this frame.
+                    // pre-upscale mode: pass the raw frame through to the upscaler this frame
                     PPXDepthEngine.TAAOutput = src;
                     return;
                 }
-                // Shader / buffers missing -> fall through to plain blit so the frame still renders.
+                // shader/buffers missing - plain blit
                 gd.BlendState = BlendState.Opaque;
                 var sb = BlitSB(gd);
                 sb.Begin(blendState: BlendState.Opaque);
@@ -111,9 +86,7 @@ namespace FSO.LotView.Utils
                 return;
             }
 
-            // Render the TAA-blended result into the "current" history target (COLOR0) + the accumulation/
-            // normal meta into the "current" meta target (COLOR1). The chain reads the history for the screen
-            // blit below by re-binding it as src after this call.
+            // blend into the current history (COLOR0) + meta (COLOR1)
             var finalTarget = gd.GetRenderTargets();
             gd.SetRenderTargets(historyCurr, metaCurr);
 
@@ -122,42 +95,27 @@ namespace FSO.LotView.Utils
             effect.Parameters["historyTex"]?.SetValue(historyPrev);
             effect.Parameters["metaHistoryTex"]?.SetValue(metaPrev);
             effect.Parameters["velocityTex"]?.SetValue(velocity);
-            // InvScreenSize = the OUTPUT/history grid; InvColorSize = the INPUT color grid. Identical
-            // normally; under TAAU history is native while color/velocity stay render-res.
+            // InvScreenSize = output/history grid; InvColorSize = input color grid (differ under TAAU)
             effect.Parameters["InvScreenSize"]?.SetValue(new Vector2(1f / historyPrev.Width, 1f / historyPrev.Height));
             effect.Parameters["InvColorSize"]?.SetValue(new Vector2(1f / src.Width, 1f / src.Height));
             effect.Parameters["BlendFactor"]?.SetValue(ScaledBlendFactor());
             effect.Parameters["MaxAccum"]?.SetValue(MAX_ACCUM);
             effect.Parameters["JitterDelta"]?.SetValue(JitterDeltaUV);
-            // Depth-disocclusion tuning keyed to the ACTUAL history format. fp16 history stores depth at
-            // ~11 effective bits, so the reject curve can be sharp (slope 12, no offset, small dead-zone);
-            // the RGBA8 fallback keeps the old blunted curve that existed to hide 1/255 quantization.
-            // Dead-zone 0.0015 (was 0.0005): the velocity buffer is fp16 now too, so BOTH sides of the
-            // ghost compare carry ~5e-4 relative quantization — the zone covers their sum with margin.
+            // depth-reject curve keyed to the history format: sharp for fp16, blunted for the RGBA8
+            // fallback (hides 1/255 quantization). Dead-zone covers fp16 quantization on both compare sides.
             effect.Parameters["DepthRejectParams"]?.SetValue(PPXDepthEngine.HistoryIsFP16
                 ? new Vector4(0.0015f, 12f, 0f, 0.02f)
                 : new Vector4(2f / 255f, 6f, 0.25f, 0.05f));
-            // Un-jittered offset for the variance-box taps. Sign derivation, verified against the velocity
-            // shaders (which compute currNDC = clip.xy/w - JitterNDC to UN-jitter): jittered content sits at
-            // unjittered + JitterNDC in NDC, i.e. content shifts by +j. In UV that's (+j.X/2, -j.Y/2) (UV y
-            // inverted vs NDC y). The shader samples the box at uv - SampleJitterUV and needs boxUV =
-            // uv + contentShift, so SampleJitterUV = -contentShift = (-j.X*0.5, +j.Y*0.5). (The first cut
-            // used the opposite sign on both axes — box wobble DOUBLED and the image got jitterier, the
-            // predicted wrong-sign symptom.) Zero when TAA jitter is off; the city view leaves it zero ->
-            // behaves as before there.
+            // un-jittered offset for the variance-box taps: content shifts by +jitter in NDC and UV y is
+            // inverted, so SampleJitterUV = (-j.X*0.5, +j.Y*0.5). Zero when TAA jitter is off.
             var jNdc = PPXDepthEngine.TAAJitterNDC;
             effect.Parameters["SampleJitterUV"]?.SetValue(new Vector2(-jNdc.X * 0.5f, jNdc.Y * 0.5f));
-            // Motion gates must think in NATIVE pixels regardless of the resolve grid. In pre-upscale (FSR1)
-            // mode the grid is render-res, so scene motion produced proportionally fewer grid-pixels of
-            // velocity at low render scale — disocclusion rejection barely armed and the oscillation lock
-            // survived on moving edges (the "ghosting + fizzle on disocclusion at low res, TAAU off" report).
-            // TAAU and native/supersample grids are already native-sized -> scale 1.
+            // motion gates think in native pixels: pre-upscale grids are render-res, so scale velocity up;
+            // TAAU/native/supersample grids are already native-sized
             float ss = PPXDepthEngine.SSAA;
             effect.Parameters["VelGatePxScale"]?.SetValue((!upscale && ss < 1f && ss > 0f) ? 1f / ss : 1f);
-            // Jitter cycle length (must agree with the generator — R2Jitter.HaltonCycle is the single
-            // source of truth): the shader's cycle-aware trust ceiling sizes the locked accumulation
-            // window to EXCEED the cycle, otherwise the converged limit cycle shows as a repeating
-            // shimmer (72 frames at 1/3 scale vs a ~55-frame window was exactly that artifact).
+            // must agree with R2Jitter.HaltonCycle: the trust ceiling sizes the accumulation window to
+            // exceed the cycle, or the converged limit cycle shows as repeating shimmer
             effect.Parameters["JitterPhases"]?.SetValue((float)R2Jitter.HaltonCycle(ss));
             // Live-tuning uniforms (TAA_Core only — TAALite keeps its literals). Defaults in TAATuning are
             // IDENTICAL to the pre-promotion shader literals, so shipping behavior is unchanged; they exist
@@ -199,14 +157,12 @@ namespace FSO.LotView.Utils
             gd.SetRenderTargets(finalTarget);
             if (PPXDepthEngine.TAASkipFinalBlit)
             {
-                // Pre-upscale mode: no stretch blit — publish the render-res resolved frame (or the meta
-                // diagnostic when debugging) for the chain to feed straight into the upscaler.
+                // pre-upscale mode: publish the render-res result for the chain to feed the upscaler
                 PPXDepthEngine.TAAOutput = DebugAccum ? metaCurr : historyCurr;
             }
             else
             {
-                // Copy the result to whatever target the chain originally bound (screen or next ping-pong
-                // RT). Destination rect = current viewport so the blit matches the chain's working surface.
+                // copy the result to the chain's bound target (screen or next ping-pong RT)
                 gd.BlendState = BlendState.Opaque;
                 var sb = BlitSB(gd);
                 sb.Begin(blendState: BlendState.Opaque);
@@ -214,7 +170,6 @@ namespace FSO.LotView.Utils
                 sb.End();
             }
 
-            // Rotate history roles for next frame: currCurr becomes "prev", the other becomes "curr".
             PPXDepthEngine.SwapHistory();
         }
     }

@@ -39,13 +39,10 @@ namespace FSO.LotView.Utils
 
         //3d cache
         private DGRP3DMesh Mesh;
-        // Exposed read-only for GPU-instancing batch grouping (WorldEntities): two objects can only be
-        // instanced together if they share this exact mesh reference. Use EnsureMesh3D() first if the
-        // mesh may not have been loaded yet (e.g. before this object's first Draw3D call).
+        // for GPU-instancing batch grouping - objects can only be instanced if they share this mesh reference
         public DGRP3DMesh Mesh3D => Mesh;
         public Matrix World;
-        // Previous-frame world matrix, pushed by ObjectComponent.Draw. Read by velocity-aware techniques in
-        // RCObject.fx to emit per-pixel screen-space motion. When unset (e.g. first draw) it equals World.
+        // previous-frame world matrix, for the velocity techniques in RCObject.fx (equals World on first draw)
         public Matrix PreviousWorld;
 
         // Hint set by a caller that already knows whether the velocity MRT is bound for a whole batch of
@@ -286,9 +283,7 @@ namespace FSO.LotView.Utils
             }
         }
 
-        // Loads (if necessary) and returns the shared 3D mesh for this DGRP, without drawing it. Used by
-        // Draw3D/DrawLMap/Preload, and by the instancing batch grouping in WorldEntities, which needs the
-        // mesh reference before deciding whether an object belongs to a batchable group.
+        // loads (if necessary) and returns the shared 3D mesh without drawing it
         public DGRP3DMesh EnsureMesh3D()
         {
             if (_Dirty.IsSet(ComponentRenderMode._3D) || Mesh == null)
@@ -408,8 +403,7 @@ namespace FSO.LotView.Utils
             if (Room == 65533) effect.SetTechnique(drawTech);
         }
 
-        // Reused across groups/frames to avoid per-batch GC churn. Grown (never shrunk) to the largest
-        // group seen so far.
+        // reused across groups/frames; grown to the largest group seen
         private static DynamicVertexBuffer InstanceVB;
         private static DynamicVertexBuffer InstanceVBVelocity;
         private static RCInstanceData[] InstanceScratch = new RCInstanceData[0];
@@ -417,11 +411,8 @@ namespace FSO.LotView.Utils
 
         /// <summary>
         /// Draws every geom of a shared DGRP mesh once via hardware instancing, for a group of objects
-        /// that all share this exact mesh plus the same dynamic-sprite-flag state (grouping/eligibility is
-        /// decided by the caller - see WorldEntities). Mirrors the per-object geom loop in Draw3D, but
-        /// issues one DrawInstancedPrimitives call per geom instead of one DrawIndexedPrimitives call per
-        /// object. Callers must not route Room==65533 ("disabled"/grayscale) objects here - that state
-        /// forces a different technique in the per-object path and has no instanced equivalent.
+        /// sharing the mesh + dynamic sprite flags (grouping decided in WorldEntities). Room==65533
+        /// ("disabled") objects must not be routed here - no instanced equivalent.
         /// </summary>
         public static void DrawInstanced(WorldState world, DGRP3DMesh mesh, ulong dynamicSpriteFlags,
             ulong dynamicSpriteFlags2, sbyte level, Matrix[] worlds, Matrix[] prevWorlds, int count)
@@ -472,9 +463,7 @@ namespace FSO.LotView.Utils
                 instanceVB = InstanceVB;
             }
 
-            // Unlike Draw3D (which can rely on the caller having already set Draw/DrawWithVelocity before
-            // the per-object loop), nothing else ever selects the Instanced techniques - so this must be
-            // set unconditionally up front, not just inside the "has a drawable depth mask" branch below.
+            // nothing else selects the instanced techniques - set unconditionally up front
             effect.SetTechnique(drawTech);
 
             if (mesh.DepthMask != null)
@@ -548,13 +537,8 @@ namespace FSO.LotView.Utils
                 effect.SetTechnique(drawTech);
             }
 
-            // The instanced techniques' vertex shader requires the stream-1 instance buffer to be bound;
-            // leaving one of them as CurrentTechnique would break the very next non-batched object's
-            // Draw3D call, which only binds a single (stream-0) vertex buffer and - like this method used
-            // to before this fix - assumes technique was already left on the plain Draw/DrawWithVelocity
-            // technique by whatever drew immediately before it (this method's own instanced draws, or the
-            // caller in WorldEntities). Restore that invariant here rather than relying on every caller to
-            // do it.
+            // restore the plain technique: the instanced VS needs the stream-1 instance buffer, and the
+            // next non-batched Draw3D binds only stream 0
             effect.SetTechnique(useVelocity ? RCObjectTechniques.DrawWithVelocity : RCObjectTechniques.Draw);
         }
 

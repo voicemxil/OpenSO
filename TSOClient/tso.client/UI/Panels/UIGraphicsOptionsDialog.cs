@@ -73,8 +73,8 @@ namespace FSO.Client.UI.Panels
         // Min 1/3 = the DLSS/FSR2 "Ultra Performance" ratio (1080p output from 360p render at 0.33x).
         private const float RENDER_SCALE_MIN = 1f / 3f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
-        private const int MBLUR_DEBUG = 99;       // Motion-blur dropdown sentinel: velocity-buffer debug (hue) view
-        private const int MBLUR_DEBUG_DEPTH = 98; // Motion-blur dropdown sentinel: velocity-buffer DEPTH (v.b) view
+        private const int MBLUR_DEBUG = 99;       // dropdown sentinel: velocity-buffer debug view
+        private const int MBLUR_DEBUG_DEPTH = 98; // dropdown sentinel: velocity-buffer depth view
 
         // Unified anti-aliasing modes: mutually-exclusive (MSAA, PostAA) combinations — MSAA and SMAA are
         // never enabled together. The dropdown value is the index into this table. MSAA tiers above the GPU's
@@ -115,8 +115,7 @@ namespace FSO.Client.UI.Panels
 
             UIEffectsLabel.Caption = GameFacade.Strings.GetString("f103", "2");
             UIEffectsLabel.Alignment = TextAlignment.Middle;
-            // The "Character Detail" tier actually drives ShadowQuality (the shadow-map resolution,
-            // 512/1024/2048 — see ChangeShadowDetail), not character mesh detail. Relabel it accordingly.
+            // "Character Detail" actually drives ShadowQuality (shadow-map resolution) - relabel it
             CharacterDetailLabel.Caption = "Shadow Detail";
             CharacterDetailLabel.Tooltip = "Shadow map resolution (Low 512 / Med 1024 / High 2048).";
             TerrainDetailLabel.Caption = GameFacade.Strings.GetString("f103", "1");
@@ -154,8 +153,7 @@ namespace FSO.Client.UI.Panels
             AAHighButton = aa.Item3;
             aa.Item4.Caption = AntiAliasLabel.Caption;
 
-            // The three fixed AA presets are replaced by the granular AA / resolution column on the right
-            // (merged in from the former separate Anti-Aliasing dialog). Hide the old preset buttons.
+            // the old AA preset buttons are replaced by the granular column on the right
             AALowButton.Visible = false;
             AAMedButton.Visible = false;
             AAHighButton.Visible = false;
@@ -390,9 +388,8 @@ namespace FSO.Client.UI.Panels
         private void ChangeAA(UIElement button)
         {
             var settings = GlobalSettings.Default;
-            // Three quality presets over the decoupled AA pipeline (MSAA + supersampling are now independent
-            // and combine). PostAA/Sharpen stay off here until the FXAA/SMAA/FSR shader passes are built.
-            // The legacy AntiAlias summary is kept in sync for UI/icon render targets that still read it.
+            // Quality presets over the decoupled AA pipeline. The legacy AntiAlias summary is kept
+            // in sync for UI/icon render targets that still read it.
             if (button == AALowButton) // Off
             {
                 settings.MSAALevel = 0; settings.SuperSampling = 1;
@@ -510,18 +507,17 @@ namespace FSO.Client.UI.Panels
             }
         }
 
-        // ---- Anti-aliasing / resolution column (merged from the former UIAADialog) ----------------------
+        // ---- Anti-aliasing / resolution column -----------------------------------------------------------
 
         private void BuildAAColumn()
         {
             var msaa = FSOEnvironment.MSAASupport;
 
-            // Three groups, top-to-bottom: Anti-aliasing, Resolution, Effects. Rows are added BOTTOM-to-TOP
-            // so each combo's drop-down list renders over the rows beneath it. Group headers are plain labels.
-            // Ambient occlusion rows stay hidden (AO path disabled in World.cs, AOEnabled=false). Velocity
-            // debug is folded into the Motion-blur dropdown (no separate row).
+            // Rows are added BOTTOM-to-TOP so each combo's drop-down renders over the rows beneath it.
+            // AO rows stay hidden (AO path disabled in World.cs); velocity debug lives in the
+            // Motion-blur dropdown.
 
-            // --- Effects (bottom of the column; shifted down 32px to make room for the Upscaler row) ---
+            // --- Effects ---
             AddMotionBlurRow("Motion blur strength", 390);
             MotionBlurCombo = AddRow("Motion blur (3D)", 358,
                 new[] { "Off", "On", "Debug (velocity)", "Debug (depth)" }, new[] { 0, 2, MBLUR_DEBUG, MBLUR_DEBUG_DEPTH }, out _mblurObjs,  // 2 = per-pixel 3D
@@ -541,9 +537,8 @@ namespace FSO.Client.UI.Panels
             AddGroupHeader("Effects", 232);
 
             // --- Resolution ---
-            // Upscaler for render scale < 1: FSR 1 (EASU spatial) vs Cosmic TAAU (our TAA accumulating
-            // jittered render-res samples directly onto the native grid). TAAU needs TAA's history/velocity,
-            // so the row only shows while TAA is on (RefreshSelections toggles visibility).
+            // Upscaler for render scale < 1: FSR 1 (spatial) vs Cosmic TAAU. TAAU needs TAA's
+            // history/velocity, so its entry is only selectable while TAA is on.
             UpscalerCombo = AddRow("Upscaler", 200,
                 new[] { "FSR 1", "Cosmic TAAU" }, new[] { 0, 1 }, out _upscalerObjs,
                 v => { GlobalSettings.Default.Upscaler = v; ApplyAndRefresh(); });
@@ -552,17 +547,14 @@ namespace FSO.Client.UI.Panels
             AddRenderScaleRow("Render scale", 136);
             AddGroupHeader("Resolution", 110);
 
-            // --- Anti-aliasing (top of the column; added last so its drop-down overlays everything) ---
-            // Cosmic TAA debug view: its own row, visible only while Cosmic TAA is the AA mode. Added BEFORE
-            // the AA combo so the AA dropdown's open list renders over it.
+            // --- Anti-aliasing (added last so its drop-down overlays the rows below) ---
+            // Cosmic TAA debug row: visible only while Cosmic TAA is the AA mode.
             TAADebugCombo = AddRow("Cosmic TAA debug", 78,
                 new[] { "Off", "On" }, new[] { 0, 1 }, out _taaDbgObjs,
                 v => { GlobalSettings.Default.TAADebug = v == 1; ApplyAndRefresh(); });
             TAADebugRowLabel = _LastRowLabel;
 
-            // One unified AA selector: mutually-exclusive Cosmic TAA / MSAA / FXAA / SMAA (Cosmic TAA lives
-            // here now — its old separate row is gone; the debug view has its own gated row above). MSAA
-            // tiers capped to the GPU max (so 8× is hidden on Apple Silicon). Value = index into AAModes.
+            // Unified AA selector; MSAA tiers capped to the GPU max. Value = index into AAModes.
             var aaNames = new System.Collections.Generic.List<string>();
             var aaValues = new System.Collections.Generic.List<int>();
             for (int i = 0; i < AAModes.Length; i++)
@@ -598,7 +590,7 @@ namespace FSO.Client.UI.Panels
             return combo;
         }
 
-        // Render scale slider (<1 upscales, >1 supersamples). Shows the effective pixel resolution alongside.
+        // Render scale slider (<1 upscales, >1 supersamples).
         private void AddRenderScaleRow(string label, int y)
         {
             var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
@@ -624,8 +616,7 @@ namespace FSO.Client.UI.Panels
                 if (InternalChange) return;
                 var s = GlobalSettings.Default;
                 float v = (float)(System.Math.Round(RenderScaleSlider.Value * 20.0) / 20.0); // soft 0.05 grid
-                // Snap-to-min: the 0.05 grid can't express the 1/3 "Ultra Performance" floor — dragging to
-                // the end of the slider should land exactly on it, not round up to 0.35.
+                // the 0.05 grid can't express the 1/3 floor - snap the bottom of the slider to it
                 if (RenderScaleSlider.Value <= RENDER_SCALE_MIN + 0.01f) v = RENDER_SCALE_MIN;
                 s.RenderScale = v;
                 s.SuperSampling = (s.RenderScale > 1f) ? 2 : 1;
@@ -638,7 +629,6 @@ namespace FSO.Client.UI.Panels
             if (RenderScaleSlider == null) return;
             RenderScaleSlider.Value = scale;
             if (RenderScaleLabel == null) return;
-            // Effective resolution = current viewport (the window/output) multiplied by the render scale.
             string res = "";
             var gd = GameFacade.GraphicsDevice;
             if (gd != null)
@@ -687,7 +677,6 @@ namespace FSO.Client.UI.Panels
             if (SharpenLabel != null) SharpenLabel.Caption = (amt > 0f) ? amt.ToString("0.0#") : "Off";
         }
 
-        // Per-pixel motion blur strength (MotionBlurAmount 0..1 = shutter fraction; 0.5 ≈ 180° film shutter).
         private void AddMotionBlurRow(string label, int y)
         {
             var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
@@ -698,9 +687,7 @@ namespace FSO.Client.UI.Panels
                 Orientation = 0,
                 Texture = GetTexture(0x42500000001),
                 MinValue = 0f,
-                // Capped at 0.5: MotionBlurAmount is the shutter fraction (0.5 = the film-standard 180
-                // degree shutter). Anything above that is way too strong in practice, so the old 0..1
-                // range's midpoint is now the slider maximum.
+                // capped at 0.5 = the film-standard 180 degree shutter; higher is far too strong
                 MaxValue = 0.5f,
                 AllowDecimals = true,
                 Position = new Vector2(AAX + 175, y + 8)
@@ -727,7 +714,6 @@ namespace FSO.Client.UI.Panels
             if (MotionBlurLabel != null) MotionBlurLabel.Caption = System.Math.Min(amt, 0.5f).ToString("0.0#");
         }
 
-        // Bloom luminance threshold (0..1, LDR). Below this stays out of the bright-pass.
         private void AddBloomThresholdRow(string label, int y)
         {
             var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
@@ -750,7 +736,6 @@ namespace FSO.Client.UI.Panels
             };
         }
 
-        // Bloom composite strength (0..2).
         private void AddBloomIntensityRow(string label, int y)
         {
             var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
@@ -893,15 +878,13 @@ namespace FSO.Client.UI.Panels
             SelectValue(AACombo, _aaObjs, CurrentAAIndex());
             SetRenderScaleSlider(s.RenderScale);
             SelectValue(MotionBlurCombo, _mblurObjs, s.VelocityDebug ? (s.VelocityDebugDepth ? MBLUR_DEBUG_DEPTH : MBLUR_DEBUG) : ((s.MotionBlur == 2) ? 2 : 0));
-            // Upscaler row: always visible; the Cosmic TAAU entry is selectable only while Cosmic TAA is the
-            // AA mode (it needs TAA's history/velocity) and renders grayed out otherwise.
+            // the Cosmic TAAU entry is only selectable while TAA is on (grayed out otherwise)
             UpscalerCombo.Items = new List<UIComboboxItem>
             {
                 new UIComboboxItem { Name = "FSR 1", Value = _upscalerObjs[0] },
                 new UIComboboxItem { Name = "Cosmic TAAU", Value = _upscalerObjs[1], Disabled = !s.TAA },
             };
             SelectValue(UpscalerCombo, _upscalerObjs, (s.TAA && s.Upscaler == 1) ? 1 : 0);
-            // Cosmic TAA debug row: only shown while Cosmic TAA is the AA mode.
             SelectValue(TAADebugCombo, _taaDbgObjs, s.TAADebug ? 1 : 0);
             TAADebugCombo.Visible = s.TAA;
             if (TAADebugRowLabel != null) TAADebugRowLabel.Visible = s.TAA;

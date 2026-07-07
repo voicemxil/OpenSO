@@ -37,17 +37,9 @@ namespace FSO.LotView.LMap
 
         public RenderTarget2D LightMap;
         public RenderTarget2D LightMapDirection;
-        // The 3D wall-shadow contributor for the lightmap. Gated on Shadow3D ("+Walls" tier): this single
-        // getter is the ONE control point for the whole 3D-wall-shadow system in here - every dependent
-        // decision keys off it (DrawWallShadows' fancy-vs-flat branch; the outdoor lightmap pass selection
-        // `(WallComp == null) ? 1 : 4`, which picks a wall-shadow-sampling pass only when non-null; and the
-        // `room.IsOutside || WallComp != null` gate that runs the direct-sun wall-shadow block for indoor
-        // rooms). Returning Blueprint.WCRC unconditionally made FSO tier render 3D wall shadows it shouldn't
-        // (that's the "+Walls" tier's job); gating ONLY DrawWallShadows earlier was worse - it skipped the
-        // draw but left the pass selection sampling an empty shadow target, which read as inconsistent/
-        // swapped tiers. Gating here flips all of it together. Note this does NOT affect the VISIBLE walls -
-        // those render from Blueprint.WCRC directly (WorldPlatform3D), so FSO still shows walls, just no
-        // wall shadows baked into the lightmap.
+        // 3D wall-shadow contributor, gated on the Shadow3D ("+Walls") tier. Single control point:
+        // DrawWallShadows' fancy/flat branch and the outdoor pass selection both key off this being null,
+        // and must flip together. Visible walls still render from Blueprint.WCRC directly.
         public WallComponentRC WallComp
         {
             get
@@ -336,11 +328,8 @@ namespace FSO.LotView.LMap
         public void InvalidateAll()
         {
             LastOutsideColor = Blueprint.OutsideColor;
-            // -1, not 0: ParseInvalidated only triggers RedrawAll when `floorLimit > RedrawFloor`. Standing
-            // on the ground floor with roofs off, floorLimit is ALSO 0, so `0 > 0` is false and the redraw
-            // silently never fires - InvalidateAll() (and everything that routes through it, e.g.
-            // ROOM_CHANGED) would then do nothing at all on the single most common camera position. -1
-            // guarantees `floorLimit > RedrawFloor` for any valid (non-negative) floor.
+            // -1, not 0: ParseInvalidated only redraws when floorLimit > RedrawFloor, and floorLimit
+            // is also 0 on the ground floor with roofs off
             RedrawFloor = -1;
         }
 
@@ -463,11 +452,8 @@ namespace FSO.LotView.LMap
             var size = Blueprint.Width - borderSize;
             //TODO: set floor shadow map here to stop surrounding light issues
             LightEffect.floorShadowMap = ObjShadowTarg;
-            // +Walls tier (3D wall shadows but flat/blob object shadows): the SSAA outdoor pass reads object
-            // shadows only from OutsideShadowTarg, where +Walls' blobs DON'T live (they go to ObjShadowTarg),
-            // so tell that pass to additionally sample ObjShadowTarg. Off at FSO (uses the non-SSAA outdoor
-            // pass, which already reads ObjShadowTarg) and at +Objs (3D object shadows are in
-            // OutsideShadowTarg, and ObjShadowTarg isn't freshly written for the sun pass there).
+            // +Walls tier: the SSAA outdoor pass reads object shadows from OutsideShadowTarg, but +Walls'
+            // blobs live in ObjShadowTarg - have it sample that too. Off at FSO and +Objs.
             LightEffect.FloorShadowExtra = (WorldConfig.Current.Shadow3D && !WorldConfig.Current.UltraLighting) ? 1f : 0f;
             LightEffect.TargetRoom = (float)room.RoomID;
 
@@ -590,13 +576,8 @@ namespace FSO.LotView.LMap
                 {
                     var wroom = Blueprint.Light[Blueprint.Rooms[light.WindowRoom].Base];
                     var rawIntensity = wroom.AmbientLight / 150f;
-                    // Smooth fade instead of a hard cutoff at 0.2: this room's redraw is re-triggered as the
-                    // connected room's outdoor ambient shifts with time-of-day, and a binary continue/skip
-                    // at a fixed threshold made this window-lit light (and whatever shadow it cast) visibly
-                    // pop on/off every time rawIntensity crossed 0.2. Ramp smoothly to zero over [FADE_LOW,
-                    // FADE_HIGH] instead, and only skip the draw once truly negligible - a light fading
-                    // through ~0% intensity casts an imperceptible shadow anyway, so there's nothing visible
-                    // to lose by skipping below FADE_LOW.
+                    // smooth fade instead of a hard cutoff - window-lit lights pop on/off as the
+                    // connected room's ambient crosses a fixed threshold with time-of-day
                     const float FADE_LOW = 0.05f, FADE_HIGH = 0.20f;
                     var fade = MathHelper.SmoothStep(0f, 1f, MathHelper.Clamp((rawIntensity - FADE_LOW) / (FADE_HIGH - FADE_LOW), 0f, 1f));
                     light.LightIntensity = rawIntensity * fade;
@@ -844,9 +825,7 @@ namespace FSO.LotView.LMap
 
         public void DrawWallShadows(List<Vector2[]> walls, LightData pointLight)
         {
-            // The 3D wall-shadow (fancy) branch is taken when WallComp != null, which the getter now gates on
-            // the Shadow3D ("+Walls") tier - so at FSO this falls through to the `else` flat-shadow path, and
-            // the coupled downstream pass selection stays consistent (see the WallComp getter's comment).
+            // WallComp is gated on the Shadow3D tier (see getter) - at FSO this takes the flat path
             if (pointLight.LightType == LightType.OUTDOORS && WallComp != null)
             {
                 CreateOutsideIfMissing();
@@ -950,11 +929,8 @@ namespace FSO.LotView.LMap
             }
             else if (pointLight.LightType == LightType.OUTDOORS)
             {
-                // FSO tier (Shadow3D off -> WallComp null): the sun casts NO wall shadows. The flat 2D
-                // approximation the generic branch below would draw (technique 2) only became reachable in
-                // 3D once WallComp was gated on Shadow3D, and reads as a half-baked shadow - "+Walls" is the
-                // tier that adds real (3D) wall shadows. Clear the shadow target so the outdoor light is
-                // unshadowed by walls (object blob shadows still apply via the floor-shadow map).
+                // Shadow3D off: the sun casts no wall shadows - clear the target rather than draw the
+                // flat 2D approximation (object blob shadows still apply via the floor-shadow map)
                 GD.SetRenderTarget(ShadowTarg);
                 GD.ScissorRectangle = DrawRect;
                 GD.Clear(Color.Black);
@@ -1038,13 +1014,8 @@ namespace FSO.LotView.LMap
 
             foreach (var obj in objs)
             {
-                // Chebyshev (per-axis) distance, not Manhattan: pointLight.LightBounds (used by the
-                // sibling non-Ultra path in DrawObjShadows, via ShadowGeo.GenerateObjShadows +
-                // LightBounds.Intersects) is a SQUARE of half-width LightSize around LightPos. A Manhattan
-                // check with the same radius is a DIAMOND strictly inside that square - about half its area
-                // - so objects in the square's corners get a shadow at FSO/+Walls (simple method) but not at
-                // +Objs (this method), reading as +Objs REMOVING shadows rather than upgrading them. Matching
-                // the square exactly keeps both methods' inclusion area consistent.
+                // Chebyshev, not Manhattan: must match the square LightBounds inclusion used by the
+                // non-Ultra path, or +Objs drops shadows for objects in the square's corners
                 if ((outside && obj.Level > pointLight.Level) ||
                     (Math.Abs(obj.Position.X - lp16.X) < li16 && Math.Abs(obj.Position.Y - lp16.Y) < li16))
                 {

@@ -447,16 +447,11 @@ namespace FSO.LotView.Components
             Effect.ScreenSize = new Vector2(device.Viewport.Width, device.Viewport.Height) / world.PreciseZoom;
             Effect.TerrainNoise = TextureGenerator.GetTerrainNoise(device);
             Effect.TerrainNoiseMip = TextureGenerator.GetTerrainNoise(device);
-            // GrassFadeMul scales the blade LOD fade distance (blades gone at ~100*GrassFadeMul). The 2.5x
-            // pushes the 3D blades much further out so they stay in the velocity/normal/depth buffer (and
-            // thus get AO + TAA) at mid distance instead of LOD-ing out to flat blade-coloured ground. Costs
-            // fill rate (~distance^2 more blade pixels) — accepted for quality.
+            // 2.5x blade LOD fade distance, so blades stay in the velocity/depth buffers (AO+TAA) at mid distance
             Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width/1920f) * 2.5f;
 
-            // Negative texture LOD bias under TAA at render scale < 1 (DLSS/FSR2 integration requirement):
-            // sample the sharper mip so the temporal resolve converges at the ORIGINAL texture frequency
-            // instead of one mip lower ("painted over" ground noise / roof textures). Centralized value —
-            // World.ChangeAAMode/ConfigureCityAA compute it; objects/walls (RCObject) consume it too.
+            // negative LOD bias under TAA upscale so the resolve recovers full texture frequency
+            // (value computed in World.ChangeAAMode/ConfigureCityAA; RCObject consumes it too)
             Effect.MipBias = FSO.Common.Utils.PPXDepthEngine.TAAMipBias;
 
             Effect.FadeRectangle = new Vector4(FadeDistance / 2f + SubworldOff.X, FadeDistance / 2f + SubworldOff.Y, FadeDistance, FadeDistance);
@@ -511,11 +506,7 @@ namespace FSO.LotView.Components
             Effect.UseTexture = true;
             Effect.IgnoreColor = true;
 
-            // Velocity output for terrain base — bind MRT1 (VelocityTarget) and select
-            // DrawBaseWithVelocity. Opaque blend forces COLOR1 to overwrite cleanly (NonPremultiplied
-            // scales it by COLOR0 alpha, which would corrupt fade-edge pixels). Note: the velocity here
-            // is currently SUSPECTED-BROKEN — diagnose by enabling "Velocity debug" in graphics options
-            // and seeing whether terrain pixels show mid-gray stationary / uniform hue on pan.
+            // terrain base velocity: bind MRT1 and select DrawBaseWithVelocity
             var terrainVelocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
             bool terrainUseVelocity = terrainVelocityRT != null && _3d;
             RenderTargetBinding[] savedRTs = null;
@@ -525,29 +516,20 @@ namespace FSO.LotView.Components
                 savedRTs = device.GetRenderTargets();
                 savedBlend = device.BlendState;
                 FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(device, terrainVelocityRT);
-                // Independent blend: color (MRT0) keeps the terrain's normal alpha blend (so the surrounding-
-                // lots fade + brightness stay correct) while velocity (MRT1) overwrites. Forcing Opaque here
-                // broke the fade and brightened the far terrain. Falls back to the normal blend if the GPU
-                // lacks independent blend (correct color; slightly attenuated velocity at fade edges).
+                // independent blend: color (MRT0) keeps the terrain's alpha blend (lot fade), velocity (MRT1) overwrites
                 device.BlendState = FSO.Common.Utils.PPXDepthEngine.VelocityColorBlend(device, savedBlend);
                 Effect.ViewProjection = view * world.Projection;
                 Effect.JitterNDC = world.TAAJitter; // un-jitter the velocity pass
-                // Subworld neighbour-lot rendering sets Cameras.ModelTranslation to offset the camera
-                // by the subworld's lot position. state.View (used above) already includes that. But
-                // state.PreviousViewProjection was captured at frame start without it, so the delta of
-                // matrices includes the full ModelTranslation -> uniform giant velocity for every
-                // subworld pixel (visible as bright magenta/blue across all surrounding lots in the
-                // velocity debug visualizer). Apply the same translation to PreviousViewProjection so
-                // both sides match and velocity for static subworld geometry collapses to ~zero.
+                // PreviousViewProjection is captured before subworld ModelTranslation is applied -
+                // fold it in so static subworld geometry gets ~zero velocity
                 var prevVP = world.PreviousViewProjection;
                 if (world.Cameras.ModelTranslation.HasValue)
                 {
                     prevVP = Matrix.CreateTranslation(-world.Cameras.ModelTranslation.Value) * prevVP;
                 }
                 Effect.PreviousViewProjection = prevVP;
-                // PreviousWorld intentionally NOT pushed — GrassVSv uses World on both sides since
-                // DrawFloor mutates e.World per floor (using a separate PreviousWorld would create
-                // spurious per-floor velocity).
+                // PreviousWorld intentionally not pushed - GrassVSv uses World on both sides,
+                // since DrawFloor mutates e.World per floor
             }
 
             Effect.SetTechnique(terrainUseVelocity ? GrassTechniques.DrawBaseWithVelocity : GrassTechniques.DrawBase);
@@ -598,9 +580,7 @@ namespace FSO.LotView.Components
                 Effect.Alpha = (Alpha-0.75f) * 4;
                 Effect.Level = (float)0.0001f;
                 Effect.RoomMap = world.Rooms.RoomMaps[0];
-                // Velocity for grass shells: same condition as the terrain base. ViewProjection /
-                // PreviousViewProjection are still set on Effect from the base block above; GrassVSv uses
-                // World on both sides so per-shell World offsets don't create spurious velocity.
+                // grass shells reuse the base pass's VP/PrevVP; GrassVSv uses World on both sides
                 bool bladesUseVelocity = terrainUseVelocity;
                 Effect.SetTechnique(bladesUseVelocity ? GrassTechniques.DrawBladesWithVelocity : GrassTechniques.DrawBlades);
                 int grassNum = (int)Math.Ceiling(GrassHeight / (float)grassScale);
@@ -611,8 +591,7 @@ namespace FSO.LotView.Components
                     rts = device.GetRenderTargets();
                     if (bladesUseVelocity)
                     {
-                        // Bind velocity MRT for shell velocity output. NonPremultiplied blend still
-                        // overwrites MRT1 cleanly because velocity.a=1 (the RT uses its own src alpha).
+                        // NonPremultiplied still overwrites MRT1 cleanly because velocity.a=1
                         FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(device, terrainVelocityRT);
                     }
                     else if (rts.Length > 1)
@@ -845,7 +824,7 @@ namespace FSO.LotView.Components
             Effect.TerrainNoise = TextureGenerator.GetTerrainNoise(device);
             Effect.TerrainNoiseMip = TextureGenerator.GetTerrainNoise(device);
             Effect.GrassFadeMul = (float)Math.Sqrt(device.Viewport.Width / 1920f) * 2.5f; // 2.5x blade LOD distance (see other GrassFadeMul site)
-            Effect.MipBias = 0f; // facade/thumbnail gen: no TAA resolve to integrate biased sampling — keep neutral
+            Effect.MipBias = 0f; // facade gen: no TAA resolve, keep neutral
 
             Effect.FadeRectangle = new Vector4(FadeDistance / 2f + SubworldOff.X, FadeDistance / 2f + SubworldOff.Y, FadeDistance, FadeDistance);
             Effect.FadeWidth = 35f * 3;

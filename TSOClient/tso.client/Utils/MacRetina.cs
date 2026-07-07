@@ -5,25 +5,15 @@ using System.Runtime.InteropServices;
 namespace FSO.Client.Utils
 {
     /// <summary>
-    /// macOS Retina / High-DPI support.
-    ///
-    /// MonoGame DesktopGL creates its SDL window WITHOUT SDL_WINDOW_ALLOW_HIGHDPI, so SDL sets the GL
-    /// view's <c>wantsBestResolutionOpenGLSurface = NO</c>. On a Retina display that means the OpenGL
-    /// drawable is created at POINT resolution (e.g. 1024x768) and the window server scales it up to the
-    /// physical backing (e.g. 2048x1536) — a soft, "quarter-resolution" image. No backbuffer size alone
-    /// fixes it because the GL surface itself is capped at point resolution.
-    ///
-    /// This helper flips the NSView back to a best-resolution (native pixel) surface and reports the
-    /// resulting scale, so the game can size its backbuffer to the real pixels and render natively.
-    /// All P/Invokes target libraries already loaded by the running macOS client; everything is guarded
-    /// and best-effort — any failure leaves the prior (upscaled) behaviour untouched.
+    /// macOS Retina support. MonoGame DesktopGL creates its SDL window without ALLOW_HIGHDPI, so the
+    /// GL drawable is capped at point resolution and upscaled (blurry) - no backbuffer size fixes it.
+    /// This flips the NSView back to a best-resolution surface and reports the scale so the backbuffer
+    /// can be sized to real pixels. Everything is best-effort: any failure leaves the old behaviour.
     /// </summary>
     internal static class MacRetina
     {
-        // MonoGame DesktopGL ships SDL as "libSDL2-2.0.0.dylib" (the SDL2 ABI soname) next to the apphost.
-        // .NET's DllImport name resolution for "SDL2" never tries that versioned filename, so the calls
-        // threw DllNotFoundException (swallowed -> 0x0). Bind the exact name; macOS-guarded so it's never
-        // resolved on Linux/Windows.
+        // MonoGame ships SDL as "libSDL2-2.0.0.dylib"; DllImport("SDL2") never resolves that name
+        // (DllNotFoundException, swallowed). Bind the exact filename - only ever called on macOS.
         private const string SDL = "libSDL2-2.0.0.dylib";
         private const string OBJC = "/usr/lib/libobjc.dylib";
         private const string CG = "/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics";
@@ -59,8 +49,7 @@ namespace FSO.Client.Utils
         [StructLayout(LayoutKind.Sequential)]
         private struct SDL_version { public byte major, minor, patch; }
 
-        // SDL_SysWMinfo: { SDL_version (3 bytes); SDL_SYSWM_TYPE subsystem (uint @4); union info (64 bytes @8) }.
-        // For the Cocoa subsystem the union's first member is NSWindow* — the rest is padding.
+        // SDL_SysWMinfo: version (3 bytes), subsystem (uint @4), 64-byte union @8 (Cocoa: NSWindow* first).
         [StructLayout(LayoutKind.Sequential)]
         private struct SDL_SysWMinfo
         {
@@ -86,8 +75,8 @@ namespace FSO.Client.Utils
         }
 
         /// <summary>
-        /// Ask the SDL window's GL view for a best-resolution (native pixel) surface and return the
-        /// resulting drawable scale (drawablePixels / windowPoints). 1 means no Retina surface was granted.
+        /// Request a best-resolution GL surface for the SDL window; returns the resulting drawable
+        /// scale (drawablePixels / windowPoints), 1 if no Retina surface was granted.
         /// </summary>
         public static float EnableBestResolutionSurface(IntPtr sdlWindow)
         {
@@ -99,9 +88,8 @@ namespace FSO.Client.Utils
                 var contentView = msgSend(info.window, sel("contentView"));
                 if (contentView == IntPtr.Zero) return 1f;
                 msgSend_bool(contentView, sel("setWantsBestResolutionOpenGLSurface:"), 1);
-                // Setting the flag doesn't resize a live GL surface. Nudge the window size by 1px and back to
-                // make SDL/Cocoa recreate the drawable at the now-native backing scale; restore the size so
-                // the window doesn't visibly change.
+                // Setting the flag doesn't resize a live GL surface - nudge the window size by 1px and
+                // back so Cocoa recreates the drawable at the native backing scale.
                 SDL_GetWindowSize(sdlWindow, out int ww, out int wh);
                 if (ww > 1 && wh > 1)
                 {
@@ -114,10 +102,8 @@ namespace FSO.Client.Utils
             catch { return 1f; }
         }
 
-        /// <summary>Restore the .app bundle's Dock icon (Liquid Glass). MonoGame DesktopGL sets its own
-        /// window icon (an embedded Icon.bmp, or its built-in logo when none is embedded) via
-        /// SDL_SetWindowIcon, which on macOS replaces the Dock tile — setting the app icon image to nil
-        /// reverts the Dock to the bundle icon (CFBundleIconName / Assets.car).</summary>
+        /// <summary>Restore the bundle's Dock icon (Liquid Glass): MonoGame's SDL_SetWindowIcon replaces
+        /// the Dock tile on macOS; setting the app icon image to nil reverts to the bundle icon.</summary>
         public static void RestoreBundleDockIcon()
         {
             try
@@ -141,8 +127,7 @@ namespace FSO.Client.Utils
             try { SDL_GetWindowSize(sdlWindow, out int w, out int h); return (w, h); } catch { return (0, 0); }
         }
 
-        /// <summary>Set the window (point) size. Used to shrink the window back after GraphicsDevice.Reset
-        /// grows it — the best-resolution backing stays native, so the backbuffer keeps its native size.</summary>
+        /// <summary>Set the window (point) size - shrinks the window back after GraphicsDevice.Reset grows it.</summary>
         public static void SetWindowSize(IntPtr sdlWindow, int w, int h)
         {
             try { SDL_SetWindowSize(sdlWindow, w, h); } catch { }

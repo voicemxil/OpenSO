@@ -1,15 +1,6 @@
-// BillboardVelocity.fx — textured billboard (headline icons / speech bubbles) with velocity output.
-//
-// Replaces MonoGame's BasicEffect for the 3D headline billboards so they can write screen-space velocity
-// + depth to MRT1 like every other scene element. Without it they were invisible to the TAA resolve's
-// motion evidence: they animate (bob) and track their avatars with no velocity signal, so the temporal
-// accumulation smeared them badly ("very ghosted" under TAAU). With true per-frame velocity (from the
-// current vs previous billboard transform) they reproject exactly and accumulate cleanly.
-//
-// Conventions copied from SkyVelocity/Vitaboy:
-//   velocity.rg = clamp((currNDC - JitterNDC - prevNDC) * (0.5, -0.5), +/-0.05)  (UV-space delta)
-//   velocity.b  = normalized LINEAR view distance saturate(clip.w / 800)
-//   velocity.a  = 1 (valid). MRT1 must be written OPAQUE (PPXDepthEngine.VelocityColorBlend).
+// BillboardVelocity.fx — headline billboard (BasicEffect replacement) writing velocity + depth to MRT1.
+// Conventions match SkyVelocity/Vitaboy: velocity.rg = UV-space delta, .b = linear depth
+// saturate(clip.w / 800), .a = 1 (valid; MRT1 must be written opaque — PPXDepthEngine.VelocityColorBlend).
 
 float4x4 MVP;     // current World * View * Projection (jittered — TAA sampling)
 float4x4 PrevMVP; // previous frame's billboard transform x previous UN-jittered ViewProjection
@@ -48,15 +39,14 @@ float2 ComputeVelocity(float4 curr, float4 prev)
     float pw = max(prev.w, 1e-4);
     float2 c = curr.xy / cw - JitterNDC;
     float2 p = prev.xy / pw;
-    return clamp((c - p) * float2(0.5, -0.5), -0.5, 0.5); // was +/-0.05 — see Vitaboy.fx ComputeVitaboyVelocity note (the saturating-clamp motion bug)
+    return clamp((c - p) * float2(0.5, -0.5), -0.5, 0.5); // wide clamp — a tight one saturates real motion (see Vitaboy.fx)
 }
 
 PSOut BillboardPS(VSOut input)
 {
     PSOut o;
     float4 c = tex2D(BillboardSampler, input.texCoord);
-    // Fully transparent texels must not stamp velocity/depth over the scene behind them (the same
-    // alpha-fringe rule as Vitaboy's velocity pass).
+    // Transparent texels must not stamp velocity/depth over the scene behind (same rule as Vitaboy).
     if (c.a < 0.01) discard;
     o.color = c;
     o.velocity = float4(ComputeVelocity(input.currClip, input.prevClip), saturate(input.currClip.w / 800.0), 1.0);

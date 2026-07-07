@@ -9,24 +9,16 @@ using System.Threading.Tasks;
 namespace FSO.Server.Api.Core.Services
 {
     /// <summary>
-    /// Populates the managed-update list (fso_updates) from the OpenSO GitHub releases.
-    ///
-    /// CI (release.yml) attaches each release's full client zip + an incremental delta zip + a manifest;
-    /// this discovers them and writes the published fso_updates rows that GET /userapi/update serves and
-    /// the client's UpdatePath.FindPath chains into an incremental patch path. The releases are the source
-    /// of truth, so there is NO CI->DB connectivity, no admin-webapp generation step, and no watchdog/
-    /// exit-4 involvement — which is exactly what the OpenSO Docker deploy needs.
-    ///
-    /// Runs in the background at UserApi startup; offline / rate-limited just means the list isn't refreshed
-    /// this boot. Idempotent: existing rows are left alone (or their URLs/chain refreshed if a delta was
-    /// attached after the row was first created).
+    /// Populates fso_updates from the OpenSO GitHub releases (full zip + incremental delta + manifest
+    /// attached by release.yml), producing the rows GET /userapi/update serves. The releases are the
+    /// source of truth - no CI->DB connectivity or admin-webapp generation step. Runs in the background
+    /// at UserApi startup; idempotent (existing rows only get their URLs/chain refreshed).
     /// </summary>
     public class UpdateReconciler
     {
         private static void Log(string msg) => Console.WriteLine("[UpdateReconciler] " + msg);
 
-        // Asset names CI attaches (must match FSO.DeltaGen + release.yml). The full client zip is the
-        // existing per-platform release asset.
+        // Asset names CI attaches (must match FSO.DeltaGen + release.yml).
         private const string FullClientAsset = "OpenSO-client-win-x64.zip";
         private const string IncrementalAsset = "OpenSO-client-win-x64.incremental.zip";
         private const string ManifestAsset = "OpenSO-client-win-x64.manifest.json";
@@ -47,16 +39,15 @@ namespace FSO.Server.Api.Core.Services
             var owner = _gh?.User ?? "voicemxil";
             var repo = _gh?.Repository ?? "OpenSO";
 
-            // Reading public releases needs no auth; use the token only for a higher rate limit if present.
+            // public releases need no auth; the token just raises the rate limit
             var client = new GitHubClient(new ProductHeaderValue(string.IsNullOrEmpty(_gh?.AppName) ? "OpenSO" : _gh.AppName));
             if (!string.IsNullOrEmpty(_gh?.AccessToken)) client.Credentials = new Credentials(_gh.AccessToken);
 
             var releases = await client.Repository.Release.GetAll(owner, repo);
 
-            // Stable releases tagged with semver ("vMAJOR.MINOR.PATCH"), oldest first so last_update_id
-            // chains forward. Pre-releases (e.g. a future "-beta") are a separate channel and excluded.
-            // Legacy "dev-N" tags are intentionally ignored: the chain restarts at the first semver release,
-            // so a client on an old build does one full download across the scheme change, then deltas resume.
+            // Stable semver ("vX.Y.Z") releases, oldest first so last_update_id chains forward.
+            // Pre-releases and legacy "dev-N" tags are excluded - the chain restarts at the first
+            // semver release (one full download across the scheme change, then deltas resume).
             var ordered = releases
                 .Where(r => !r.Draft && !r.Prerelease)
                 .Select(r => new { r, n = ParseSemver(r.TagName) })
@@ -76,8 +67,7 @@ namespace FSO.Server.Api.Core.Services
             var branch = db.Updates.GetBranch(_branch);
             if (branch == null)
             {
-                // base_build_url is required by the schema but unused here (deltas are generated in CI, not
-                // by GenerateUpdateService). Point it at the releases page for documentation.
+                // base_build_url is required by the schema but unused here (deltas come from CI)
                 db.Updates.AddBranch(new DbUpdateBranch
                 {
                     branch_name = _branch,
@@ -140,9 +130,7 @@ namespace FSO.Server.Api.Core.Services
             Log($"UpdateReconciler: branch '{_branch}' — {ordered.Count} releases, {created} added, {refreshed} refreshed.");
         }
 
-        // Parses a "vMAJOR.MINOR.PATCH" tag into a sortable key (MAJOR*1_000_000 + MINOR*1_000 + PATCH),
-        // or -1 if the tag isn't plain semver (so non-semver tags like legacy "dev-N" are skipped). Minor
-        // and patch must be < 1000.
+        // Parses a "vX.Y.Z" tag into a sortable key, or -1 if not plain semver (minor/patch < 1000).
         private static long ParseSemver(string tag)
         {
             if (string.IsNullOrEmpty(tag)) return -1;

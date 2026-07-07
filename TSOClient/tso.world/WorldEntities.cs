@@ -57,19 +57,14 @@ namespace FSO.LotView
             effect.ViewProjection = state.ViewProjection;
             effect.JitterNDC = state.TAAJitter; // un-jitter the velocity pass (0 when TAA off)
             effect.MipBias = FSO.Common.Utils.PPXDepthEngine.TAAMipBias; // sharper texture mips under TAA at scale<1
-            // Subworld ModelTranslation fix: in 3D, SubDraw sets Cameras.ModelTranslation so state.View
-            // (and the ViewProjection re-derived by the PrepareCulling above) include the subworld offset,
-            // but PreviousViewProjection was captured at frame start without it. Apply the same translation
-            // so static subworld geometry's velocity collapses to pure camera motion.
+            // PreviousViewProjection is captured before subworld ModelTranslation is applied -
+            // fold it in so static subworld geometry gets pure camera-motion velocity
             var prevVP = state.PreviousViewProjection;
             if (state.Cameras.ModelTranslation.HasValue)
                 prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
             effect.PreviousViewProjection = prevVP;
 
-            // In 2D mode StaticDraw renders into a cached sprite buffer (no velocity). But in 3D it renders
-            // LIVE to the backbuffer — and this is the path that draws SUBWORLD (surrounding-lot) 3D objects
-            // like trees (WorldArchitecture.DrawSub -> SubDraw -> Entities.StaticDraw). So bind the velocity
-            // MRT here too; DGRPRenderer auto-selects DrawWithVelocity when a velocity target is present.
+            // in 3D StaticDraw renders live (including subworld objects) - bind the velocity MRT here too
             var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
             bool useVelocity = velocityRT != null && state.CameraMode == CameraRenderMode._3D;
             RenderTargetBinding[] savedRTs = null;
@@ -108,30 +103,19 @@ namespace FSO.LotView
 
             var effect = WorldContent.AvatarEffect;
 
-            // Velocity output: scope MRT1 binding around the avatar loop. Vitaboy's DrawWithVelocity is
-            // built at the same level_9_1 profile as the rest of Vitaboy.fx using a pre-combined
-            // ViewProjection (single mat-mul) — keeps state caching consistent so the in-DrawGeometry
-            // shadow-pass technique switch correctly rebinds vsShadow.
+            // velocity MRT scoped around the avatar loop. DrawWithVelocity uses a pre-combined
+            // ViewProjection so the in-DrawGeometry shadow technique switch still rebinds vsShadow.
             var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
             bool useVelocity = velocityRT != null;
             if (useVelocity)
             {
                 FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gd, velocityRT);
-                // Respect Directional Lighting here too - DrawWithVelocity (non-directional lightProcess)
-                // used to be hardcoded regardless of `advDir`, so enabling TAA/motion-blur (which forces the
-                // velocity technique) silently dropped avatars back to flat/ambient shading even with
-                // Directional Lighting on, which read as the light direction itself changing.
-                // Also respect Advanced Lighting being OFF entirely: DrawWithVelocity/DrawWithVelocityDirection
-                // both shade via the lightmap-sampling lightProcess()/lightProcessDirection() path, which is
-                // only valid when Advanced Lighting is on (mirrors psVitaboyAdv/psVitaboyDir below). With it
-                // off, that lightmap isn't maintained, so those techniques crushed sims to near-black the
-                // moment TAA/motion-blur forced a velocity technique - use the flat AmbientLight-only
-                // DrawWithVelocityFlat (mirrors the non-velocity path's psVitaboyNoSSAA) instead.
+                // mirror the non-velocity lighting choice: the lightmap-sampling velocity techniques are
+                // only valid with Advanced Lighting on; otherwise use the flat DrawWithVelocityFlat
                 int velTech = !WorldConfig.Current.AdvancedLighting ? 9 : (advDir ? 8 : 7);
-                effect.CurrentTechnique = effect.Techniques[velTech]; //DrawWithVelocityFlat / DrawWithVelocityDirection / DrawWithVelocity, last three techniques in Vitaboy.fx
+                effect.CurrentTechnique = effect.Techniques[velTech]; //last three techniques in Vitaboy.fx
                 effect.Parameters["ViewProjection"]?.SetValue(state.View * state.Projection);
-                // Subworld ModelTranslation fix: state.View already has the translation, but
-                // PreviousViewProjection was captured pre-translation -> apply same translation here.
+                // fold subworld ModelTranslation into the prev VP (see StaticDraw)
                 var prevVP = state.PreviousViewProjection;
                 if (state.Cameras.ModelTranslation.HasValue)
                     prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
@@ -190,16 +174,15 @@ namespace FSO.LotView
             effect.ViewProjection = state.ViewProjection;
             effect.JitterNDC = state.TAAJitter; // un-jitter the velocity pass (0 when TAA off)
             effect.MipBias = FSO.Common.Utils.PPXDepthEngine.TAAMipBias; // sharper texture mips under TAA at scale<1
-            // Subworld ModelTranslation fix — see TerrainComponent.Draw / WallComponentRC.Draw.
+            // subworld ModelTranslation fix - see TerrainComponent.Draw
             var prevVP = state.PreviousViewProjection;
             if (state.Cameras.ModelTranslation.HasValue)
                 prevVP = Matrix.CreateTranslation(-state.Cameras.ModelTranslation.Value) * prevVP;
             effect.PreviousViewProjection = prevVP;
             gd.RasterizerState = RasterizerState.CullNone;
 
-            // Per-pixel motion blur / TAA: bind VelocityTarget as MRT1 *only* around the object loop below
-            // so non-velocity-aware shaders (terrain, sky, walls, avatars) can't write garbage to MRT1.
-            // (Earlier global MRT bind in SetPPXTarget caused alpha=1 + garbage velocity on every pixel.)
+            // bind VelocityTarget as MRT1 only around the object loop - non-velocity-aware shaders
+            // would write garbage to MRT1
             var velocityRT = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget();
             bool useVelocity = velocityRT != null;
             if (useVelocity)
@@ -241,7 +224,7 @@ namespace FSO.LotView
 
             if (useVelocity)
             {
-                // Restore single-RT so the subsequent particle/debug/etc. draws don't write MRT1.
+                // restore single-RT so subsequent draws don't write MRT1
                 gd.SetRenderTarget(FSO.Common.Utils.PPXDepthEngine.GetBackbuffer());
             }
 
@@ -303,15 +286,9 @@ namespace FSO.LotView
             _2d.EndImmediate();
         }
 
-        // ---------------------------------------------------------------------------- GPU instancing
-        // Batches repeated identical objects (same DGRP mesh + same dynamic-sprite-flag state + same
-        // floor level) into single DrawInstancedPrimitives calls instead of one draw call per object. See
-        // DGRPRenderer.DrawInstanced and ObjectComponent.CanInstance/PrepareInstancedDraw. Purely additive:
-        // objects that aren't part of a big-enough group still go through the exact same obj.Draw() path
-        // as before, at the same relative position in the (already depth-ordered) draw list. Grouping only
-        // reorders instances of the SAME mesh+state relative to each other (never relative to a different
-        // group or a non-batched object), which is why this only applies to non-2D-sprite object draws -
-        // see the transparency/ordering trade-off noted where WorldConfig.ObjectInstancing is declared.
+        // GPU instancing: batch identical objects (same DGRP mesh + sprite flags + level) into single
+        // instanced draws (see DGRPRenderer.DrawInstanced, ObjectComponent.CanInstance). Grouping only
+        // reorders instances of the same mesh+state relative to each other; everything else draws as before.
 
         private const int InstanceBatchMinSize = 4;
 

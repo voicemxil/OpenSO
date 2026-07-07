@@ -227,11 +227,9 @@ float dpth(float4 v) {
 #endif
 }
 
-// PSOutputV emits color to COLOR0 (existing behavior) plus (0,0,0,0) to COLOR1, which — when MRT1 is
-// bound and ColorWriteChannels1=Alpha — invalidates the alpha mask at particle pixels so the motion
-// blur pass falls through them instead of smearing them along the velocity of whatever object was
-// rendered beneath. Note: rain uses BlendState.Additive which keeps prev alpha; rain still smears
-// somewhat. Per-RT blend would let us fix that cleanly but isn't exposed by MonoGame's BlendState.
+// Extra (0,0,0,0) to COLOR1: with MRT1 bound and ColorWriteChannels1=Alpha this invalidates the velocity
+// mask at particle pixels, so motion blur falls through them instead of smearing them along the velocity
+// of the object beneath. Rain (additive blend) keeps prev alpha — MonoGame exposes no per-RT blend.
 struct PSOutputV { float4 color : COLOR0; float4 velocity : COLOR1; };
 
 PSOutputV MainPS(ParticleOutput input)
