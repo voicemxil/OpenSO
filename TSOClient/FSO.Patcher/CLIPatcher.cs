@@ -25,7 +25,7 @@ namespace FSO.Patcher
 
         private void FSONotClosed()
         {
-            Console.WriteLine("Could not update OpenSO as write access could not be gained to the game files. Try running update.exe as an administrator.");
+            Console.WriteLine("OpenSO is still running, so the update can't be applied — the game holds its files locked. Close OpenSO completely (check for a background process) and run the update again.");
             Cleanup();
             Environment.Exit(0);
         }
@@ -89,7 +89,15 @@ namespace FSO.Patcher
                     patcher.OnStatus += Patcher_OnStatus;
                     if (PathProgress == 1)
                     {
-                        //first patch
+                        //first patch — wait for OpenSO to actually close before touching any game file
+                        //(overwriting locked files mid-run corrupts the install).
+                        var closed = await GameProcess.WaitForExit(TimeSpan.FromSeconds(60), Console.WriteLine);
+                        if (!closed)
+                        {
+                            PathProgress--;
+                            FSONotClosed();
+                            return;
+                        }
                         if (CleanPatch)
                         {
                             foreach (var file in Directory.GetFiles("Content/Patch/"))
@@ -105,7 +113,9 @@ namespace FSO.Patcher
                                 }
                             }
                         }
-                        var worked = await patcher.AttemptRename(8);
+                        // Secondary safety net (0 = full retry budget; passing 8 vs a max of 5 meant it
+                        // never actually retried). The wait above is the primary guard.
+                        var worked = await patcher.AttemptRename(0);
                         if (!worked)
                         {
                             PathProgress--;

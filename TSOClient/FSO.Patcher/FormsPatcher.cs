@@ -27,7 +27,7 @@ namespace FSO.Patcher
         private void FSONotClosed()
         {
             Invoke(new Action(() => {
-                var result = MessageBox.Show("Could not update OpenSO as write access could not be gained to the game files. Try running update.exe as an administrator.", "Error", MessageBoxButtons.RetryCancel);
+                var result = MessageBox.Show("OpenSO is still running, so the update can't be applied — its files are locked by the game.\r\n\r\nPlease close OpenSO completely, then click Retry. (If no game window is open, a background OpenSO process may still be running; end it in Task Manager.)", "Close OpenSO to continue", MessageBoxButtons.RetryCancel);
                 if (result == DialogResult.Cancel)
                 {
                     Cleanup();
@@ -112,7 +112,17 @@ namespace FSO.Patcher
                     patcher.OnStatus += Patcher_OnStatus;
                     if (PathProgress == 1)
                     {
-                        //first patch
+                        //first patch — don't touch a single game file until OpenSO has actually closed.
+                        //The in-client update path starts update.exe and then exits the game, so wait out
+                        //that hand-off; overwriting locked files mid-run corrupts the install.
+                        var closed = await GameProcess.WaitForExit(TimeSpan.FromSeconds(60),
+                            msg => Invoke(new Action(() => OverallStatus.Text = msg)));
+                        if (!closed)
+                        {
+                            PathProgress--;
+                            FSONotClosed();
+                            return;
+                        }
                         try
                         {
                             if (CleanPatch)
@@ -134,7 +144,9 @@ namespace FSO.Patcher
                         {
 
                         }
-                        var worked = await patcher.AttemptRename(8);
+                        // Secondary safety net (0 = use the full retry budget; passing 8 vs a max of 5
+                        // meant this never actually retried). The wait above is the primary guard.
+                        var worked = await patcher.AttemptRename(0);
                         if (!worked)
                         {
                             PathProgress--;
