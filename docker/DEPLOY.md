@@ -110,9 +110,11 @@ TSO_GAME_PATH=./tso/TSOClient
 ## 5. Bring it up
 
 The server image is **built by CI and published to GHCR**, so the box never compiles anything — it just
-pulls. The box tracks **`:release`** (set in docker-compose.yml): a stamped image cut ONLY when a
-`dev-#`/`alpha-#`/`beta-#` release is tagged (release.yml). Main-branch builds are `:edge` (docker.yml) —
-dirty, for testing, never deployed. From the repo root:
+pulls. The box tracks **`:release`** (set in docker-compose.yml): a stamped image cut when a release tag
+is pushed (release.yml). **Semantic version tags (`v0.1.0`, `v0.2.0`, …) are the current release scheme**;
+the legacy `dev-#`/`alpha-#`/`beta-#` tag naming still triggers a release too (kept so old tags keep
+resolving), but new releases should be cut as `vMAJOR.MINOR.PATCH`. Main-branch builds are `:edge`
+(docker.yml) — dirty, for testing, never deployed. `:release` is the channel you deploy. From the repo root:
 
 ```bash
 docker compose -f docker/docker-compose.yml pull        # download prebuilt server + mariadb + caddy
@@ -120,7 +122,7 @@ docker compose -f docker/docker-compose.yml up -d
 docker compose -f docker/docker-compose.yml logs -f freeso-server   # watch startup
 ```
 
-To ship new server code: cut a release (`git tag dev-2 && git push origin dev-2`) → release.yml builds the
+To ship new server code: cut a release (`git tag v0.2.2 && git push origin v0.2.2`) → release.yml builds the
 stamped image + moves `:release` → the box's nightly timer (below) pulls it. To deploy immediately instead
 of waiting for the timer: `docker compose pull && docker compose up -d` on the box.
 
@@ -192,16 +194,20 @@ creds or missing SPF/DKIM, not the server.
 
 ## 9. Point the game client at the server
 
-- **Quick:** on the client login screen press **F1** → set the API URL to `https://api.openso.org`.
-- **For distribution:** patch `TSOClient/FSO.UI/GlobalSettings.cs` defaults `GameEntryUrl` /
-  `CitySelectorUrl` from `http://api.freeso.org` to `https://api.openso.org`, then build/release the client
-  so players don't have to. (This is part of the not-yet-done updater-wiring workstream.)
+- **Quick:** on the client login screen press **F1** → set the API URL to your own server.
+- **For distribution:** `GameEntryUrl`/`CitySelectorUrl` in `TSOClient/FSO.UI/GlobalSettings.cs` already
+  default to `https://api.openso.org` — released client builds point at this server out of the box, no
+  patch needed. **Migration note:** an existing install with a saved config pointing at the old
+  `http://api.freeso.org` is auto-migrated to `https://api.openso.org` on load (see the `GameEntryUrl`
+  check in `GlobalSettings.cs`); if you're running your *own* server under a different domain, still set it
+  via F1 or your own client config.
 
 ---
 
 ## 9b. Updates — server auto-update + client patching
 
-Two independent mechanisms. Both key off the **same release tag** (`dev-#`/`alpha-#`/`beta-#`).
+Two independent mechanisms. Both key off the **same release tag** — a semver tag (`v0.2.1`, current
+scheme) or a legacy `dev-#`/`alpha-#`/`beta-#` tag (still supported, not recommended for new releases).
 
 ### Nightly warned restart (fully automatic, like FreeSO)
 
@@ -229,7 +235,7 @@ sudo systemctl start openso-update.service        # optional: run an update chec
 ```
 
 Because the box tracks `:release` (not `:edge`/main), it only ever moves to a **cut release**. Pin a
-specific version in docker-compose.yml (e.g. `:dev-1`) to freeze the box and skip auto-updates.
+specific version in docker-compose.yml (e.g. `:v0.2.1`) to freeze the box and skip auto-updates.
 
 ### Admin-driven deploy (update from the dashboard, on demand)
 
@@ -263,25 +269,39 @@ To **force** a plain restart (no image swap) off-schedule, use the same dialog w
 ### Client patching (the game updates itself at login)
 
 At login the client compares its `version.txt` to the version the **shard advertises** and, if behind,
-downloads the full client zip and relaunches via `update.exe`.
+downloads an update package — the full client zip, or an incremental patch if one exists for the gap (see
+below) — and relaunches via `update.exe`.
 
 **The advertised version tracks the running server automatically — never set it by hand.** On every boot
 the city server writes its own `version.txt` into the shard row (`CityServer.cs` → `Shards.UpdateStatus`),
 so `fso_shards.version_name`/`version_number` always equals the build the server actually is. That's why
-stamping the image (`VERSION` arg → `version.txt`) is essential: deploy the `dev-2` image and the shard
-advertises `dev-2` the moment it boots. A hand-set version that doesn't match the running build would tell
+stamping the image (`VERSION` arg → `version.txt`) is essential: deploy the `v0.2.2` image and the shard
+advertises `v0.2.2` the moment it boots. A hand-set version that doesn't match the running build would tell
 clients to "update" to a build the server isn't on — a patch loop. So patching needs only:
 
 - **The update URL** — already in `docker/config.json` (`userApi.updateUrl` →
   `…/releases/latest/download/OpenSO-client-win-x64.zip`), advertised as `FSOUpdateUrl`.
 - **A published release** matching the deployed image, so `releases/latest` actually serves that version's
-  client zip. (Deploy the image and publish the release together — if the server advertises `dev-2` but
-  `releases/latest` is still `dev-1`, outdated clients download `dev-1` and never catch up.)
+  client zip. (Deploy the image and publish the release together — if the server advertises `v0.2.2` but
+  `releases/latest` is still `v0.2.1`, outdated clients download `v0.2.1` and never catch up.)
 
 A client already on the advertised version sees no prompt; an older one patches up to it. **Caveat:** that
 single URL is win-x64 — in-game patching targets Windows; Linux/macOS players update through the launcher
-(which is per-platform). Smaller delta patches (vs. the full zip) need the admin-webapp update generator —
-a later workstream.
+(which is per-platform, see [update-manifest.md](../Documentation/update-manifest.md)).
+
+**Delta patches are automatic, no admin step needed.** At every UserApi startup, `UpdateReconciler` scans
+this repo's GitHub Releases for semver (`vX.Y.Z`) tags and populates the `fso_updates` chain (full zip +
+win-x64 incremental + manifest, all attached by `release.yml`'s `client-delta`/`client-manifest` jobs) that
+`GET /userapi/update` serves — so a Windows client several versions behind downloads only the incremental
+diffs, not a fresh full zip each time. This replaces FreeSO's old admin-webapp/GitHub-OAuth update-generator
+flow (still described in [Updates.md](../Documentation/Updates.md) for reference) — GitHub Releases are now
+the sole source of truth, nothing to configure beyond publishing releases normally.
+
+That reconciled chain lives under an **update branch** named by `updateBranch` in `docker/config.json`
+(shipped as `"dev"`). This is **not a git branch** — it's just the label of the `fso_update_branch` DB row
+the chain is stored under. Leave it as `dev` unless you specifically want to run more than one independent
+chain (e.g. to test a build against a subset of clients); renaming it starts a fresh chain from the next
+reconcile.
 
 ---
 
@@ -343,8 +363,8 @@ account is promoted (`UPDATE fso_users SET is_admin=1, is_moderator=1 WHERE user
 ## Notes
 
 - **Updates** are wired (§9b): the box auto-updates to the latest `:release` image nightly, and clients
-  patch themselves at login against the shard-advertised version. Delta (incremental) patches via the admin
-  update generator remain a later enhancement; today the client pulls the full release zip.
+  patch themselves at login against the shard-advertised version, via an automatically-reconciled delta
+  chain built from GitHub Releases (no admin update-generator step required).
 - **Backups:** the `mariadb_data` volume (DB) and `docker/nfs/` (lots/objects) are your state — snapshot both.
 - **Constraints (from the brief):** no cash donations, never redistribute TSO/copyrighted assets (hosts
   supply their own), keep the build open-source (MPL).

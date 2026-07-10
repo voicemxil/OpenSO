@@ -39,9 +39,13 @@ has loaded TS1 objects and other resources.
 
 # Building & deploying
 
-* **Build:** one solution at `TSOClient/FreeSO.sln` (.NET 9 / MonoGame). The desktop client builds from
+* **SDK:** OpenSO targets **.NET 10** across the client and server (see Prerequisites below). One
+  legacy/experimental dev tool, `FSO.TAALab` (a standalone TAA-tuning harness, not part of the shipped
+  client or server), still targets .NET 9 — it isn't part of the production build.
+* **Build:** one solution at `TSOClient/FreeSO.sln` (.NET 10 / MonoGame). The desktop client builds from
   `FSO.Windows` (Windows) and `FSO.Unix` (macOS/Linux), producing **`OpenSO.exe`**; the server is
-  `FSO.Server.Core`.
+  `FSO.Server.Core`. CI (`.github/workflows/dotnet.yml`, `release.yml`) builds and publishes both on every
+  supported platform.
 * **Server deployment:** see [`docker/DEPLOY.md`](docker/DEPLOY.md) for the full from-zero runbook
   (Docker stack: game server + MariaDB + Caddy HTTPS, DNS, and email-verification registration).
 * **Website:** the static site (landing page, news, account registration) lives in its own repo and is
@@ -50,15 +54,16 @@ has loaded TS1 objects and other resources.
 # Contributing
 
 You can contribute by testing features in the latest releases, filing bugs, and joining the discussion.
-For engine internals, the upstream FreeSO documentation is still the best reference:
+See [`Documentation/Building FreeSO.md`](<Documentation/Building FreeSO.md>) for the current build
+process. For engine internals, the upstream FreeSO documentation is still a useful reference:
 
 * [Project Structure (upstream)](https://github.com/riperiperi/FreeSO/wiki/Project-structure)
 * [Coding Standards (upstream)](https://github.com/riperiperi/FreeSO/wiki/Coding-standards)
 
 ## Prerequisites
 
-* [.NET 9 SDK](https://dotnet.microsoft.com/download)
-* [MonoGame](http://www.monogame.net)
+* [.NET 10 SDK](https://dotnet.microsoft.com/download) — the required SDK for building the client and
+  server. (MonoGame itself is pulled in via NuGet package references, not a separate install.)
 
 # License
 

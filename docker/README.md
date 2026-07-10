@@ -1,14 +1,20 @@
-# FreeSO Server Docker Setup
+# OpenSO Server Docker Setup
 
-Runs the FreeSO server and MariaDB database via Docker Compose.
+Runs the OpenSO server and MariaDB database via Docker Compose. This is the quick/local-dev version —
+for the full from-zero public deployment (DNS, HTTPS, email verification, auto-update), see
+[`docker/DEPLOY.md`](DEPLOY.md).
 
 ## Usage
 
-Run from the repository root `FreeSO/`:
+Run from the repository root:
 
 ```bash
-docker compose -f docker/docker-compose.yml up --build -d
+docker compose -f docker/docker-compose.yml pull   # fetch the prebuilt server image + mariadb + caddy
+docker compose -f docker/docker-compose.yml up -d
 ```
+
+The server image is built by CI and published to GHCR (`ghcr.io/voicemxil/openso-server`) — the compose
+file pulls it rather than building locally, so there's no `--build` step.
 
 Stop the server:
 
@@ -21,25 +27,23 @@ docker compose -f docker/docker-compose.yml down
 Edit `docker/config.json` before starting:
 
 - **`secret`** - Leave as `GENERATE` for auto-generation by the container, or set your own hex string
-- **`public_host`** - Change if hosting remotely (defaults to `localhost`)
+- **`services.*.public_host`** - Each service (tasks, cities, lots) has its own `public_host`; change these
+  if hosting remotely (defaults to `game.openso.org:<port>`)
 - **`database.connectionString`** - Update if you changed MariaDB credentials in `docker-compose.yml`
 
-Update `docker-compose.yml` to point to your local TSO client installation:
+Point the stack at your local TSO client installation — place the files at `docker/tso/TSOClient` (so
+`docker/tso/TSOClient/tuning.dat` exists), or set the `TSO_GAME_PATH` environment variable (e.g. in a
+`docker/.env` file) to wherever they live:
 
-Windows:
-```yaml
-- C:/Path/To/Your/TSOClient:/game:ro
+```env
+TSO_GAME_PATH=/path/to/your/TSOClient
 ```
-MacOS:
-```yaml
-- ~/Documents/The Sims Online/TSOClient:/game:ro
-```
-
 
 ## What's Running
 
-- **FreeSO server** - Game server on ports 9000 (API), 33100-33101 (city), 34100-34101 (lots), 35100-35101 (tasks)
+- **OpenSO server** (compose service `freeso-server`) - Game server on ports 9000 (API), 33100-33101 (city), 34100-34101 (lots), 35100-35101 (tasks)
 - **MariaDB 11** - Database with persistent storage in a Docker volume
+- **Caddy** - HTTPS reverse proxy in front of the API (see `docker/Caddyfile`)
 
 The database is automatically initialized on first run.
 

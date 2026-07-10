@@ -6,7 +6,10 @@ We recommend that you use MariaDB as your database server, as it has higher perf
 
 ## MariaDB setup
 
-The version of MariaDB used for the official server was MariaDB 10.5. Newer versions seem to be incompatible with the current version of MySQL.Data, which cannot be upgraded due to .NET Framework version requirements.
+The official FreeSO server ran MariaDB 10.5. The server now targets .NET 10 and a current MySQL.Data
+connector, so there's no longer a framework-driven ceiling on the MariaDB version — the Docker deployment
+(`docker/docker-compose.yml`) runs MariaDB 11. If you're setting up outside Docker, a recent MariaDB
+release is fine.
 
 On Windows Server, you can find an MSI installer at https://mariadb.org/download/ that installs a MariaDB service that runs automatically whenever a user is logged in.
 
