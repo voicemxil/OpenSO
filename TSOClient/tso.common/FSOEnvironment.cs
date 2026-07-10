@@ -1,10 +1,37 @@
-﻿using System.Threading;
+﻿using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace FSO.Common
 {
     public static class FSOEnvironment
     {
         public static Thread GameThread;
+
+        /// <summary>
+        /// The .NET runtime identifier this build runs as, normalized to the RIDs release CI publishes:
+        /// win-x64 / linux-x64 / osx-x64 / osx-arm64 (or "&lt;os&gt;-&lt;arch&gt;" for anything else). Sent to the
+        /// server at login so it can return a platform-correct update payload, and used by the launcher to
+        /// pick this platform's package from the per-RID distribution manifest.
+        /// </summary>
+        public static string RID { get; } = GetRID();
+
+        private static string GetRID()
+        {
+            string os =
+                RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "win" :
+                RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "osx" :
+                RuntimeInformation.IsOSPlatform(OSPlatform.Linux) ? "linux" :
+                "unknown";
+            string arch = RuntimeInformation.ProcessArchitecture switch
+            {
+                Architecture.X64 => "x64",
+                Architecture.Arm64 => "arm64",
+                Architecture.X86 => "x86",
+                Architecture.Arm => "arm",
+                _ => RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()
+            };
+            return os + "-" + arch;
+        }
 
         public static string ContentDir = "Content/";
         public static string UserDir = "Content/";

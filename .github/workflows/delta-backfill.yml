@@ -44,3 +44,13 @@ jobs:
           dotnet run --project TSOClient/FSO.DeltaGen -c Release -- prev.zip curr.zip "${{ steps.ver.outputs.version }}" out
           gh release upload "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" \
             out/OpenSO-client-win-x64.incremental.zip out/OpenSO-client-win-x64.manifest.json --clobber
+
+      # Regenerate the per-RID distribution manifest so it reflects the just-backfilled Windows delta.
+      # Runs unconditionally: even with no predecessor (nothing to backfill) this refreshes the manifest's
+      # full-zip hashes. See Documentation/update-manifest.md.
+      - name: Regenerate + attach per-RID manifest
+        run: |
+          mkdir -p manifest-dl
+          gh release download "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" -D manifest-dl -p 'OpenSO-client-*' --clobber
+          python3 .github/scripts/gen-manifest.py "${{ steps.ver.outputs.version }}" "${{ steps.ver.outputs.prev }}" manifest-dl "$GITHUB_REPOSITORY" openso-manifest.json
+          gh release upload "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" openso-manifest.json --clobber

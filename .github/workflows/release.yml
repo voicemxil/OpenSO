@@ -30,6 +30,31 @@ permissions:
   packages: write   # required to push the server image to GHCR
 
 jobs:
+  # ---- Verification gate. The SAME tests dotnet.yml runs on every push/PR, run here BEFORE anything is
+  #      built or published so a regression can never reach a release: non-Windows RIDs getting the win-x64
+  #      update payload, a failed registration email reported as success, duplicate usable tokens, or a
+  #      broken/schema-invalid manifest generator. build-client, build-server and server-image all depend
+  #      on this, so a red test blocks the release (and the GHCR image push) entirely. Self-contained:
+  #      SQLite for the DB tests, no game content or MySQL.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Run .NET verification tests
+        run: dotnet test TSOClient/OpenSO.Tests.slnx -c Release
+      - name: Run manifest-generator tests
+        run: python3 .github/scripts/test_gen_manifest.py
+
   # ---- Compile effect shaders fresh from source on Windows (the only OS where MonoGame's effect compiler
   #      runs — it needs Wine on linux/osx). Produces Content/DX + Content/OGL; the client jobs download the
   #      matching set so no shipped client carries a stale .xnb (see .github/scripts/compile-shaders.sh).
@@ -79,7 +104,7 @@ jobs:
   #      is FSO.Unix (net10.0), which also produces OpenSO.exe. The launcher downloads the asset whose
   #      name contains "client" and runs OpenSO.exe.
   build-client:
-    needs: [ compile-shaders ]
+    needs: [ tests, compile-shaders ]
     strategy:
       fail-fast: false
       matrix:
@@ -246,6 +271,7 @@ jobs:
   # ---- Build the server for every supported platform. linux-x64 is the docker/Hetzner deploy target;
   #      win-x64 is also supported (FSO.Server.Core RuntimeIdentifiers) for Windows self-hosters.
   build-server:
+    needs: [ tests ]
     strategy:
       fail-fast: false
       matrix:
@@ -299,6 +325,7 @@ jobs:
   #      tracks (its nightly auto-update timer pulls `:release`, so prod only moves when a release is cut).
   #      main builds are `:edge` (docker.yml) and never deployed.
   server-image:
+    needs: [ tests ]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -374,6 +401,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Expose the resolved version + previous-version so client-manifest can reference the same delta
+    # base without recomputing it.
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      prev: ${{ steps.ver.outputs.prev }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -416,3 +448,32 @@ jobs:
           dotnet run --project TSOClient/FSO.DeltaGen -c Release -- prev.zip curr.zip "${{ steps.ver.outputs.version }}" out
           gh release upload "${{ steps.ver.outputs.version }}" -R "$GITHUB_REPOSITORY" \
             out/OpenSO-client-win-x64.incremental.zip out/OpenSO-client-win-x64.manifest.json --clobber
+
+  # ---- Build the per-RID client distribution manifest (openso-manifest.json) and attach it to the release
+  #      alongside the client zips. This is NOT fso_updates / OpenSO-client-win-x64.manifest.json (the
+  #      Windows-only in-game patch chain) — it's the platform-aware index the OpenSO Launcher consumes:
+  #      one entry per RID this release actually built, each with a SHA-256-verified full zip (and, for
+  #      Windows, the optional delta). Exact-RID match, no cross-platform fallback — see
+  #      Documentation/update-manifest.md. Runs after client-delta so the Windows delta is already attached
+  #      and can be referenced; reuses that job's resolved version + delta base.
+  client-manifest:
+    needs: [ client-delta ]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VER: ${{ needs.client-delta.outputs.version }}
+      PREV: ${{ needs.client-delta.outputs.prev }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Download this release's client artifacts
+        run: |
+          # Full zips (every RID), plus the win-x64 incremental if client-delta attached one. gen-manifest.py
+          # keys off the exact filenames, so extra matches (e.g. the delta's manifest.json) are harmless.
+          mkdir -p manifest-dl
+          gh release download "$VER" -R "$GITHUB_REPOSITORY" -D manifest-dl -p 'OpenSO-client-*' --clobber
+      - name: Generate + attach per-RID manifest
+        run: |
+          python3 .github/scripts/gen-manifest.py "$VER" "$PREV" manifest-dl "$GITHUB_REPOSITORY" openso-manifest.json
+          gh release upload "$VER" -R "$GITHUB_REPOSITORY" openso-manifest.json --clobber
