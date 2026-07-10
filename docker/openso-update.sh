@@ -6,9 +6,10 @@
 # schedule, 0 9 * * * UTC) — it broadcasts a 15-minute countdown to players and saves all lots before the
 # server exits, and `restart: unless-stopped` brings it back. This script (nightly systemd timer, ~09:30
 # UTC, just after that restart) only swaps in a NEW release image. The box tracks `:release`, which moves
-# ONLY when a dev-#/alpha-#/beta-# release is cut (release.yml) — main-branch (`:edge`) builds never reach
-# production. On a normal night `up -d` is a no-op (no restart); on a release night it's a brief swap on
-# an already-emptied server. See docker/DEPLOY.md "Updates".
+# ONLY when a release tag (semver `vX.Y.Z`, the current scheme, or a legacy dev-#/alpha-#/beta-# tag) is
+# cut (release.yml) — main-branch (`:edge`) builds never reach production. On a normal night `up -d` is a
+# no-op (no restart); on a release night it's a brief swap on an already-emptied server. See
+# docker/DEPLOY.md "Updates".
 set -euo pipefail
 
 # Where docker-compose.yml lives. Override with OPENSO_DIR if you cloned elsewhere.

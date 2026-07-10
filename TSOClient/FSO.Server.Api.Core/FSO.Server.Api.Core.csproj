@@ -10,6 +10,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Exposes internal test seams (e.g. InitialConnectController.IsWindowsClient) to the verification
+         test project. No effect on shipped behaviour. -->
+    <InternalsVisibleTo Include="FSO.Server.Api.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <None Remove="MailTemplates\MailBan.html" />
     <None Remove="MailTemplates\MailBase.html" />
     <None Remove="MailTemplates\MailPasswordReset.html" />

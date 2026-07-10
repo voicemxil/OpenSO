@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Automated verification gate for OpenSO. Covers the regression-prone behaviours added by prior work:
+      - platform-aware update refusal (InitialConnectController.IsWindowsClient)
+      - truthful registration email delivery (RegistrationController.CreateToken + ApiMail)
+      - duplicate-token prevention + retry (SqlEmailConfirmations.Create over SQLite)
+    Deliberately lean: net10.0, xunit, no mocking framework. Needs no game content or MySQL - the DB
+    tests run against a throwaway SQLite database, so CI can run this without any external services.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsPublishable>false</IsPublishable>
+    <!-- Reflection-based engine deps: never trim/AOT the test host. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishAot>false</PublishAot>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.2" />
+    <!-- Already used across the server DA layer; the DB test helpers issue raw SQL through it. -->
+    <PackageReference Include="Dapper" Version="2.1.66" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FSO.Server.Api.Core\FSO.Server.Api.Core.csproj" />
+    <ProjectReference Include="..\FSO.Server.Database\FSO.Server.Database.csproj" />
+  </ItemGroup>
+
+</Project>

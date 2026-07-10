@@ -82,7 +82,10 @@ namespace FSO.Client.Regulators
                             new InitialConnectServletRequest
                             {
                                 Ticket = AuthResult.Ticket,
-                                Version = "Version 1.1097.1.0"
+                                Version = "Version 1.1097.1.0",
+                                // Tell the server our platform so non-Windows clients aren't handed the
+                                // win-x64 in-game patch URL (they update through the launcher instead).
+                                RID = FSOEnvironment.RID
                             });
 
                         if (connectResult.Status == InitialConnectServletResultType.Authorized)

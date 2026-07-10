@@ -14,6 +14,13 @@ The builtin updater is a simple additional application called `update.exe` that 
 
 Updating the server is a little more complicated - you either do it manually by extracting your new build files over the game, or by using the more complicated delta patch system built into the game. See below for more information.
 
+> **Platform note.** The in-game updater (`update.exe`, the `fso_updates` delta chain, and the `updateUrl` /
+> `FSOUpdateUrl` payload) is **Windows-only** — it always ships a `win-x64` zip. Since the client sends its
+> RID at login, the server hands the update payload URL to Windows clients only; Linux/macOS clients are told
+> the target version but no package URL, and update through the OpenSO Launcher instead. Cross-platform
+> distribution is described by a separate per-RID release asset, `openso-manifest.json` — see
+> [update-manifest.md](./update-manifest.md).
+
 ## Simple Updates
 
 This mode is used when there is _no_ `updateID.txt` file, and no updates in the `fso_updates` table. Set `updateUrl` in the `userApi` config to the URL for a full client zip that the user can download to match the server version. This should contain the same `version.txt` file as your server, and ideally the same content to prevent errors and desyncs.

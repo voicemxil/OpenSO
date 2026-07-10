@@ -1,0 +1,23 @@
+<Solution>
+  <Folder Name="/tso.common/">
+    <Project Path="tso.common/FSO.Common.csproj" />
+  </Folder>
+  <Folder Name="/tso.content/">
+    <Project Path="tso.content/FSO.Content.csproj" />
+  </Folder>
+  <Folder Name="/tso.files/">
+    <Project Path="tso.files/FSO.Files.csproj" />
+  </Folder>
+  <Folder Name="/tso.vitaboy.model/">
+    <Project Path="tso.vitaboy.model/FSO.Vitaboy.csproj" />
+  </Folder>
+  <Project Path="../Other/libs/MSDFData/MSDFData.csproj" />
+  <Project Path="../Other/libs/TargaImagePCL/TargaImagePCL.csproj" />
+  <Project Path="FSO.Common.Domain/FSO.Common.Domain.csproj" />
+  <Project Path="FSO.Server.Api.Core.Tests/FSO.Server.Api.Core.Tests.csproj" />
+  <Project Path="FSO.Server.Api.Core/FSO.Server.Api.Core.csproj" />
+  <Project Path="FSO.Server.Common/FSO.Server.Common.csproj" />
+  <Project Path="FSO.Server.Database/FSO.Server.Database.csproj" />
+  <Project Path="FSO.Server.Domain/FSO.Server.Domain.csproj" />
+  <Project Path="FSO.Server.Protocol/FSO.Server.Protocol.csproj" />
+</Solution>

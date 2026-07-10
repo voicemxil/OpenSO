@@ -18,6 +18,12 @@ namespace FSO.Server.Api.Core.Controllers
     public class PasswordController
     {
         private const int EMAIL_CONFIRMATION_EXPIRE = 2 * 60 * 60; // 2 hrs
+        // Durable, per-email windowed cap on password-reset email SEND ATTEMPTS. Mirrors
+        // RegistrationController: counts every attempt that reaches the send (including failure-path retries
+        // whose token was deleted) so a failing SMTP host can't be looped, on top of the pending-confirmation
+        // check. DB-backed (fso_email_send_log) so it survives restarts and holds across instances.
+        internal const int EMAIL_SEND_MAX_PER_WINDOW = 5;       // max send attempts per email per window
+        internal const int EMAIL_SEND_WINDOW_SECS = 60 * 60;    // 1 hour
 
         #region Password reset
         [HttpPost]
@@ -201,6 +207,21 @@ namespace FSO.Server.Api.Core.Controllers
                     });
                 }
 
+                // Durable per-email windowed cap. Record THIS attempt and refuse, without sending, if the
+                // address has exceeded the cap in the current window. Counts attempts (not surviving tokens),
+                // so a failing send that deletes its token (below) still burns budget - closing the same
+                // tight-retry hole as the registration path. Placed after the account-existence check above,
+                // so a non-existent email is never recorded or rate-limited (it never reaches a send anyway),
+                // preserving the existing anti-oracle behaviour.
+                if (da.EmailSendLog.RecordAttempt(model.email, (int)ConfirmationType.password, EMAIL_SEND_WINDOW_SECS) > EMAIL_SEND_MAX_PER_WINDOW)
+                {
+                    return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
+                    {
+                        error = "password_reset_failed",
+                        error_description = "email_rate_limited"
+                    });
+                }
+
                 uint expires = Epoch.Now + EMAIL_CONFIRMATION_EXPIRE;
 
                 // create new email confirmation
@@ -211,7 +232,8 @@ namespace FSO.Server.Api.Core.Controllers
                     expires = expires
                 });
 
-                // send confirmation email with generated token
+                // send confirmation email with generated token. SendPasswordResetMail blocks until the SMTP
+                // send actually succeeds or fails (see ApiMail.Send), so this reflects real delivery.
                 bool sent = api.SendPasswordResetMail(model.email, user.username, token, model.confirmation_url, expires);
 
                 if (sent)
@@ -222,10 +244,17 @@ namespace FSO.Server.Api.Core.Controllers
                     });
                 }
 
-                return ApiResponse.Json(HttpStatusCode.OK, new
+                // Delivery failed. Drop the just-created (undelivered) confirmation so the user isn't
+                // stuck behind the "confirmation_pending" check above until it expires, and so no phantom
+                // pending reset is left dangling. Mirrors RegistrationController.CreateToken's
+                // truthful-delivery contract: the previous {status:"email_failed"} shape looked like a
+                // success response and left the orphaned token in place, cooldown-blocking retries.
+                da.EmailConfirmations.Remove(token);
+
+                return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
                 {
-                    // success, but failed to send the token email...
-                    status = "email_failed"
+                    error = "password_reset_failed",
+                    error_description = "email_send_failed"
                 });
             }
         }

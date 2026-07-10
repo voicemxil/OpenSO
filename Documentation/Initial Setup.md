@@ -1,36 +1,35 @@
 # Initial Setup
 
-Setting up the FreeSO server is very similar to setting up the FreeSO client, to a point. You need the following to run it at all:
+Setting up the OpenSO server is very similar to setting up the OpenSO client, to a point. You need the following to run it at all:
 
-- .NET Core 2.2.207
+- .NET 10 SDK (or, for a framework-dependent server binary, the .NET 10 ASP.NET Core Runtime).
 - A compiled `FSO.Server.Core`.
 - A copy of The Sims Online, in a folder specified by `gameLocation` in `config.json`.
 - An "nfs" directory where you want the server to store lot and object saves.
 - Create and fill out `config.json`.
 
-## .NET Core 2.2
+## .NET 10
 
-You can find installers for Windows and instructions for Linux here:
+You can find installers for Windows and instructions for Linux/macOS here:
 
-https://dotnet.microsoft.com/en-us/download/dotnet/2.2
+https://dotnet.microsoft.com/download/dotnet/10.0
 
-FreeSO is built with .NET Framework 4.5, but the server runs on .NET Core 2.2 for improved compatibility with Linux and to use the new ASP.NET backend.
+The client and server both target .NET 10 (see [Building FreeSO](./Building%20FreeSO.md) for the full
+build story) — there's no longer a split between an older .NET Framework client and a separate .NET Core
+server runtime.
 
 ## FSO.Server.Core
 
-The FreeSO code should work on all platforms, assuming that you have dotnet core sdk installed. You can find the latest builds of the official repository using these cloudflare handlers. Eventually, these will move to a GitHub release.
-
-### Client
-
-https://fso-builds.riperiperi.workers.dev/
-
-### Server
-
-https://fso-builds.riperiperi.workers.dev/?mode=server
+Prebuilt client and server zips (per platform) are published as GitHub Releases at
+[github.com/voicemxil/OpenSO/releases](https://github.com/voicemxil/OpenSO/releases) — these are
+self-contained and don't require the .NET SDK/runtime to be installed separately. See
+[Updates.md](./Updates.md) for how the server advertises and serves update versions, and
+[docker/DEPLOY.md](../docker/DEPLOY.md) for the Docker-based deployment path (a prebuilt server image is
+also published to GHCR on every release).
 
 ### Custom Build
 
-If you wish to make code changes to the client or the server, see the Building FreeSO documentation.
+If you wish to make code changes to the client or the server, see the [Building FreeSO](./Building%20FreeSO.md) documentation.
 
 ## The Sims Online
 
