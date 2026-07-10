@@ -149,6 +149,9 @@ namespace FSO.LotView
         public virtual void InitBlueprint(Blueprint blueprint)
         {
             this.Blueprint = blueprint;
+            // new/changed lot on this same World instance: reprojecting the previous lot's image into
+            // it would ghost — reset temporal history (owner tracking can't see same-instance swaps)
+            PPXDepthEngine.InvalidateTAAHistory("blueprint init");
             Platform?.Dispose();
             InitDefaultGraphicsMode();
             State.ProjectTilePos = EstTileAtPosWithScrollHeight;
@@ -671,10 +674,18 @@ namespace FSO.LotView
             State.BeginFrameForVelocity();
             // jitter only when TAA is fully operational - jitter without accumulation reads as constant
             // shake. 0.5 = the reference ±0.5px footprint (0.25 under-sampled the pixel).
+            // TAA's real dependencies are the resolve shader + VELOCITY RENDERING + history (motion
+            // blur is unrelated — its effect was removed from these gates). Strict subset of the
+            // resolve: TaaCapable + 3D matches ChangeAAMode's taaOn, TAAFunc != null confirms the
+            // resolve is actually installed (it isn't while the config is stale, e.g. the frame a
+            // hidden world regains visibility before Draw re-applies its AA), and the velocity/history
+            // targets are the same ones TAAResolve's contract requires — so a frame that would pass
+            // through un-resolved is also never jittered.
             const float JITTER_PIXELS = 0.5f;
-            bool taaJitterReady = WorldConfig.Current.TAA
+            bool taaJitterReady = TaaCapable(WorldConfig.Current)
                 && State.CameraMode == CameraRenderMode._3D
-                && WorldContent.TAA != null
+                && FSO.Common.Utils.PPXDepthEngine.TAAFunc != null
+                && FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null
                 && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
             if (taaJitterReady)
             {
@@ -1103,6 +1114,23 @@ namespace FSO.LotView
             return thumb;
         }
 
+        /// <summary>
+        /// THE TAA capability predicate: config on + resolve shader loaded. Every TAA gate — MSAA
+        /// stripping, resolve wiring (here and ConfigureCityAA), and the PreDraw jitter — derives from
+        /// this one test so they can never disagree (a jitter/resolve split ships constant shake).
+        /// TAA and motion blur are DECOUPLED: they merely share the velocity MRT (wantVelocity is the
+        /// union of their needs). The old predicates also required WorldContent.MotionBlur, a vestige
+        /// from when velocity was motion-blur plumbing: the resolve never uses that effect (velocity
+        /// is a scene-shader MRT), and a missing MotionBlur.xnb was silently disabling TAA while the
+        /// jitter gate — which never checked it — kept jittering. Lot callers add the 3D camera check;
+        /// jitter additionally requires the resolve to actually be wired (TAAFunc) with the velocity
+        /// and history targets allocated — the same inputs the resolve's frame contract demands.
+        /// </summary>
+        private static bool TaaCapable(WorldConfig cfg)
+        {
+            return cfg.TAA && WorldContent.TAA != null;
+        }
+
         public void ChangeAAMode(GraphicsDevice gd)
         {
             // a hidden world must not reconfigure the shared PPXDepthEngine (it would fight the city's
@@ -1128,8 +1156,8 @@ namespace FSO.LotView
             // TAA supersedes MSAA (industry standard). The velocity MRT must match the scene target's sample
             // count, so scene MSAA forces a MULTISAMPLED velocity buffer — and its resolve AVERAGES fg+bg
             // velocity/depth/mask at exactly the silhouettes TAA's dilation + disocclusion depend on (mixed
-            // motion vectors = edge ghosting). Uses the FULL taaReady predicate (incl. MotionBlur content)
-            // so a missing shader can't strip MSAA while TAA never actually runs.
+            // motion vectors = edge ghosting). Uses the SAME TaaCapable predicate as the resolve wiring and
+            // the jitter gate, so a missing shader can't strip MSAA while TAA never actually runs.
             // TAA now runs on both backends: the full Cosmic TAA/TAAU technique on DirectX, and the
             // simpler TAALite technique on OpenGL (TAAResolve.cs picks the technique by backend). GL's
             // ps_3_0 resolve previously produced a persistent reprojection "warble" that extensive
@@ -1137,8 +1165,7 @@ namespace FSO.LotView
             // on GL) — the pragmatic fix is TAALite, a low-branching port of this project's pre-R2/
             // pre-TAAU baseline TAA that sidesteps the suspected MojoShader branch-misevaluation bug
             // class behind the warble (see TAA.fx for the full writeup).
-            bool taaOn = cfg.TAA && State.CameraMode == CameraRenderMode._3D
-                         && WorldContent.TAA != null && WorldContent.MotionBlur != null;
+            bool taaOn = TaaCapable(cfg) && State.CameraMode == CameraRenderMode._3D;
             if (taaOn) msaa = 0;
             // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
             // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
@@ -1182,6 +1209,8 @@ namespace FSO.LotView
 
             bool taaReady = taaOn; // same predicate the MSAA force above used
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
+            // this world now feeds the shared history; a presenter change (city <-> lot) invalidates it
+            if (taaReady) PPXDepthEngine.TAAHistory.DeclareOwner(this);
 
             // RCAS sharpen: optional final pass at any render scale (separate from the downscale resolve)
             bool sharpen = cfg.Sharpen > 0 && cfg.SharpenAmount > 0f && WorldContent.FSR != null;
@@ -1244,6 +1273,8 @@ namespace FSO.LotView
         private static int _CityLastMSAA = -1;
         private static float _CityLastSSAA = -1f;
         private static int _CityLastW = -1, _CityLastH = -1;
+        // identity token for the city view as a TAA history owner (the lot path passes its World instance)
+        private static readonly object _CityTAAOwner = new object();
         public static void ConfigureCityAA(GraphicsDevice gd)
         {
             PPXDepthEngine.InitGD(gd);
@@ -1259,7 +1290,7 @@ namespace FSO.LotView
             // msaa (not just the engine field) so the _CityLastMSAA change-detect cache below stays coherent.
             // Runs on both backends now (see ChangeAAMode): DirectX uses the full Cosmic TAA/TAAU
             // technique, GL uses the simpler TAALite technique (picked by TAAResolve.cs).
-            bool cityTaaOn = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null;
+            bool cityTaaOn = TaaCapable(cfg);
             if (cityTaaOn) msaa = 0;
             // Cosmic TAAU in the city: enabled now that Terrain.Draw publishes the city's jitter to
             // PPXDepthEngine.TAAJitterNDC each frame (same M31/M32 convention as the lot), giving the TAAU
@@ -1318,9 +1349,11 @@ namespace FSO.LotView
             PPXDepthEngine.MotionBlurFunc = motionBlur3D ? PerPixelMotionBlur.Draw : null;
 
             // Terrain.Draw applies the matching projection jitter whenever TAAFunc is set
-            bool taaReady = cfg.TAA && WorldContent.TAA != null && WorldContent.MotionBlur != null
+            bool taaReady = cityTaaOn
                             && PPXDepthEngine.GetVelocityTarget() != null && PPXDepthEngine.GetHistoryPrev() != null;
             PPXDepthEngine.TAAFunc = taaReady ? TAAResolve.Draw : null;
+            // the city now feeds the shared history; a presenter change (lot <-> city) invalidates it
+            if (taaReady) PPXDepthEngine.TAAHistory.DeclareOwner(_CityTAAOwner);
             PPXDepthEngine.EnableAOTargets(false); //AO is never used in the city view
             PPXDepthEngine.AOFunc = null;
 

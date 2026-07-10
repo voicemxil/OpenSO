@@ -1,13 +1,18 @@
 namespace FSO.LotView.Utils
 {
     /// <summary>
-    /// SINGLE SOURCE OF TRUTH for the TAA_Core (full Cosmic TAA/TAAU resolve) tuning constants that were
-    /// promoted from shader literals to uniforms (see the "LIVE-TUNING UNIFORMS" block in TAA.fx).
-    /// TAAResolve.Draw uploads every one of these each frame via the null-safe Parameters[...]?.SetValue
-    /// pattern, so an older TAA.xnb without the uniforms cannot crash (it just keeps its baked defaults,
-    /// which are identical to these values). The FSO.TAALab harness keeps its own mutable copy of the same
-    /// defaults for interactive tuning; once a set is validated in the lab, paste it here to ship it.
-    /// The values below ARE the pre-promotion literals — shipping behavior is bit-identical.
+    /// THE canonical TAA tuning preset — the single source of truth for every promoted resolve constant
+    /// (see the "LIVE-TUNING UNIFORMS" block in TAA.fx). Three consumers, none of which may hold their
+    /// own copy of a value:
+    ///  * The game: TAAResolve.UploadTunables uploads every public static float here each frame via
+    ///    reflection ("X" -> uniform "TuneX"; "LiteX" -> "LiteX"), and audits the loaded effect once —
+    ///    a missing uniform or a baked shader default that differs from this file is reported instead
+    ///    of silently retuning.
+    ///  * The lab: FSO.TAALab source-links this file (no tso.* project reference) and initializes its
+    ///    live Tunables + reset table from these statics, so lab sessions always start from SHIPPED
+    ///    values. Once a set is validated in the lab, paste it here (press P there for a ready block).
+    ///  * The shader: TAA.fx float initializers are FALLBACK ONLY (a stale xnb / skipped upload) and
+    ///    must be kept equal to this file; the runtime audit above flags any drift.
     /// TAALite's own tunables live at the bottom (Lite* — promoted 2026-07-07); the Tune* set above
     /// is TAA_Core-only.
     /// </summary>
@@ -53,7 +58,9 @@ namespace FSO.LotView.Utils
         public static float GammaMotionDecay = 0.6f;
         // blend *= lerp(1, confMul, saturate(minN / ConfFadeN)) — evidence depth arming the off-phase throttle
         public static float ConfFadeN = 20.0f;
-        // growK = agreeK * lerp(1, lerp(GrowOffPhase, 1, testify), saturate(prevN / 8)) — off-phase growth discount floor
+        // growK = agreeK * lerp(1, lerp(GrowOffPhase, 1, testify), saturate(prevN / 8)) — off-phase growth discount floor.
+        // Keep >= 0.25: meta N is RGBA8-quantized (1 LSB ~ 0.5 N), so growth increments below ~0.25/frame
+        // round to the same code point — values under the floor mean "no growth", not slower growth.
         public static float GrowOffPhase = 0.3f;
         // deepCap = lerp(DeepCapBase, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio)) — deep-end memory cap
         public static float DeepCapBase = 0.992f;

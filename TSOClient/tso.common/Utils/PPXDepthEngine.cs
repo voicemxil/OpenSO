@@ -16,12 +16,11 @@ namespace FSO.Common.Utils
         // motion blur tile intermediates (McGuire 2012), at velocity-res / MB_TILE_SIZE
         private static RenderTarget2D MBTileMax, MBNeighborMax;
         public const int MB_TILE_SIZE = 20;
-        private static RenderTarget2D HistoryA, HistoryB; //TAA history ping-pong (RGB color, A depth)
-        // TAA meta ping-pong, swapped in lock-step with History (R = accumulation count N, GB = prev normal encode)
-        private static RenderTarget2D MetaA, MetaB;
-        private static bool _HistoryAIsPrev; //which buffer holds last frame's TAA output (governs History + Meta)
-        // true when HistoryA/B are HalfVector4; TAAResolve keys DepthRejectParams off this for the RGBA8 fallback
-        public static bool HistoryIsFP16 { get; private set; }
+        // TAA history/meta ping-pong + explicit layout/invalidation state (see TemporalHistoryState).
+        // The Get*/Swap/EnableHistoryTargets members below are thin forwards kept for existing callers.
+        public static readonly TemporalHistoryState TAAHistory = new TemporalHistoryState();
+        // true when history is HalfVector4; TAAResolve keys DepthRejectParams off this for the RGBA8 fallback
+        public static bool HistoryIsFP16 => TAAHistory.IsFP16;
         private static SpriteBatch SB;
         public static float SSAA = 1f; //render scale: >1 supersample (downsample resolve), <1 upscale, 1 native
         public static int MSAA = 0;
@@ -287,67 +286,31 @@ namespace FSO.Common.Utils
         // TAA history ping-pong: read "prev", write "curr", SwapHistory toggles roles each frame.
         public static void EnableHistoryTargets(bool enable)
         {
-            if (!enable)
-            {
-                if (HistoryA != null) { HistoryA.Dispose(); HistoryA = null; }
-                if (HistoryB != null) { HistoryB.Dispose(); HistoryB = null; }
-                if (MetaA != null) { MetaA.Dispose(); MetaA = null; }
-                if (MetaB != null) { MetaB.Dispose(); MetaB = null; }
-                return;
-            }
-            if (GD == null) return;
+            if (enable && GD == null) return;
             // history/meta must match the surface TAA resolves on 1:1 - native normally and under TAAU,
             // render-res under FSR1 (TAA runs before the EASU upscale, see TAASkipFinalBlit). Callers must
             // set TAAUEnabled and run InitScreenTargets first.
-            int w = System.Math.Max(1, GD.Viewport.Width);
-            int h = System.Math.Max(1, GD.Viewport.Height);
-            if (SSAA < 0.999f && !TAAUEnabled && Backbuffer != null)
+            int w = 1, h = 1;
+            if (enable)
             {
-                w = Backbuffer.Width;
-                h = Backbuffer.Height;
-            }
-            if (HistoryA == null || HistoryA.Width != w || HistoryA.Height != h)
-            {
-                HistoryA?.Dispose();
-                HistoryB?.Dispose();
-                MetaA?.Dispose();
-                MetaB?.Dispose();
-                // fp16 history: RGBA8 quantized the packed depth (false disocclusions) and stalled color
-                // accumulation at one 8-bit LSB. Fall back to Color where HalfVector4 isn't renderable;
-                // TAAResolve keeps the blunted reject tuning on that path.
-                try
+                w = System.Math.Max(1, GD.Viewport.Width);
+                h = System.Math.Max(1, GD.Viewport.Height);
+                if (SSAA < 0.999f && !TAAUEnabled && Backbuffer != null)
                 {
-                    HistoryA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                    HistoryB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                    HistoryIsFP16 = true;
+                    w = Backbuffer.Width;
+                    h = Backbuffer.Height;
                 }
-                catch
-                {
-                    HistoryA?.Dispose(); HistoryB?.Dispose();
-                    HistoryA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                    HistoryB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                    HistoryIsFP16 = false;
-                }
-                MetaA = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                MetaB = new RenderTarget2D(GD, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                _HistoryAIsPrev = true;
-
-                // clear to defined contents so the first TAA frame can't read garbage: meta (0,127,127,0)
-                // = N=0, prev-velocity ~zero, no oscillation evidence
-                var prevRTs = GD.GetRenderTargets();
-                var metaClear = new Color(0, 127, 127, 0);
-                GD.SetRenderTarget(HistoryA); GD.Clear(Color.Transparent);
-                GD.SetRenderTarget(HistoryB); GD.Clear(Color.Transparent);
-                GD.SetRenderTarget(MetaA); GD.Clear(metaClear);
-                GD.SetRenderTarget(MetaB); GD.Clear(metaClear);
-                if (prevRTs != null && prevRTs.Length > 0) GD.SetRenderTargets(prevRTs); else GD.SetRenderTarget(null);
             }
+            TAAHistory.Ensure(GD, enable, w, h);
         }
-        public static RenderTarget2D GetHistoryPrev() => _HistoryAIsPrev ? HistoryA : HistoryB;
-        public static RenderTarget2D GetHistoryCurr() => _HistoryAIsPrev ? HistoryB : HistoryA;
-        public static RenderTarget2D GetMetaPrev() => _HistoryAIsPrev ? MetaA : MetaB;
-        public static RenderTarget2D GetMetaCurr() => _HistoryAIsPrev ? MetaB : MetaA;
-        public static void SwapHistory() { _HistoryAIsPrev = !_HistoryAIsPrev; }
+        /// <summary>Reset TAA history at the next resolve (camera cut, teleport, world switch, or any
+        /// change the layout signature in TemporalHistoryState can't observe).</summary>
+        public static void InvalidateTAAHistory(string reason) => TAAHistory.Invalidate(reason);
+        public static RenderTarget2D GetHistoryPrev() => TAAHistory.Prev;
+        public static RenderTarget2D GetHistoryCurr() => TAAHistory.Curr;
+        public static RenderTarget2D GetMetaPrev() => TAAHistory.MetaPrev;
+        public static RenderTarget2D GetMetaCurr() => TAAHistory.MetaCurr;
+        public static void SwapHistory() => TAAHistory.Swap();
 
         private static RenderTarget2D ActiveColor;
         private static RenderTarget2D ActiveDepth;
@@ -713,10 +676,16 @@ namespace FSO.Common.Utils
                 device.PresentationParameters.BackBufferHeight,
                 out width, out height);*/
 
-            // Create our render target
+            // Honor the caller's dformat: this previously hardcoded Depth24Stencil8, silently attaching
+            // a depth/stencil buffer to every target that asked for None (ResolveTarget/2,
+            // RenderPostTarget, BackbufferDepth, UI cache targets — ~4 bytes/px of pure VRAM waste each).
+            // EXCEPTION — mobile keeps the old behavior: under SoftwareDepth, RenderPPXDepth runs stencil
+            // ops against whatever color target is bound, and the non-MRT path depth-tests against the
+            // packed-depth color target; both relied on every target having D24S8 regardless of request.
+            if (FSOEnvironment.SoftwareDepth || !FSOEnvironment.UseMRT) dformat = DepthFormat.Depth24Stencil8;
             return new RenderTarget2D(device,
                 width, height, (numberLevels > 1), surface,
-                DepthFormat.Depth24Stencil8, multisample, RenderTargetUsage.PreserveContents);
+                dformat, multisample, RenderTargetUsage.PreserveContents);
         }
     }
 }

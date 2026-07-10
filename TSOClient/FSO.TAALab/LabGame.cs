@@ -4,6 +4,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Microsoft.Xna.Framework.Input;
 using System.Globalization;
 using System.Text;
+using FSO.LotView.Utils; // TAATuning — the canonical tuning preset, source-linked (see csproj)
 using NVector2 = System.Numerics.Vector2;
 
 namespace FSO.TAALab
@@ -165,49 +166,50 @@ namespace FSO.TAALab
                  * Matrix.CreateTranslation(2f * jpx.X / rw, 2f * jpx.Y / rh, 0f);
         }
 
-        // --- live tuning values: mutable copies of the TAATuning defaults (keep in sync with
-        //     TSOClient/tso.world/Utils/TAATuning.cs — press P for a ready-to-paste block). ---
+        // --- live tuning values: initialized FROM the canonical preset (TAATuning.cs, source-linked
+        //     into this project — see the csproj). The lab can no longer drift from shipped defaults:
+        //     a fresh Tunables IS the shipped tuning. Press P for a ready-to-paste TAATuning block. ---
         private class Tunables
         {
-            public float MotionBoostFloor = 0.12f;
-            public float MotionBoostMax = 0.22f;
-            public float StillGateFloor = 0.25f;
-            public float MoveGateLo = 0.6f;
-            public float MoveGateHi = 2.0f;
-            public float RespEnd = 0.60f;
-            public float MotionTrustCap = 0.72f;
-            public float MotionClampTighten = 0.72f;
-            public float RawSoftenOnset = 0.12f;
-            public float RawSoftenSlope = 2.2f;
-            public float RawSoftenMotionSup = 0.85f;
-            public float Gamma = 1.5f;
-            public float TexDetailFloor = 0.28f;
-            public float ConfFloor = 0.14f;
-            public float RingLo = 0.03f;
-            public float RingHi = 0.10f;
+            public float MotionBoostFloor = TAATuning.MotionBoostFloor;
+            public float MotionBoostMax = TAATuning.MotionBoostMax;
+            public float StillGateFloor = TAATuning.StillGateFloor;
+            public float MoveGateLo = TAATuning.MoveGateLo;
+            public float MoveGateHi = TAATuning.MoveGateHi;
+            public float RespEnd = TAATuning.RespEnd;
+            public float MotionTrustCap = TAATuning.MotionTrustCap;
+            public float MotionClampTighten = TAATuning.MotionClampTighten;
+            public float RawSoftenOnset = TAATuning.RawSoftenOnset;
+            public float RawSoftenSlope = TAATuning.RawSoftenSlope;
+            public float RawSoftenMotionSup = TAATuning.RawSoftenMotionSup;
+            public float Gamma = TAATuning.Gamma;
+            public float TexDetailFloor = TAATuning.TexDetailFloor;
+            public float ConfFloor = TAATuning.ConfFloor;
+            public float RingLo = TAATuning.RingLo;
+            public float RingHi = TAATuning.RingHi;
             // structural constants (2026-07-07 promotion — the full-vs-lite haze/ghost hunt)
-            public float DirectClampMix = 0.75f;
-            public float KarisFade = 1.0f;
-            public float GammaMotionDecay = 0.6f;
-            public float ConfFadeN = 20.0f;
-            public float GrowOffPhase = 0.3f;
-            public float DeepCapBase = 0.992f;
+            public float DirectClampMix = TAATuning.DirectClampMix;
+            public float KarisFade = TAATuning.KarisFade;
+            public float GammaMotionDecay = TAATuning.GammaMotionDecay;
+            public float ConfFadeN = TAATuning.ConfFadeN;
+            public float GrowOffPhase = TAATuning.GrowOffPhase;
+            public float DeepCapBase = TAATuning.DeepCapBase;
             // TAALite tunables (take effect ONLY under the "TAALite" technique — 2026-07-07 promotion;
             // canonical defaults/comments: TAATuning.cs bottom section)
-            public float LiteGamma = 1.5f;
-            public float LiteGammaScale = 2.0f;
-            public float LiteDeepCap = 0.985f;
-            public float LiteRespEnd = 0.68f;
-            public float LiteMotionBoost = 0.35f;
-            public float LiteConfFloor = 0.14f;
-            public float LiteMoveGateLo = 0.6f;
-            public float LiteMoveGateHi = 2.0f;
-            public float LiteHonestLo = 0.65f;
-            public float LiteHonestHi = 0.98f;
+            public float LiteGamma = TAATuning.LiteGamma;
+            public float LiteGammaScale = TAATuning.LiteGammaScale;
+            public float LiteDeepCap = TAATuning.LiteDeepCap;
+            public float LiteRespEnd = TAATuning.LiteRespEnd;
+            public float LiteMotionBoost = TAATuning.LiteMotionBoost;
+            public float LiteConfFloor = TAATuning.LiteConfFloor;
+            public float LiteMoveGateLo = TAATuning.LiteMoveGateLo;
+            public float LiteMoveGateHi = TAATuning.LiteMoveGateHi;
+            public float LiteHonestLo = TAATuning.LiteHonestLo;
+            public float LiteHonestHi = TAATuning.LiteHonestHi;
         }
         private readonly Tunables Tune = new Tunables();
-        // Pristine copy: the field initializers above ARE the TAATuning.cs defaults, so a fresh
-        // instance serves as the reset-to-defaults table.
+        // Pristine copy: the field initializers above read TAATuning (the canonical preset), so a
+        // fresh instance serves as the reset-to-SHIPPED-defaults table.
         private static readonly Tunables Defaults = new Tunables();
 
         // --- 22-parameter vector view of Tunables for the auto-tuner. Order matches the print block;
@@ -219,9 +221,12 @@ namespace FSO.TAALab
             "RawSoftenMotionSup", "Gamma", "TexDetailFloor", "ConfFloor", "RingLo", "RingHi",
             "DirectClampMix", "KarisFade", "GammaMotionDecay", "ConfFadeN", "GrowOffPhase", "DeepCapBase"
         };
+        // GrowOffPhase floor 0.25: meta N is RGBA8-quantized (1 LSB ~ 0.5 N), so per-frame growth
+        // increments below ~0.25 N round to the SAME code point — the optimizer exploring below the
+        // floor is silently tuning "no growth at all", not a slower rate.
         private static readonly float[] ParamLo =
         {
-            0f, 0f, 0f, 0f, 0f,  0f, 0f, 0f, 0f, 0f,  0f, 0.5f, 0f, 0f, 0f, 0f,  0f, 0f, 0f, 1f, 0f, 0.9f
+            0f, 0f, 0f, 0f, 0f,  0f, 0f, 0f, 0f, 0f,  0f, 0.5f, 0f, 0f, 0f, 0f,  0f, 0f, 0f, 1f, 0.25f, 0.9f
         };
         private static readonly float[] ParamHi =
         {
@@ -965,6 +970,7 @@ namespace FSO.TAALab
         private Color[] TaaCur, TaaPrev;
         private double[] RowS, RowT;                 // per-row partial sums (deterministic parallel reduce)
         private readonly double[] PhaseS = new double[4], PhaseT = new double[4];
+        private readonly int[] PhaseTN = new int[4]; // temporal samples per phase (odd frames only — parity pairs)
 
         // optimizer driver state
         private NelderMeadOptimizer Opt;
@@ -988,7 +994,8 @@ namespace FSO.TAALab
         {
             if (ControlRT != null) return;
             // 2x2 supersample of the OUTPUT grid (2560x1440 for the 720p window) + box-downsample stage
-            // + half-res metric-sampling stage. Output-res fixed, so render-scale changes don't touch these.
+            // + half-res metric-sampling stage (rotating-parity point grid — see ReadMetricSamples).
+            // Output-res fixed, so render-scale changes don't touch these.
             ControlRT = new RenderTarget2D(GraphicsDevice, OutW * 2, OutH * 2, false, SurfaceFormat.Color, DepthFormat.Depth24);
             ControlDownRT = new RenderTarget2D(GraphicsDevice, OutW, OutH, false, SurfaceFormat.Color, DepthFormat.None);
             MetricRT = new RenderTarget2D(GraphicsDevice, MetricW, MetricH, false, SurfaceFormat.Color, DepthFormat.None);
@@ -1007,14 +1014,27 @@ namespace FSO.TAALab
         }
 
         /// <summary>
-        /// Point-blit an output-res texture to half res (picks every 2nd pixel — the metric sampling
-        /// grid; statistical accuracy, 4x less readback) and read it back to the CPU.
+        /// Point-blit an output-res texture to the half-res metric grid (4x less readback/cache) and
+        /// read it back to the CPU. ROTATING PARITY (2026-07-09 fix): the old fixed point-blit sampled
+        /// ONE of the four output-pixel parities for the entire run — with this scene's single-pixel
+        /// geometry, lines on the other three parities were invisible to the optimizer, spatially AND
+        /// temporally, so it could overfit whatever happened to land on the measured parity. The source
+        /// offset now rotates through all four parities on a TWO-FRAME cadence (frame pair k samples
+        /// parity k &amp; 3), identically for the control pre-render and every eval (both pass the frame
+        /// index), keeping control/TAA arrays aligned per frame. The pair cadence is what keeps the
+        /// temporal term honest: t vs t-1 is only accumulated on the second frame of a pair, where both
+        /// frames sampled the SAME pixels (see AccumulateMetric) — rotating per-frame would compare
+        /// different pixels and turn the flicker metric into a parity-difference metric.
         /// </summary>
-        private void ReadMetricSamples(Texture2D tex, Color[] dst)
+        private void ReadMetricSamples(Texture2D tex, Color[] dst, int frame)
         {
+            int parity = (frame >> 1) & 3;
+            int ox = -(parity & 1);        //  0 -> odd source columns, -1 -> even
+            int oy = -((parity >> 1) & 1); //  0 -> odd source rows,    -1 -> even
             GraphicsDevice.SetRenderTarget(MetricRT);
             SB.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp);
-            SB.Draw(tex, new Rectangle(0, 0, MetricW, MetricH), Color.White);
+            // dest pixel x samples source column 2x+1+ox (never negative: min is ox+1 = 0)
+            SB.Draw(tex, new Rectangle(0, 0, MetricW, MetricH), new Rectangle(ox, oy, OutW, OutH), Color.White);
             SB.End();
             GraphicsDevice.SetRenderTarget(null);
             MetricRT.GetData(dst);
@@ -1042,7 +1062,7 @@ namespace FSO.TAALab
             Console.WriteLine($"[AutoTune] run started: mode {mode}, {RestartCount} restart(s) x {RestartBudget} evals, " +
                 $"scale {RenderScale.ToString("0.00", CultureInfo.InvariantCulture)}, technique {TechNames[TechIdx]}, " +
                 $"optimizing {ActiveNames.Length} params ({(RunLite ? "Lite*" : "Tune*")}), meshes {(meshes ? "on" : "off")}, " +
-                $"weights spatial {SpatialWeight} / temporal {TemporalWeight}, metric grid {MetricW}x{MetricH}.");
+                $"weights spatial {SpatialWeight} / temporal {TemporalWeight}, metric grid {MetricW}x{MetricH} (rotating parity, pair cadence).");
             if (!ControlCacheValid || ControlCacheMeshes != meshes)
             {
                 ControlSamples = new Color[SeqFrames][];
@@ -1069,7 +1089,7 @@ namespace FSO.TAALab
         {
             CurVec = vec;
             EvalTune = ActiveFromVector(vec); // untuned set stays at defaults (inert for this technique)
-            for (int i = 0; i < 4; i++) { PhaseS[i] = 0; PhaseT[i] = 0; }
+            for (int i = 0; i < 4; i++) { PhaseS[i] = 0; PhaseT[i] = 0; PhaseTN[i] = 0; }
             EvalFrame = 0;
             HistCurr = 0;          // fixed ping-pong start (identical target usage every eval)
             ResetHistory();        // history black + warmup meta clear, exactly like the game
@@ -1085,7 +1105,7 @@ namespace FSO.TAALab
         {
             RenderControl(EvalPose(ControlFrame), ControlCacheMeshes);
             var arr = new Color[MetricW * MetricH];
-            ReadMetricSamples(ControlDownRT, arr);
+            ReadMetricSamples(ControlDownRT, arr, ControlFrame);
             ControlSamples[ControlFrame] = arr;
             if (++ControlFrame >= SeqFrames)
             {
@@ -1108,7 +1128,7 @@ namespace FSO.TAALab
             DrawSceneColor(pose, SceneRT, RenderScale, jpx, ControlCacheMeshes);
             DrawVelocity(pose, prev, jpx, ControlCacheMeshes);
             RunResolve(EvalTune, sampleJitterUV);
-            ReadMetricSamples(Hist[HistCurr], TaaCur);
+            ReadMetricSamples(Hist[HistCurr], TaaCur, f);
             AccumulateMetric(f);
             (TaaCur, TaaPrev) = (TaaPrev, TaaCur);
             HistCurr = 1 - HistCurr;
@@ -1119,6 +1139,9 @@ namespace FSO.TAALab
         /// <summary>
         /// Per-frame metric: spatial MSE (linear RGB) vs control + temporal term
         /// TD = mean |(taa[t]-taa[t-1]) - (control[t]-control[t-1])| (penalizes ghosting AND fizzle).
+        /// The temporal term only accumulates on the SECOND frame of each sampling-parity pair (odd f)
+        /// so both frames of the diff sampled the same pixels — see ReadMetricSamples. Per-phase
+        /// temporal counts (PhaseTN) keep the score normalization exact.
         /// Row-parallel with per-row partial sums summed in fixed order — bit-deterministic.
         /// </summary>
         private void AccumulateMetric(int f)
@@ -1126,9 +1149,9 @@ namespace FSO.TAALab
             int w = MetricW, h = MetricH;
             var taa = TaaCur; var taaPrev = TaaPrev;
             var ctrl = ControlSamples[f];
-            var ctrlPrev = f > 0 ? ControlSamples[f - 1] : null;
+            bool hasPrev = (f & 1) == 1; // same-parity predecessor exists (also implies f > 0)
+            var ctrlPrev = hasPrev ? ControlSamples[f - 1] : null;
             var rowS = RowS; var rowT = RowT;
-            bool hasPrev = f > 0;
             Parallel.For(0, h, y =>
             {
                 double s = 0, td = 0;
@@ -1157,23 +1180,24 @@ namespace FSO.TAALab
             int phase = f < 60 ? 0 : f < 120 ? 1 : f < 180 ? 2 : 3;
             double n = w * h;
             PhaseS[phase] += fs / n;
-            PhaseT[phase] += ft / n;
+            if (hasPrev) { PhaseT[phase] += ft / n; PhaseTN[phase]++; }
         }
 
         private EvalScores ComputeScores()
         {
             var r = new EvalScores();
-            double s = 0, t = 0;
+            double s = 0, t = 0; int tn = 0;
             var ps = new double[4];
             for (int i = 0; i < 4; i++)
             {
-                s += PhaseS[i]; t += PhaseT[i];
-                ps[i] = (SpatialWeight * PhaseS[i] + TemporalWeight * PhaseT[i]) / 60.0; // 60 frames/phase
+                s += PhaseS[i]; t += PhaseT[i]; tn += PhaseTN[i];
+                // spatial: 60 frames/phase; temporal: counted (parity pairs -> 30/phase, see AccumulateMetric)
+                ps[i] = SpatialWeight * PhaseS[i] / 60.0 + TemporalWeight * PhaseT[i] / Math.Max(1, PhaseTN[i]);
             }
             r.Rest = ps[0]; r.Motion = ps[1]; r.Reveal = ps[2]; r.Slow = ps[3];
             r.SpatialMean = s / SeqFrames;
-            r.TemporalMean = t / SeqFrames;
-            r.Total = (SpatialWeight * s + TemporalWeight * t) / SeqFrames;
+            r.TemporalMean = t / Math.Max(1, tn);
+            r.Total = SpatialWeight * r.SpatialMean + TemporalWeight * r.TemporalMean;
             return r;
         }
 
@@ -1464,7 +1488,7 @@ namespace FSO.TAALab
                 ImGui.SliderFloat("KarisFade", ref Tune.KarisFade, 0f, 1f, "%.3f");
                 ImGui.SliderFloat("GammaMotionDecay", ref Tune.GammaMotionDecay, 0f, 1f, "%.3f");
                 ImGui.SliderFloat("ConfFadeN", ref Tune.ConfFadeN, 1f, 64f, "%.1f");
-                ImGui.SliderFloat("GrowOffPhase", ref Tune.GrowOffPhase, 0f, 1f, "%.3f");
+                ImGui.SliderFloat("GrowOffPhase", ref Tune.GrowOffPhase, 0.25f, 1f, "%.3f"); // <0.25 quantizes to zero growth (RGBA8 meta N), see ParamLo
                 ImGui.SliderFloat("DeepCapBase", ref Tune.DeepCapBase, 0.9f, 0.999f, "%.4f");
                 if (ImGui.Button("Reset to defaults##structural"))
                 {

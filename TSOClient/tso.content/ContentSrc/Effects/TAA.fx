@@ -40,7 +40,7 @@ float2 JitterDelta;
 // Depth-disocclusion tuning, set from C# by the ACTUALLY-ALLOCATED history format (fp16 vs RGBA8 fallback):
 //   x = ghost dead-zone epsilon (storage quantization must never fire the ghost test by itself)
 //   y = depthReject slope   z = depthReject offset   w = relative-compare denominator floor
-// fp16 history: (0.0005, 12.0, 0.0, 0.02). RGBA8 fallback: (2/255, 6.0, 0.25, 0.05) — the old blunted curve,
+// fp16 history: (0.0015, 12.0, 0.0, 0.02). RGBA8 fallback: (2/255, 6.0, 0.25, 0.05) — the old blunted curve,
 // which existed to hide 8-bit quantization; keeping it uniform-driven prevents fallback hardware shimmer.
 float4 DepthRejectParams;
 // This frame's jitter as a UV offset: the colour buffer was rendered with the projection translated by the
@@ -75,11 +75,11 @@ float TuneStillGateFloor = 0.25;     // stillGate suspicion velocity scale floor
 float TuneMoveGateLo = 0.6;          // moveGate smoothstep lower edge (native px/frame)
 float TuneMoveGateHi = 2.0;          // moveGate smoothstep upper edge (native px/frame)
 float TuneRespEnd = 0.60;            // responsive end of the diff-driven blend lerp (full-diff history weight)
-float TuneMotionTrustCap = 0.65;     // motion trust cap at upscale (interior-texture ghost lever; 0.72->0.65 final round: ~35%/frame refresh in motion, trails die in 2-3 frames as crisp Lanczos reconstruction)
+float TuneMotionTrustCap = 0.75;     // motion trust cap at upscale (interior-texture ghost lever; retune history lives in TAATuning.cs)
 float TuneMotionClampTighten = 0.72; // motion-scaled variance-clamp tighten at upscale (self-reveal lever)
 float TuneRawSoftenOnset = 0.12;     // raw-state display soften: blend onset
-float TuneRawSoftenSlope = 2.2;      // raw-state display soften: slope past onset
-float TuneRawSoftenMotionSup = 0.85; // raw-state display soften: suppression under coherent motion
+float TuneRawSoftenSlope = 0.0;      // raw-state display soften: slope past onset (0 = soften OFF as shipped; restore recipe in TAATuning.cs)
+float TuneRawSoftenMotionSup = 0.65; // raw-state display soften: suppression under coherent motion
 float TuneGamma = 1.5;               // variance clamp base width (sigma) — TAA_Core's GAMMA
 float TuneTexDetailFloor = 0.28;     // texture-detail blend floor / low-variance anti-ghost backstop
 float TuneConfFloor = 0.14;          // TAAU sample-confidence floor (the <=2x-ratio endpoint)
@@ -284,11 +284,14 @@ struct TAAOut
 {
     float4 color : COLOR0; // displayed frame + next frame's history (RGB), dilated depth in A
     // Meta layout (RGBA8): R = new accumulation count N (N/MaxAccum), GB = this frame's dilated velocity
-    // encoded v*10+0.5 (SATURATES at +/-0.05 UV on store — writers now clamp at +/-0.5, so beyond 64px/frame
+    // encoded v*10+0.5 (SATURATES at +/-0.05 UV on store — writers now clamp at +/-0.5, so beyond 0.05 UV/frame (~96px at 1920-wide)
     // the stored value pins and the velocity-disparity reactive fires during ultra-fast motion: desirable),
     // A = packed luma-oscillation state
     // (sign bit + 7-bit EMA; 0 on non-reprojectable / meta clear). The TAADebug technique repurposes GB+A
     // for diagnostics and correspondingly DISABLES their consuming logic (self-consistent while debugging).
+    // The debug EXIT frame is handled C#-side: TemporalHistoryState clears history whenever the resolve
+    // tier changes (TAA <-> TAADebug <-> TAALite), so the first normal frame can never decode last
+    // frame's diagnostic bytes as prev-velocity (screen-wide phantom-motion trust wipe, pre-2026-07-09).
     float4 meta  : COLOR1;
 };
 
@@ -415,7 +418,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float wC = 0;     // center tap's actual kernel weight — sample confidence below
     float2 dilatedVel = float2(0, 0);
     float closestDepth = 1e9;
-    float closestMask = 0.0;
     float dmin = 1e9, dmax = -1e9; // valid-tap depth RANGE for the disocclusion test below
     // Center velocity tap PRE-FETCHED (the loop re-reads it as its (0,0) plus tap — cached, ~free): the
     // pixel's OWN velocity feeds the foreign-velocity reactive, and its DEPTH anchors the depth-aware
@@ -448,7 +450,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
             // "No velocity written" -> depth sentinel 2.0 (beyond valid [0,1]) so genuinely-far valid
             // pixels still win the nearest-depth tiebreak over unwritten neighbours.
             float d = (v.a >= 0.5) ? v.b : 2.0;
-            if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; closestMask = v.a; }
+            // (dead write removed: closestMask was captured here for the old `reprojectable` gate,
+            // which is gone — see the TAALite header note; nothing read it since)
+            if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; }
             if (v.a >= 0.5) { dmin = min(dmin, v.b); dmax = max(dmax, v.b); }
         }
         // Reconstruction tap: RAW texel center (bilinear at an exact center = point fetch) around the
@@ -782,7 +786,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // green). A trailing-reveal pixel REMEMBERS the mover's velocity from last frame in pm.gb; resting
     // foliage (the reason the motion gate exists) remembers zero, so it cannot fake this signal.
     float storedMovePx = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1) * texSize) * VelGatePxScale;
-    float storedMove = smoothstep(0.35, 1.5, storedMovePx); // matches moveGate's slow-mover arming
+    // UNIFIED with moveGate's tunable band (2026-07-09): storedMove had kept moveGate's ORIGINAL
+    // 0.35..1.5 constants after moveGate was retuned to TuneMoveGateLo/Hi (0.6..2.0), so remembered
+    // motion armed ~2x more sensitively than current motion — an undocumented asymmetry every
+    // max(moveGate, storedMove) consumer inherited. One band, one pair of levers now; if trailing
+    // reveals need earlier arming again, that's a deliberate second tunable, not a fossil.
+    float storedMove = smoothstep(TuneMoveGateLo, TuneMoveGateHi, storedMovePx);
     float ghostReject = max(moveGate, storedMove) * ghost * rejAuth;
 
     // --- FEATURE-LEVEL HISTORY COMPARISON (structure, not value — the DLSS-analogue rectification cue).
@@ -862,7 +871,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // ringContam joins at full weight (unlike foreign's demoted 0.35): where it fires it is DIRECT evidence
     // of preserved foreground trail on a background pixel — the exact contamination foreign's reprojection
     // fix does NOT repair under dilated-color reprojection.
-    float suspicion = max(max(depthReject, ghostReject), max(max(foreign * 0.35, reactive), ringContam));
+    float suspicion = max(max(depthReject, ghostReject), max(max(max(foreign * 0.35, reactive), ringContam), featReject));
+    // featReject INCLUDED (2026-07-09 review): its old exclusion read as drift, not design — the
+    // responsive-only scoping ("can only increase diff") applies equally to suspicion membership,
+    // and ringContam (a later detector of the same family) was wired into both. The win: the
+    // resolution-widened variance box (suspGamma) is no longer blind to feature-level ghost
+    // evidence — the exact leak the evidence-scaled widening exists to close. Known risk profile:
+    // dirMismatch can fire on legitimately rotating structured content, bounded by featReject's
+    // 0.6 self-cap + motion gating. Failure signature if too strong: slight fizzle on MOVING fine
+    // detail at upscale (the box narrows on true rotation) — if seen, demote like foreign
+    // (featReject * 0.5) before removing.
 
     // --- LUMA-OSCILLATION DETECTOR (Decima-style anti-fizzle), state in meta.A (1 sign bit + 7-bit EMA).
     //     Fizzle = a CONVERGED pixel whose curr-vs-history luma delta ALTERNATES SIGN at frame frequency
@@ -920,7 +938,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // CONTAMINATED history, bypassed the warmup floor (lock exemption), widened the clamp, and
         // trapped the ghost under deep trust. Locks must be RE-EARNED after any invalidation event —
         // this line is what actually makes "a lock cannot coexist with invalid history" true.
-        // Curved: only MEANINGFUL invalidation wipes (smoothstep knee 0.25) — grazing partial rejects
+        // Curved: only MEANINGFUL invalidation wipes (smoothstep knee 0.4) — grazing partial rejects
         // (noisy, constant near any motion) were nuking locks screen-adjacent to movers every frame,
         // re-fizzling fine geometry that was never actually invalidated (the post-ghost-fix aliasing).
         osc *= 1.0 - smoothstep(0.4, 0.85, max(max(depthReject, ghostReject), max(reactive, featReject)));
@@ -995,10 +1013,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // is exactly why its small innovation is meaningful), while an edge halo has the edge in its own
     // box statistics (high sigma). Gate to low sigma: the anti-tail keeps its whole domain, the halo
     // ring is exempt.
+    // Sigma gate NARROWED to a band (2026-07-09 review): below sigma ~0.083 the texDetail floor
+    // (texDetail = 1 - sigma*12, floor at line ~1465) already injects enough raw to scrub a slight
+    // ghost in ~4 frames — the N-shallowing there was redundant double action on the same pixels.
+    // biasPenalty's UNIQUE domain is the band where texDetail has died but the surface is still
+    // flat enough for small innovation to be meaningful: ramp in as texDetail fades (0.03..0.07),
+    // out by 0.12 as before. Failure signature if too narrow: slight similar-color ghost residue
+    // returning on VERY flat content (sigma < 0.03) at upscale — that band now relies on texDetail.
     float biasPenalty = (1.0 - smoothstep(0.12, 0.35, osc))
                       * smoothstep(0.25, 0.7, inno) * (1.0 - smoothstep(1.0, 2.0, inno))
                       * (1.0 - smoothstep(0.05, 0.35, velPx))
-                      * (1.0 - smoothstep(0.04, 0.12, sigma.x))
+                      * smoothstep(0.03, 0.07, sigma.x) * (1.0 - smoothstep(0.07, 0.12, sigma.x))
                       * saturate(upscaleRatio - 1.0);
     // Dock 0.35 -> 0.55 (2026-07-05): pushing the documented lever — user still saw slight fizzly
     // ghosting on SIMILAR-COLOR content under TAAU (exactly this penalty's domain: low-osc,
@@ -1028,8 +1053,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     newN = lerp(newN, 0.0, smoothstep(0.35, 0.85, ghostReject));
     newN = lerp(newN, min(newN, 6.0), smoothstep(0.3, 0.8, depthReject));
     newN = lerp(newN, min(newN, 8.0), reactive);
-
-    float lumaC = curr.x;                   // Y in YCoCg (current center sample)
 
     // --- Variance clamp: FIXED tight gamma, exactly as the original (pre-R2) algorithm. Every attempt this
     //     session to let confidently-accumulated pixels relax this box further (normal-buffer reject, hard
@@ -1245,8 +1268,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // reach that tail). Capping the deep end to the cycle window washes the residue out ~1.5x faster with no
     // loss on converged content (cycle still hidden; oscillation-LOCKED fine geometry still reaches this same
     // window via oscCeil). Fades in over ratio 1.2..1.8 so native / mild upscale keep the full 0.992.
-    // cycleWindow mirrors the lock path's cycleCeil (JitterPhases-driven) — this ALIGNS the two deep paths.
-    // Lever to push if ghosting persists: drop the 1.2 divisor toward 1.0 (window -> exactly one cycle).
+    // cycleWindow is JitterPhases-driven like the lock path's cycleCeil, but the two are NO LONGER
+    // aligned: this path took the 1.0 divisor (2026-07-05, below) while cycleCeil kept 1.2 — locked
+    // pixels may hold a somewhat deeper window than evidence trust alone grants (raise-only keeps
+    // this coherent, but it is a deliberate divergence, not the mirror it used to be).
     // Divisor 1.2 -> 1.0 (2026-07-05): the documented push lever ("drop toward 1.0 — window ->
     // exactly one cycle") — persistent similar-color ghost residue under TAAU is a MEMORY-DEPTH
     // problem (small-innovation residue reads as agreement, N maxes, deep history holds it); one
@@ -1266,9 +1291,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // original violent 0.55 and the gentled 0.68. Revert signature: objects flashing raw on ordinary
     // luma changes (TV screens, lighting shifts).
     float historyWeight = lerp(deepEnd, TuneRespEnd, diff);
-    // Velocity-disparity reactive caps the history trust directly (soft — 0.88 keeps a moving-content pixel
-    // from pulsing aliased when the camera stops; tune toward 0.94 if a screen-wide stop-pulse shows).
-    historyWeight = min(historyWeight, lerp(1.0, 0.85, reactive)); // 0.88 -> 0.85 (watch for a screen-wide pulse on camera stop; revert to 0.88 if seen)
+    // Reactive's direct trust cap REMOVED (2026-07-09 review): reactive already caps the counter to
+    // N=8 above, which bounds next-frame deepEnd at 8/9=0.889 and floors blend at 1/9 — the extra
+    // same-frame min() to 0.85 was near-redundant double action on the same trigger. Revert
+    // signature (the reason the cap once existed): a screen-wide aliased pulse the frame the camera
+    // STOPS (reactive fires on the stored-vs-current velocity disparity before the N-cap lands) —
+    // if seen, restore `historyWeight = min(historyWeight, lerp(1.0, 0.88, reactive));` here.
     // Foreign-velocity trust cap — MILD only: the reprojection fix above already makes ring-pixel history
     // valid background (a hard 0.75 cap here just re-created raw jitter crunch on the ring). This is a
     // safety net for imperfect own-velocity (e.g. unwritten alpha fringes decoding as zero).
@@ -1344,8 +1372,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // floor still injected ~7.7% raw per frame purely by speed — visible pan shimmer with no anti-ghost
     // payoff (real contamination drives suspicion -> 1, restoring the full 0.22). NOT zeroed: native has
     // no other anti-lag insurance (the sample-confidence motion regime below is upscale-gated).
-    // Revert signature: soft-focus/lag trailing behind fast clean pans.
-    float motionBoost = saturate(vmag * 20.0) * TuneMotionBoostMax * lerp(TuneMotionBoostFloor, 1.0, suspicion);
+    // RE-KEYED onto the gate band (2026-07-09 review): saturate(vmag*20) was UV-keyed and saturated
+    // only at ~0.05 UV (~96 px/frame at 1080p) — at gameplay speeds (~3 px/f) it contributed <1%
+    // blend, i.e. the term was practically inert and native's "sole insurance" wasn't insuring.
+    // moveGate (TuneMoveGateLo/Hi native px, already computed) makes it fire where every other
+    // motion heuristic considers the pixel moving. This RAISES raw injection during ordinary motion
+    // (full 0.22*floor ~ 2.6% clean / 22% suspicious at gate speed) — re-run the lab auto-tune;
+    // MotionBoostMax/Floor may want to come down now that the lever actually works.
+    // Revert signature: soft-focus/lag trailing behind fast clean pans (if re-keying is reverted).
+    float motionBoost = moveGate * TuneMotionBoostMax * lerp(TuneMotionBoostFloor, 1.0, suspicion);
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
     // --- TAAU SAMPLE CONFIDENCE (upscale mode only — the standard temporal-upscaler mechanism). At render
@@ -1474,6 +1509,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #endif
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
+    // Weight keyed on dispCurr.x (2026-07-09): the color actually blended is dispCurr, so the
+    // anti-flicker weight must use ITS luma — with TuneRawSoftenSlope = 0 they are identical
+    // (dispCurr = curr), so this is bit-neutral today and correct if soften is ever re-enabled.
     // MOTION-FADED (2026-07-07 — the dark-to-light ghost fizzle): this weighting is structurally
     // DARK-BIASED — history weight scales by 1/(1+lumaH), so DARK stale history gets BOOSTED exactly
     // where the current content is bright: on dark->light reveals during motion the ghost was
@@ -1481,7 +1519,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // suppresses is a REST-state artifact (converged sub-pixel glints); under motion fade to a plain
     // energy-honest lerp so a bright reveal displaces dark history at its true blend weight.
     float lumaFade = max(moveGate, storedMove) * TuneKarisFade;
-    float wc = blend * lerp(1.0 / (1.0 + max(lumaC, 0.0)), 1.0, lumaFade);
+    float wc = blend * lerp(1.0 / (1.0 + max(dispCurr.x, 0.0)), 1.0, lumaFade);
     float wh = (1.0 - blend) * lerp(1.0 / (1.0 + max(lumaH, 0.0)), 1.0, lumaFade);
     float3 blended = (dispCurr * wc + history * wh) / max(wc + wh, 1e-5);
 
@@ -1665,9 +1703,11 @@ TAAOut TAALite_PS(VSOut input)
     float3 curr = lerp(crawC, filt / max(wsum, 1e-4), saturate(wsum / (0.15 * kscale)));
 
     // SAMPLE CONFIDENCE: how much this frame's nearest sample actually covers this output pixel.
-    // 1.2656 = 1 / MitchellK(0)^2 = 81/64, so at native (kscale 1, zero jitter: wC = 0.7901)
-    // sampleConf saturates at exactly 1.0 and the blend multiplier below is exactly 1 — the
-    // native path is unaffected by this term by construction.
+    // 1.2656 = 1 / MitchellK(0)^2 = 81/64. NOTE (review 2026-07-09): an old claim that this
+    // "saturates at exactly 1 at native by construction" assumed ZERO jitter — but TAA always
+    // jitters (8 phases at native), and fracd at native IS the jitter offset, so wC swings with
+    // the phase (corner phase (0.5,0.5): wC~0.286 -> sampleConf~0.36). The injection gate below is
+    // therefore NATIVE-FADED to mirror TAA_Core's explicit 1:1 confidence exemption.
     float sampleConf = saturate(wC * 1.2656);
 
     // Reproject with the dilated velocity; JitterDelta cancels the jitter baked into the velocity
@@ -1715,16 +1755,26 @@ TAAOut TAALite_PS(VSOut input)
     float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), LiteDeepCap);
     float historyWeight = lerp(deepEnd, LiteRespEnd, diff);
 
-    // Motion-adaptive: lean more on current when moving fast (less lag/ghosting under motion).
-    // This speed-proportional boost IS the "raw motion resolve" character (the user's Switch-2-
-    // DLSS-lite anchor) — tune to taste, not to zero.
-    float motionBoost = saturate(length(velocity) * 20.0) * LiteMotionBoost;
+    // Motion-adaptive: lean more on current when moving (less lag/ghosting under motion). This
+    // boost IS the "raw motion resolve" character (the user's Switch-2-DLSS-lite anchor) — tune to
+    // taste, not to zero. RE-KEYED onto moveGate (2026-07-09 review): the old saturate(|v|*20) was
+    // UV-keyed, saturating only at ~96 px/frame — at gameplay speeds it contributed ~0.07 blend,
+    // so the documented character lever was practically inert (Lite's raw feel actually came from
+    // the moveGate conf-bypass + LiteRespEnd). Now LiteMotionBoost genuinely IS the lever: full
+    // value at LiteMoveGateHi. Expect it to want retuning DOWN in the lab (0.35 was tuned inert).
+    float motionBoost = moveGate * LiteMotionBoost;
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
     // Sample-confidence injection gate: frames whose kernel barely covers this pixel inject
     // little (their estimate is an amplified tail) — except under motion, where responsiveness
-    // wins. Exactly 1 at native (see sampleConf note).
-    blend *= lerp(lerp(LiteConfFloor, 1.0, sampleConf), 1.0, moveGate);
+    // wins. NATIVE-FADED (2026-07-09, mirrors TAA_Core's explicit 1:1 exemption): at native a
+    // full-density sample exists every frame and the kernel distance is just the jitter offset, so
+    // the throttle only measured jitter phase — breathing the accumulation depth through the
+    // 8-phase cycle (up to ~55% injection loss at corner phases: slower convergence + a faint
+    // cycle-periodic shimmer, and LiteConfFloor tuning was entangled with phase). Fades in over
+    // ratio 1..2, branch-free; full FSR2-style confidence at ratio >= 2, inert at 1:1.
+    float confMul = lerp(lerp(LiteConfFloor, 1.0, sampleConf), 1.0, moveGate);
+    blend *= lerp(1.0, confMul, saturate(upscaleRatio - 1.0));
     // Honest disocclusion: strong depth evidence forces the current frame through regardless of
     // accumulated trust.
     blend = max(blend, smoothstep(LiteHonestLo, LiteHonestHi, depthReject));

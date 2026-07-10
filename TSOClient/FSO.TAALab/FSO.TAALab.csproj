@@ -10,8 +10,10 @@
     #if SM4 blocks in TAA.fx — the MojoShader/OGL xnb strips them, only the DX xnb binds all 16.
     Unlike FSO.Windows this project references WindowsDX directly (no MonogameLinker DLL swap).
 
-    Deliberately dependency-free of tso.*: the jitter generator and resolve driver are small, and are
-    mirrored here verbatim from R2Jitter.cs / TAAResolve.cs (comments mark each mirrored piece).
+    Deliberately dependency-free of tso.* PROJECT REFERENCES: the jitter generator and resolve driver
+    are small, and are mirrored here verbatim from R2Jitter.cs / TAAResolve.cs (comments mark each
+    mirrored piece). TAATuning.cs however is SOURCE-LINKED below (not mirrored): it is the single
+    canonical tuning preset, so the lab's defaults/reset table and the shipped values cannot drift.
     OutputType is Exe (not WinExe) ON PURPOSE: the harness prints the "Print C# block" ready-to-paste
     TAATuning snapshot and the parameter-binding report to the console.
   -->
@@ -24,6 +26,12 @@
     <AssemblyName>TAALab</AssemblyName>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks><!-- ImGuiRenderer draw-list marshalling -->
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- THE canonical tuning preset (FSO.LotView.Utils.TAATuning): the lab's Tunables defaults and
+         reset table initialize from these statics, so lab sessions always start from SHIPPED values. -->
+    <Compile Include="..\tso.world\Utils\TAATuning.cs" Link="TAATuning.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.5-preview.6" />
