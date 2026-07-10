@@ -71,6 +71,38 @@ namespace FSO.Patcher
             return ToExtract.Select(file => file.FullName).Where(name => !UnimportantFiles.Contains(name)).ToList();
         }
 
+        /// <summary>
+        /// Validates EVERY entry in the archive against the install directory BEFORE anything is extracted,
+        /// using the same policy the launcher enforces (see ArchivePathGuard). The zip is fetched over the
+        /// network, so it is untrusted: any entry that would traverse out of the install directory, is rooted,
+        /// uses backslash tricks, or is a symlink/special file makes the WHOLE archive invalid -- callers must
+        /// abort with nothing written (no partial extraction of an unvalidated archive). Returns false with a
+        /// human-readable <paramref name="reason"/> for the first bad entry; true when every entry is safe.
+        /// </summary>
+        public bool Validate(out string reason)
+        {
+            // Entries are written relative to the current working directory (see ExtractEntry's
+            // Path.Combine("./", name)), so the install root is the CWD.
+            var root = Path.GetFullPath(".");
+            foreach (var entry in Archive.Entries)
+            {
+                try
+                {
+                    ArchivePathGuard.RejectIfLinkOrSpecial(entry);
+                    // update.exe is remapped to update2.exe on write (it can't replace the running patcher),
+                    // but both are equally safe names -- validate the archive's declared path.
+                    ArchivePathGuard.ResolveContainedPath(root, entry.FullName);
+                }
+                catch (Exception e)
+                {
+                    reason = $"{entry.FullName}: {e.Message}";
+                    return false;
+                }
+            }
+            reason = null;
+            return true;
+        }
+
         public async Task<bool> ExtractEntry(ZipArchiveEntry entry, int tryNum)
         {
             var name = (entry.FullName == "update.exe") ? "update2.exe" : entry.FullName;
@@ -159,8 +191,15 @@ namespace FSO.Patcher
         // backing each up first under updateBackup/ (same convention as ExtractEntry) so Revert() can bring
         // them back. Paths come from a downloaded JSON file, so every one is validated relative-safe before
         // it's allowed anywhere near File.Delete -- never trust it to stay within the install directory.
-        public void RemoveFiles(IEnumerable<string> paths)
+        //
+        // Returns false if a removal it was asked to perform FAILED (the backup copy or the delete threw):
+        // that leaves the install inconsistent, so the caller must treat it as a failed transaction (revert +
+        // report failure) rather than finalizing. A path skipped by the safety filter is logged but does not,
+        // by itself, fail the transaction -- the manifest is CI-authored and an unsafe entry is refused, not
+        // acted on.
+        public bool RemoveFiles(IEnumerable<string> paths)
         {
+            bool success = true;
             foreach (var raw in paths)
             {
                 var rel = SafeRelativePath(raw);
@@ -185,8 +224,10 @@ namespace FSO.Patcher
                 {
                     Status($"Could not remove {targPath}: {e.Message}");
                     Errors.Add($"{targPath}: {e.Message}");
+                    success = false;
                 }
             }
+            return success;
         }
 
         // Rejects anything not safely relative to the install root: absolute/rooted paths and ".." segments.

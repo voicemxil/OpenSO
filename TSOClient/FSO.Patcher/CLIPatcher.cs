@@ -25,23 +25,30 @@ namespace FSO.Patcher
 
         private void FSONotClosed()
         {
-            Console.WriteLine("Could not update OpenSO as write access could not be gained to the game files. Try running update.exe as an administrator.");
-            Cleanup();
-            Environment.Exit(0);
+            FailUpdate("Could not update OpenSO as write access could not be gained to the game files. Try running update.exe as an administrator.");
         }
 
         private void FileMissing(string path)
         {
-            Console.WriteLine($"A file has been removed while advancing through the update chain ({path}). The update must now be aborted.");
-            Cleanup();
-            Environment.Exit(0);
+            FailUpdate($"A file has been removed while advancing through the update chain ({path}). The update must now be aborted.");
         }
 
         private void FileCorrupt(string path)
         {
-            Console.WriteLine($"An update archive was corrupt({ path}). The update must now be aborted.");
+            FailUpdate($"An update archive was corrupt ({path}). The update must now be aborted.");
+        }
+
+        // Single terminal failure path for the update: roll back any partially-applied step, restore the
+        // previous OpenSO.exe, print a visible error and exit NON-ZERO so the launcher/automation can see the
+        // update did not succeed. Never launches the game -- a failed update must be visible, not silently
+        // proceed. The install is left restorable (backups restored, OpenSO.exe.old put back).
+        private void FailUpdate(string message, ReversiblePatcher patcher = null)
+        {
+            Console.Error.WriteLine("===== UPDATE FAILED =====");
+            Console.Error.WriteLine(message);
+            try { patcher?.Revert(); } catch (Exception) { }
             Cleanup();
-            Environment.Exit(0);
+            Environment.Exit(1);
         }
 
         private void Cleanup()
@@ -87,6 +94,13 @@ namespace FSO.Patcher
                     }
                     CurrentPatcher = patcher;
                     patcher.OnStatus += Patcher_OnStatus;
+                    // Validate the WHOLE archive before writing anything: an unsafe entry (traversal, rooted
+                    // path, symlink) rejects the archive with nothing extracted (see ReversiblePatcher.Validate).
+                    if (!patcher.Validate(out var reason))
+                    {
+                        FailUpdate($"Update archive {path} was rejected for safety: {reason}", patcher);
+                        return;
+                    }
                     if (PathProgress == 1)
                     {
                         //first patch
@@ -123,10 +137,8 @@ namespace FSO.Patcher
                             var arc = await ShowErrors(remaining);
                             if (arc == 0)
                             {
-                                //abort.
-                                patcher.Revert();
-                                Cleanup();
-                                StartOpenSO();
+                                //abort: one or more required files couldn't be written -- roll back and fail.
+                                FailUpdate($"Update aborted: one or more required files in {path} could not be written.", patcher);
                                 return;
                             }
                             else if (arc == 1)
@@ -136,7 +148,11 @@ namespace FSO.Patcher
                             else if (arc == 2)
                             {
                                 //ignore
-                                patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path));
+                                if (!patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path)))
+                                {
+                                    FailUpdate($"Update failed: could not remove one or more files scheduled for deletion by {path}.", patcher);
+                                    return;
+                                }
                                 patcher.Final();
                                 File.Delete(path);
                                 break;
@@ -145,7 +161,11 @@ namespace FSO.Patcher
                         else
                         {
                             Console.WriteLine($"===== Completed {path} =====");
-                            patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path));
+                            if (!patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path)))
+                            {
+                                FailUpdate($"Update failed: could not remove one or more files scheduled for deletion by {path}.", patcher);
+                                return;
+                            }
                             patcher.Final();
                             File.Delete(path);
                             await AdvanceExtract();
