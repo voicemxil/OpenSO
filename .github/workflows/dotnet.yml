@@ -18,6 +18,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Verification gate. Runs the automated tests that pin the regression-prone behaviours added by prior
+  # work — platform-aware update refusal (non-Windows RIDs never get the win-x64 payload), truthful
+  # registration email delivery (a failed send never reports success), duplicate-token prevention (the
+  # UNIQUE index + retry loop), and the per-RID client manifest generator. Runs on ubuntu with no game
+  # content and no MySQL — the DB tests use a throwaway SQLite database — so it's fast and self-contained.
+  # A red test here fails the workflow.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      # OpenSO.Tests.slnx is the lean dependency closure of the test project (server API + database +
+      # their refs) — not the game client — so this builds only what the tests need.
+      - name: Run .NET verification tests
+        run: dotnet test TSOClient/OpenSO.Tests.slnx -c Release
+      - name: Run manifest-generator tests
+        run: python3 .github/scripts/test_gen_manifest.py
+
   # Compile the effect shaders fresh from source on Windows (the only OS where MonoGame's effect compiler
   # works — it needs Wine on linux/osx). Produces both Content/DX (Windows client) and Content/OGL (DesktopGL
   # clients); the per-platform build-client jobs download the matching set so no client ships a stale .xnb.
@@ -27,9 +54,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            9.0.x
-            10.0.x
+          dotnet-version: "10.0.x"
       # Shader compilation is deterministic in its inputs (the .fx sources, the compile script, and the
       # pinned mgcb tool version), so cache the compiled .xnb output keyed on exactly those. Most pushes
       # don't touch shaders — on a hit we skip the whole mgcb compile (the slowest part of this job).
@@ -80,9 +105,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            9.0.x
-            10.0.x
+          dotnet-version: "10.0.x"
       # Cache the NuGet package store so restore only downloads what changed. Keyed on every .csproj
       # (the repo doesn't use packages.lock.json, so setup-dotnet's built-in cache can't be used); the
       # restore-key falls back to the newest previous cache so a csproj edit still starts ~warm.
@@ -138,9 +161,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: |
-            9.0.x
-            10.0.x
+          dotnet-version: "10.0.x"
       # Same NuGet cache as build-client (no packages.lock.json in the repo, so actions/cache it is).
       - name: Cache NuGet packages
         uses: actions/cache@v4
