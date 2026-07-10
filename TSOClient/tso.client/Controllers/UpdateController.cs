@@ -16,6 +16,9 @@ namespace FSO.Client.Controllers
         private UIAlert _UpdaterAlert;
         public ApiClient Api;
         private Action<bool> Continue;
+        // Target version_name requested by the server, kept around so the non-Windows notice (and the
+        // defensive guard in RestartGamePatch) can reference it without threading it through every call.
+        private string _PendingUpdateVersion = "";
 
         public UpdateController(Action<bool> continueFunc)
         {
@@ -185,6 +188,18 @@ namespace FSO.Client.Controllers
 
         public void DoUpdate(string versionName, string url)
         {
+            _PendingUpdateVersion = versionName;
+
+            if (FSOEnvironment.Linux)
+            {
+                // The legacy patcher below downloads a zip into PatchFiles/ and launches update.exe -
+                // both are Windows-only (the server's updateUrl always points at a Windows build, and
+                // update.exe isn't shipped on macOS/Linux/mobile). Never attempt it on those platforms;
+                // just tell the player how to get the right build.
+                ShowNonWindowsUpdateRequired();
+                return;
+            }
+
             var str = GlobalSettings.Default.ClientVersion;
 
             var split = str.LastIndexOf('-');
@@ -225,31 +240,28 @@ namespace FSO.Client.Controllers
 
         public void RestartGamePatch()
         {
+            if (FSOEnvironment.Linux)
+            {
+                // Unreachable in practice - DoUpdate() diverts non-Windows platforms to
+                // ShowNonWindowsUpdateRequired() before any patch is downloaded/staged - but guarded
+                // here too so a PatchFiles payload can never be launched via "mono update.exe".
+                ShowNonWindowsUpdateRequired();
+                return;
+            }
+
             try
             {
-                if (FSOEnvironment.Linux)
+                var args = new ProcessStartInfo(".\\update.exe", FSOEnvironment.Args);
+                try
                 {
-                    var fsoargs = FSOEnvironment.Args;
-                    if (fsoargs.Length > 0) fsoargs = " " + fsoargs;
-                    var args = new ProcessStartInfo("mono", "update.exe" + fsoargs);
-                    args.UseShellExecute = false;
                     System.Diagnostics.Process.Start(args);
                 }
-                else
+                catch (Exception)
                 {
-                    var args = new ProcessStartInfo(".\\update.exe", FSOEnvironment.Args);
-                    try
-                    {
-                        System.Diagnostics.Process.Start(args);
-                    }
-                    catch (Exception)
-                    {
-                        args.FileName = "update.exe";
-                        System.Diagnostics.Process.Start(args);
-                    }
+                    args.FileName = "update.exe";
+                    System.Diagnostics.Process.Start(args);
                 }
                 GameFacade.Kill();
-                if (FSOEnvironment.Linux) Environment.Exit(0); //we're serious
             }
             catch (Exception e)
             {
@@ -265,6 +277,26 @@ namespace FSO.Client.Controllers
                     })
                 }, true);
             }
+        }
+
+        /// <summary>
+        /// Non-Windows (macOS/Linux/mobile) version-mismatch notice. These builds don't ship update.exe
+        /// and the server's update payload is a Windows zip, so there is nothing safe to download or
+        /// unpack here - just point the player at the OpenSO Launcher and return them to the login screen.
+        /// </summary>
+        private void ShowNonWindowsUpdateRequired()
+        {
+            _UpdaterAlert = UIScreen.GlobalShowAlert(new UIAlertOptions
+            {
+                Title = GameFacade.Strings.GetString("f101", "21"),
+                Message = GameFacade.Strings.GetString("f101", "32", new string[] { _PendingUpdateVersion, GlobalSettings.Default.ClientVersion }),
+                Width = 500,
+                Buttons = UIAlertButton.Ok(y =>
+                {
+                    UIScreen.RemoveDialog(_UpdaterAlert);
+                    Continue(false);
+                })
+            }, true);
         }
     }
 }
