@@ -22,6 +22,15 @@ namespace FSO.Server.Api.Core.Controllers
         private const int REGISTER_THROTTLE_SECS = 60;
         private const int EMAIL_CONFIRMATION_EXPIRE = 2 * 60 * 60; // 2 hrs
         private const int RESEND_COOLDOWN_SECS = 60;            // min seconds between (re)sends of a code for one address
+        // Durable, per-email windowed cap on verification-email SEND ATTEMPTS, layered on top of the fixed
+        // RESEND_COOLDOWN_SECS. The cooldown only bites while a pending code survives, and only on the
+        // success path - a failing send deletes its token, so without this an attacker could mail a victim
+        // once per cooldown forever, and a blocked SMTP host could be hammered by retrying in a tight loop.
+        // This counts every attempt that reaches the send (including failure-path retries whose token was
+        // deleted). DB-backed (fso_email_send_log) so it survives restarts and holds across instances.
+        // internal so the verification tests can assert against the exact cap.
+        internal const int EMAIL_SEND_MAX_PER_WINDOW = 5;       // max send attempts per email per window
+        internal const int EMAIL_SEND_WINDOW_SECS = 60 * 60;    // 1 hour
         private const int CONFIRM_MAX_FAILS = 8;                // wrong-code tries per IP per window before lockout
         private const int CONFIRM_FAIL_WINDOW = 10 * 60;        // 10 minutes
         // Wrong-email attempts allowed against a single pending code before it is invalidated and the
@@ -58,6 +67,27 @@ namespace FSO.Server.Api.Core.Controllers
         private static Regex USERNAME_VALIDATION = new Regex("^([a-z0-9]){1}([a-z0-9_]){2,23}$");
 
         #region Registration
+
+        /// <summary>
+        /// Unauthenticated registration discovery. Lets clients (in-game dialog, website) adapt their UI to
+        /// the server's registration mode BEFORE the user fills anything in. Reports only booleans:
+        /// <c>smtp_enabled</c> (email-verification flow vs direct) and <c>key_required</c> (invite-only mode).
+        /// The registration key itself is NEVER returned here or anywhere else — only whether one is needed,
+        /// so no secret is exposed. Callers must fail open (treat an unreachable/absent endpoint as
+        /// "no key required"); the server still enforces the real rule at /confirm and the direct endpoint.
+        /// </summary>
+        [HttpGet]
+        [Route("info")]
+        public IActionResult GetInfo()
+        {
+            var api = Api.INSTANCE;
+            return ApiResponse.Json(HttpStatusCode.OK, new
+            {
+                smtp_enabled = api.Config.SmtpEnabled,
+                key_required = !string.IsNullOrEmpty(api.Config.Regkey)
+            });
+        }
+
         [HttpPost]
         public IActionResult CreateUser([FromForm] RegistrationModel user)
         {
@@ -215,7 +245,8 @@ namespace FSO.Server.Api.Core.Controllers
 
                 // Already a pending confirmation for this email: resend (gated by a cooldown) rather than
                 // refusing, so the in-client "resend code" and website retry buttons work. Past the cooldown
-                // we invalidate the old code and issue a fresh one below.
+                // we invalidate the old code and issue a fresh one below. Bailing here does not send, so it
+                // does not consume the windowed budget enforced next.
                 if (confirm != null)
                 {
                     var created = confirm.expires - (uint)EMAIL_CONFIRMATION_EXPIRE;
@@ -227,6 +258,26 @@ namespace FSO.Server.Api.Core.Controllers
                             error_description = "resend_cooldown"
                         });
                     }
+                }
+
+                // Durable per-email windowed cap. Record THIS attempt and refuse if the address has already
+                // exceeded the cap in the current window - BEFORE sending or touching the pending token. This
+                // counts attempts, not surviving tokens, so a failing SMTP send that deletes its token (below)
+                // still burns budget: the tight-retry hole is closed. Over the cap we return a truthful
+                // rate-limit error and never reach the send, and any existing pending code is left intact.
+                if (da.EmailSendLog.RecordAttempt(model.email, (int)ConfirmationType.email, EMAIL_SEND_WINDOW_SECS) > EMAIL_SEND_MAX_PER_WINDOW)
+                {
+                    return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
+                    {
+                        error = "registration_failed",
+                        error_description = "email_rate_limited"
+                    });
+                }
+
+                // Under the cap and past the cooldown: rotate to a fresh code (done only now we've committed
+                // to actually sending, so a rate-limited request above never invalidates a valid pending code).
+                if (confirm != null)
+                {
                     da.EmailConfirmations.Remove(confirm.token);
                 }
 
@@ -240,9 +291,11 @@ namespace FSO.Server.Api.Core.Controllers
                     expires = expires
                 });
 
-                // send email with recently generated token
+                // send email with recently generated token. This now blocks until the SMTP send actually
+                // succeeds or fails (see ApiMail.Send) instead of firing-and-forgetting, so the response
+                // below reflects the real delivery outcome rather than always claiming success.
                 bool sent = api.SendEmailConfirmationMail(model.email, token, model.confirmation_url, expires);
-                 
+
                 if(sent)
                 {
                     return ApiResponse.Json(HttpStatusCode.OK, new
@@ -251,11 +304,20 @@ namespace FSO.Server.Api.Core.Controllers
                     });
                 }
 
-                return ApiResponse.Json(HttpStatusCode.OK, new
+                // Delivery failed. Drop the just-created (undelivered) confirmation so the registrant can
+                // retry immediately without tripping the resend cooldown, and so no phantom pending
+                // confirmation is left behind. No account is created until /confirm, so nothing is stranded.
+                da.EmailConfirmations.Remove(token);
+
+                // Truthful, provider-agnostic failure using the standard {error, error_description} contract.
+                // The specific SMTP host/exception details were logged server-side in ApiMail.Send and are
+                // never surfaced here. "email_send_failed" tells the caller the account was NOT created and
+                // that retrying (or contacting support) is the next step.
+                return ApiResponse.Json(HttpStatusCode.OK, new RegistrationError()
                 {
-                    status = "email_failed"
+                    error = "registration_failed",
+                    error_description = "email_send_failed"
                 });
-               
             }
         }
 

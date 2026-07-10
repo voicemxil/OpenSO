@@ -40,22 +40,31 @@ namespace FSO.Server.Api.Core.Utils
             return baseTemplate.Replace("%content%", content);
         }
 
+        /// <summary>
+        /// Sends the composed mail and returns whether delivery to the SMTP server actually succeeded.
+        /// This blocks until the SMTP transaction completes (bounded by <see cref="SmtpClient.Timeout"/>)
+        /// so callers can report the real outcome to the user. Returns false — never throws — on any
+        /// failure, logging the provider details server-side only. SMTP host/exception details are never
+        /// returned to the caller.
+        /// </summary>
         public bool Send(string to, string subject)
         {
             Api api = Api.INSTANCE;
 
-            if(api.Config.SmtpEnabled)
+            if (!api.Config.SmtpEnabled)
+                return false;
+
+            try
             {
-                try
+                using (MailMessage message = new MailMessage())
+                using (SmtpClient client = new SmtpClient())
                 {
-                    MailMessage message = new MailMessage();
                     message.From = new MailAddress(api.Config.SmtpFrom ?? api.Config.SmtpUser, "OpenSO Staff");
                     message.To.Add(to);
                     message.Subject = subject;
                     message.IsBodyHtml = true;
                     message.Body = ComposeBody(strings);
 
-                    SmtpClient client = new SmtpClient();
                     // MUST be false: when true, SmtpClient ignores the NetworkCredential set below and tries
                     // the machine's default creds -> no SMTP auth, which providers like Brevo reject.
                     client.UseDefaultCredentials = false;
@@ -63,17 +72,24 @@ namespace FSO.Server.Api.Core.Utils
                     client.Host = api.Config.SmtpHost;
                     client.Port = api.Config.SmtpPort;
                     client.EnableSsl = true;
-                    client.Credentials = new System.Net.NetworkCredential(api.Config.SmtpUser, api.Config.SmtpPassword); 
+                    client.Credentials = new System.Net.NetworkCredential(api.Config.SmtpUser, api.Config.SmtpPassword);
+                    // Cap how long a hung/slow SMTP server can stall the request (default is 100s).
+                    client.Timeout = 15000;
 
-                    // Send async
-                    client.SendMailAsync(message);
+                    // Block until the SMTP transaction completes. Previously this was a fire-and-forget
+                    // SendMailAsync that returned true immediately, so a failed send still reported success
+                    // to the registrant (an invisible dead end). Send() throws on any delivery failure.
+                    client.Send(message);
+                }
 
-                    return true;
-                } catch (Exception) {
-                    return false;
-                }  
+                return true;
             }
-            return false;
+            catch (Exception ex)
+            {
+                // Log the real reason server-side only; never leak SMTP host/exception details to the caller.
+                Console.WriteLine("[ApiMail] Failed to send \"" + subject + "\" to " + to + ": " + ex.Message);
+                return false;
+            }
         }
     }
 }

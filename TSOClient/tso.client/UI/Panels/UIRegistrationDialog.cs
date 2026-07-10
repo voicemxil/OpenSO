@@ -21,9 +21,16 @@ namespace FSO.Client.UI.Panels
         private string PendingEmail;
         private bool Busy;
 
+        // Invite-only support. KeyRequired is discovered from the server (userapi/registration/info) and
+        // fails OPEN to false, so a public server - or an unreachable discovery call - leaves the dialog
+        // byte-for-byte identical to before (no key field, original 360x300 layout). KeyFieldShown guards
+        // the one-time grow so we don't resize twice.
+        private bool KeyRequired;
+        private bool KeyFieldShown;
+
         private UILabel MsgLabel;
-        private UILabel EmailLabel, CodeLabel, UserLabel, PassLabel;
-        private UITextEdit EmailField, CodeField, UserField, PassField;
+        private UILabel EmailLabel, CodeLabel, UserLabel, PassLabel, KeyLabel;
+        private UITextEdit EmailField, CodeField, UserField, PassField, KeyField;
         private UIButton ActionBtn, ResendBtn;
 
         public UIRegistrationDialog(Action<string> onRegistered = null)
@@ -49,6 +56,13 @@ namespace FSO.Client.UI.Panels
             PassLabel  = AddLabel("Password", 200);
             PassField  = AddField(218, true, 64);
 
+            // Registration key: created up front but hidden and left out of the layout until the server tells
+            // us this is an invite-only server (see ShowKeyField). Placed below the password; the dialog grows
+            // to fit only when it's actually shown, so public-mode geometry is unchanged.
+            KeyLabel   = AddLabel("Registration key", 256);
+            KeyField   = AddField(274, false, 64);
+            KeyLabel.Visible = KeyField.Visible = false;
+
             ActionBtn = new UIButton { X = 24, Y = 258, Width = 150, Caption = "Send code" };
             ActionBtn.OnButtonClick += Action_Click;
             Add(ActionBtn);
@@ -59,6 +73,29 @@ namespace FSO.Client.UI.Panels
 
             ShowStep1();
             if (!FSOEnvironment.SoftwareKeyboard) GameFacade.Screens.inputManager.SetFocus(EmailField);
+
+            // Discover the server's registration mode. Fire-and-forget, non-blocking, fail-open: the form is
+            // fully usable before (and even if) this returns. Only flips on the key field for invite-only.
+            _ = Client.GetInfo(OnInfoResult);
+        }
+
+        private void OnInfoResult(RegistrationInfo info)
+        {
+            KeyRequired = info.KeyRequired;
+            // If discovery lands while the user is already on step 2 (rare - the email round-trip is far slower
+            // than this GET), reveal the key field immediately. Otherwise ShowStep2 will do it.
+            if (KeyRequired && CodeField.Visible) ShowKeyField();
+        }
+
+        // Reveal the registration-key field and grow the dialog to fit it (once). Idempotent.
+        private void ShowKeyField()
+        {
+            KeyLabel.Visible = KeyField.Visible = true;
+            if (KeyFieldShown) return;
+            KeyFieldShown = true;
+            SetSize(360, 356);
+            ActionBtn.Y = 314;
+            ResendBtn.Y = 314;
         }
 
         private UILabel AddLabel(string text, int y)
@@ -83,6 +120,7 @@ namespace FSO.Client.UI.Panels
             CodeLabel.Visible = CodeField.Visible = false;
             UserLabel.Visible = UserField.Visible = false;
             PassLabel.Visible = PassField.Visible = false;
+            KeyLabel.Visible = KeyField.Visible = false;
             ResendBtn.Visible = false;
             ActionBtn.Caption = "Send code";
             MsgLabel.Caption = "Enter your email and we'll send you a 6-digit verification code.";
@@ -96,6 +134,7 @@ namespace FSO.Client.UI.Panels
             PassLabel.Visible = PassField.Visible = true;
             ResendBtn.Visible = true;
             ActionBtn.Caption = "Create account";
+            if (KeyRequired) ShowKeyField();
         }
 
         private void SetBusy(bool busy, string msg)
@@ -122,11 +161,13 @@ namespace FSO.Client.UI.Panels
                 var code = CodeField.CurrentText.Trim();
                 var user = UserField.CurrentText.Trim();
                 var pass = PassField.CurrentText;
+                var key = KeyRequired ? KeyField.CurrentText.Trim() : "";
                 if (code.Length == 0) { MsgLabel.Caption = "Enter the code from your email."; return; }
                 if (user.Length < 3) { MsgLabel.Caption = "Username must be at least 3 characters."; return; }
                 if (pass.Length == 0) { MsgLabel.Caption = "Please choose a password."; return; }
+                if (KeyRequired && key.Length == 0) { MsgLabel.Caption = "This server is invite-only - enter your registration key."; return; }
                 SetBusy(true, "Creating account...");
-                _ = Client.ConfirmCode(code, PendingEmail, user, pass, OnConfirmResult);
+                _ = Client.ConfirmCode(code, PendingEmail, user, pass, key, OnConfirmResult);
             }
         }
 
@@ -143,7 +184,8 @@ namespace FSO.Client.UI.Panels
             if (r.Success)
             {
                 ShowStep2();
-                MsgLabel.Caption = "We emailed a code to " + PendingEmail + ". Enter it below with the username and password you'd like.";
+                MsgLabel.Caption = "We emailed a code to " + PendingEmail + ". Enter it below with the username and password you'd like"
+                    + (KeyRequired ? ", plus this server's registration key." : ".");
                 if (!FSOEnvironment.SoftwareKeyboard) GameFacade.Screens.inputManager.SetFocus(CodeField);
             }
             else MsgLabel.Caption = FriendlyError(r.Error);
@@ -164,13 +206,21 @@ namespace FSO.Client.UI.Panels
                 CodeLabel.Visible = CodeField.Visible = false;
                 UserLabel.Visible = UserField.Visible = false;
                 PassLabel.Visible = PassField.Visible = false;
+                KeyLabel.Visible = KeyField.Visible = false;
                 ResendBtn.Visible = false;
                 MsgLabel.Caption = "Your account '" + newUser + "' is ready! Close this window and sign in.";
                 ActionBtn.Caption = "Close";
                 ActionBtn.OnButtonClick -= Action_Click;
                 ActionBtn.OnButtonClick += _ => { OnRegistered?.Invoke(newUser); UIScreen.RemoveDialog(this); };
             }
-            else MsgLabel.Caption = FriendlyError(r.Error);
+            else
+            {
+                // Safety net: if discovery failed (fail-open) but the server actually requires a key, the
+                // first confirm comes back key_wrong. Reveal the key field so the user can supply it and
+                // retry inline instead of hitting a dead end.
+                if (r.Error == "key_wrong" && !KeyFieldShown) { KeyRequired = true; ShowKeyField(); }
+                MsgLabel.Caption = FriendlyError(r.Error);
+            }
         }
 
         private static string FriendlyError(string code)
@@ -178,6 +228,7 @@ namespace FSO.Client.UI.Panels
             switch (code)
             {
                 case "resend_cooldown": return "Please wait a moment before requesting another code.";
+                case "email_rate_limited": return "Too many email requests for this address. Please wait a while before trying again.";
                 case "too_many_attempts": return "Too many incorrect codes. Please wait a few minutes, then try again.";
                 case "invalid_token": return "That code isn't right (or it expired). Double-check your email, or resend.";
                 case "email_taken": return "That email already has an account.";
@@ -187,9 +238,11 @@ namespace FSO.Client.UI.Panels
                 case "user_invalid": return "Usernames can only use lowercase letters, numbers, and underscores.";
                 case "user_exists": return "That username is taken - please pick another.";
                 case "pass_required": return "Please choose a password.";
+                case "key_wrong": return "That registration key isn't valid for this server. Check the key you were given.";
                 case "registrations_too_frequent": return "You registered very recently - please wait a bit.";
                 case "ip_banned": return "Registration isn't available from your connection.";
-                case "email_failed": return "We couldn't send the email just now. Please try again shortly.";
+                case "email_failed":       // legacy code
+                case "email_send_failed": return "We couldn't send the email just now. Please try again shortly.";
                 case "smtp_disabled": return "Email verification isn't available right now.";
                 case "missing_fields": return "Please fill in all the fields.";
                 case "network_error": return "Couldn't reach the server. Check your connection and try again.";

@@ -24,6 +24,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Exposes internal test seams (e.g. SqlEmailConfirmations.CodeSource) to the verification test
+         project so the duplicate-token retry loop can be exercised deterministically. No effect on
+         shipped behaviour. -->
+    <InternalsVisibleTo Include="FSO.Server.Api.Core.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Dapper" Version="2.1.66" />
     <PackageReference Include="MySql.Data" Version="9.4.0" />
     <PackageReference Include="Ninject" Version="3.3.6" />
@@ -80,6 +87,12 @@
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="DatabaseScripts\changes\0032_email_confirm_tries.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="DatabaseScripts\changes\0033_email_confirm_token_unique.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+    <Content Include="DatabaseScripts\changes\0034_email_send_log.sql">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
     <Content Include="DatabaseScripts\changes\0030_tokens.sql">
