@@ -7,18 +7,31 @@ record the local rules.*
 
 ## The two systems
 
+*(2026-07-11: the eccd918f resolve revert had left the contract unused — `TAAResolve.Draw` read
+engine statics piecemeal again while `BuildContract` survived only in comments. The contract is
+restored, and the lifecycle below gained frame-continuity + transactional commit; this section
+describes the current state.)*
+
 **TemporalFrameContract** (`tso.common/Utils/TemporalFrameContract.cs`) — everything the resolve
 consumes for one frame, built in one place (`TAAResolve.BuildContract`) with its coherence rules
 (`Ready`) attached. Color, velocity, history handles, jitter deltas, dimensioning, blend/window
-parameters, and the resolve **tier**. If a new input is added to the resolve, it goes through the
-contract, not through a new static read at a new time.
+parameters, the resolve **tier**, the presented-**frame id**, and the **resolve version**.
+`Ready` additionally proves velocity sits on the color grid. If a new input is added to the
+resolve, it goes through the contract, not through a new static read at a new time.
 
 **TemporalHistoryState** (`tso.common/Utils/TemporalHistoryState.cs`) — the persistent state:
-history/meta ping-pong targets plus an explicit record of the *layout* they were written with
-(owner presenter, tier Full/Lite/Debug, TAAU flag). The resolve declares its layout each frame
-(`BeginResolve`); any mismatch clears history first. `Invalidate(reason)` covers events the
+history/meta ping-pong targets plus an explicit record of the *layout and frame* they were
+written with (owner presenter, tier Full/Lite/Debug, TAAU flag, **input grid dimensions, jitter
+cycle length, resolve version, frame id**). The lifecycle is transactional:
+`BeginResolve(contract)` declares what the resolve is about to write and clears on any mismatch
+with the *committed* record; `Commit(frameId)` — called only after the draw was issued — promotes
+the declaration, stamps the frame id, and rotates the ping-pong. A resolve that begins but never
+commits leaves the committed record describing what history genuinely holds; the next frame's
+continuity check (`FrameId == committed + 1`) then clears. `Invalidate(reason)` covers events the
 signature can't see. History resets are no longer implicit "the shader's rejection heuristics
-will eat it" events — they are logged, reasoned state transitions.
+will eat it" events — they are logged, reasoned state transitions, and each `Clear` bumps
+`ResetSerial`, which the jitter drivers (`World.PreDraw`, city `Terrain`) observe to restart the
+Halton phase index at 0 alongside the fresh history.
 
 Invalidation triggers now wired:
 
@@ -27,9 +40,12 @@ Invalidation triggers now wired:
 | TAADebug toggle (either direction) | tier in layout signature |
 | Full ↔ Lite tier switch | tier in layout signature |
 | TAAU / upscaler toggle | upscale flag in signature |
+| Render-scale change under TAAU (history stays native-sized) | input grid + jitter cycle in signature |
+| History/meta encoding change across builds | `TAAResolve.RESOLVE_VERSION` in signature |
+| Frames presented without a committed resolve (fade/zoom transition, velocity-debug bypass, missing-target fall-through, aborted draw) | frame-continuity check (`PPXDepthEngine.FrameId` vs committed frame id) |
 | Lot ↔ city presenter switch | `DeclareOwner` (World instance vs city token) |
 | New lot on the same World instance | explicit `InvalidateTAAHistory("blueprint init")` |
-| Resize / render-scale / fp16-fallback change | reallocation (always cleared) |
+| Resize / render-scale (non-TAAU) / fp16-fallback change | reallocation (always cleared) |
 | Camera cut / teleport (future) | call `PPXDepthEngine.InvalidateTAAHistory(reason)` at the site |
 
 The debug-exit bug this kills: TAADebug wrote diagnostics into meta.GB; the first frame after

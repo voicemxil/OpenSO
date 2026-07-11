@@ -301,7 +301,8 @@ namespace FSO.Common.Utils
             return result;
         }
 
-        // TAA history ping-pong: read "prev", write "curr", SwapHistory toggles roles each frame.
+        // TAA history ping-pong: read "prev", write "curr"; TemporalHistoryState.Commit rotates roles
+        // when (and only when) a resolve actually produced a frame.
         public static void EnableHistoryTargets(bool enable)
         {
             if (enable && GD == null) return;
@@ -328,7 +329,6 @@ namespace FSO.Common.Utils
         public static RenderTarget2D GetHistoryCurr() => TAAHistory.Curr;
         public static RenderTarget2D GetMetaPrev() => TAAHistory.MetaPrev;
         public static RenderTarget2D GetMetaCurr() => TAAHistory.MetaCurr;
-        public static void SwapHistory() => TAAHistory.Swap();
 
         private static RenderTarget2D ActiveColor;
         private static RenderTarget2D ActiveDepth;
@@ -485,9 +485,16 @@ namespace FSO.Common.Utils
         public static Action<GraphicsDevice, Texture2D> SharpenFunc;
         public static bool WithOpacity = true;
 
+        // Monotonic presented-frame counter for the temporal resolve's continuity check: the resolve
+        // commits the FrameId it consumed; any frame presented WITHOUT a commit (fade/zoom transition,
+        // velocity-debug bypass, missing-target fall-through) advances this past HistoryFrameId+1 and
+        // the next BeginResolve clears history instead of reprojecting across the gap.
+        public static long FrameId { get; private set; }
+
         public static void DrawBackbuffer(float opacity, float scale)
         {
             if (Backbuffer == null) return; //this gfx mode does not use a rendertarget backbuffer
+            FrameId++;
             // velocity-debug override: skip the whole chain and visualize MRT1 instead
             if (VelocityDebugFunc != null && VelocityTarget != null && scale == 1f && (!WithOpacity || opacity >= 1f))
             {

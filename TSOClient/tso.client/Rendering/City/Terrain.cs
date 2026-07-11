@@ -146,6 +146,8 @@ namespace FSO.Client.Rendering.City
         private bool m_PrevMainValid;
         // TAA sub-pixel jitter state for the city map (mirrors World's per-frame jitter).
         private int m_TAAFrameIndex;
+        // last observed TemporalHistoryState.ResetSerial: a history clear restarts the jitter cycle
+        private int m_TAAHistoryResetSerial;
         private int[][] m_SurTileOffs = new int[][] 
         {
             new int[] {0, -1},
@@ -1513,6 +1515,13 @@ namespace FSO.Client.Rendering.City
             if (cityTAA)
             {
                 const float JITTER_PIXELS = 0.5f;
+                // a history reset restarts the jitter cycle at phase 0 (mirrors World.PreDraw)
+                var serial = FSO.Common.Utils.PPXDepthEngine.TAAHistory.ResetSerial;
+                if (serial != m_TAAHistoryResetSerial)
+                {
+                    m_TAAHistoryResetSerial = serial;
+                    m_TAAFrameIndex = 0;
+                }
                 // cycled Halton(2,3), mirrors World.PreDraw (see R2Jitter)
                 var r2 = FSO.Common.Utils.R2Jitter.SampleHalton(m_TAAFrameIndex++, FSO.Common.Utils.PPXDepthEngine.SSAA);
                 float hx = r2.X;

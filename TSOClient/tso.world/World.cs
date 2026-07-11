@@ -133,6 +133,8 @@ namespace FSO.LotView
 
         // previous frame's NDC jitter, for the TAA resolve's jitter delta
         private Vector2 _PrevTAAJitterNDC;
+        // last observed TemporalHistoryState.ResetSerial: a history clear restarts the jitter cycle
+        private int _TAAHistoryResetSerial;
 
         public virtual void InitDefaultGraphicsMode()
         {
@@ -689,6 +691,15 @@ namespace FSO.LotView
                 && FSO.Common.Utils.PPXDepthEngine.GetHistoryPrev() != null;
             if (taaJitterReady)
             {
+                // a history reset restarts the jitter cycle at phase 0 (see ResetSerial): fresh
+                // accumulation always sees the same early phases, and a render-scale change can't
+                // leave the index mid-way through the OLD cycle length
+                var serial = FSO.Common.Utils.PPXDepthEngine.TAAHistory.ResetSerial;
+                if (serial != _TAAHistoryResetSerial)
+                {
+                    _TAAHistoryResetSerial = serial;
+                    State.TAAFrameIndex = 0;
+                }
                 // cycled Halton(2,3); free-running R2 crawled directionally (see R2Jitter)
                 var r2 = FSO.Common.Utils.R2Jitter.SampleHalton(State.TAAFrameIndex++, FSO.Common.Utils.PPXDepthEngine.SSAA);
                 float hx = r2.X; // [-0.5, +0.5)

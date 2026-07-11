@@ -5,17 +5,26 @@ namespace FSO.Common.Utils
 {
     /// <summary>
     /// The temporal resolve's persistent state: the history/meta ping-pong targets plus an explicit
-    /// record of the LAYOUT that state was written with. Extracted from PPXDepthEngine statics so that
-    /// every way history can become stale is handled in ONE place, as data, instead of relying on the
-    /// shader's rejection heuristics to eat incompatible bytes.
+    /// record of the LAYOUT and FRAME that state was written with. Extracted from PPXDepthEngine
+    /// statics so that every way history can become stale is handled in ONE place, as data, instead
+    /// of relying on the shader's rejection heuristics to eat incompatible bytes.
     ///
     /// Layout semantics differ per resolve tier: TAA_Core writes meta = (N, dilated velocity encode,
     /// oscillation pack), TAADebug repurposes GB+A for diagnostics, and TAALite keeps its own lighter
     /// meta contract (see TAA.fx). The lot world and the 3D city view also share these targets while
     /// rendering entirely different scenes. Both were previously "handled" implicitly: a tier/debug/
     /// owner switch fed the previous mode's bytes into the new mode's decode for at least one frame.
-    /// Now: TAAResolve declares its layout via BeginResolve each frame, and any mismatch with the
-    /// stored signature clears history first (a reset reason is kept for diagnostics/logging).
+    ///
+    /// The lifecycle is TRANSACTIONAL:
+    ///   BeginResolve(contract) — declares what the resolve is ABOUT to write, verifies it against
+    ///     what history was last COMMITTED with (layout signature + frame continuity), and clears
+    ///     first on any incompatibility. Does NOT mark contents valid.
+    ///   Commit(frameId)        — after the draw was actually issued: records the declared layout +
+    ///     frame id as the committed state and swaps the ping-pong.
+    ///   (no Commit)            — a resolve that begins but never commits (missing technique, early
+    ///     exit) leaves the committed record describing what Prev genuinely holds; the next frame's
+    ///     continuity check (FrameId == committed + 1) then clears, because the scene advanced past
+    ///     the history without the resolve seeing it.
     /// </summary>
     public class TemporalHistoryState
     {
@@ -32,13 +41,32 @@ namespace FSO.Common.Utils
         private bool _AIsPrev;
         public bool IsFP16 { get; private set; }
 
-        // the layout the current history contents were written with
+        // Everything the current history contents were COMMITTED with. Only Commit writes these, so
+        // an aborted resolve can't leave them describing bytes that were never produced.
         private object _Owner;          // which presenter wrote it (lot World instance / city token)
         private ResolveTier _Tier;
         private bool _Upscale;
-        private bool _HasContents;      // false until the first resolve after alloc/clear
+        private int _InputW, _InputH;   // color/velocity grid consumed (render-res under TAAU: changes
+                                        // on a render-scale switch even though history stays native)
+        private int _Phases;            // jitter cycle length the accumulation was built under
+        private int _Version;           // TAAResolve.RESOLVE_VERSION at commit
+        private long _HistoryFrameId;   // PPXDepthEngine.FrameId of the frame that produced Prev
+        private bool _HasContents;      // false until the first Commit after alloc/clear
+
+        // the layout declared by the in-flight BeginResolve, promoted to committed by Commit
+        private ResolveTier _PendingTier;
+        private bool _PendingUpscale;
+        private int _PendingInputW, _PendingInputH, _PendingPhases, _PendingVersion;
+
         private bool _PendingInvalidate;
         public string LastResetReason { get; private set; } = "initial";
+
+        /// <summary>
+        /// Bumped on every Clear. The jitter drivers (World.PreDraw, city Terrain) restart their
+        /// Halton phase index when they observe a new serial, so fresh history always accumulates
+        /// from phase 0 and a scale change can't leave the index mid-way through the OLD cycle.
+        /// </summary>
+        public int ResetSerial { get; private set; }
 
         // meta clear = N=0, prev-velocity ~zero (0.5 bias encode), no oscillation evidence
         private static readonly Color MetaClear = new Color(0, 127, 127, 0);
@@ -47,7 +75,7 @@ namespace FSO.Common.Utils
         public RenderTarget2D Curr => _AIsPrev ? HistoryB : HistoryA;
         public RenderTarget2D MetaPrev => _AIsPrev ? MetaA : MetaB;
         public RenderTarget2D MetaCurr => _AIsPrev ? MetaB : MetaA;
-        public void Swap() { _AIsPrev = !_AIsPrev; }
+        private void Swap() { _AIsPrev = !_AIsPrev; }
 
         /// <summary>
         /// Request a history reset without needing the GraphicsDevice: the clear runs at the next
@@ -74,30 +102,66 @@ namespace FSO.Common.Utils
         }
 
         /// <summary>
-        /// Called by the resolve each frame BEFORE binding targets, declaring the layout it is about
-        /// to write. Performs any pending or signature-mismatch clear. Returns true if history was
-        /// reset (the resolve runs anyway — a cleared history reads as the ordinary first frame:
-        /// meta N=0 pins blend to current, exactly the existing warmup path).
+        /// Called by the resolve each frame BEFORE binding targets, declaring (via the frame
+        /// contract) the layout it is about to write and the frame its inputs belong to. Verifies
+        /// against the COMMITTED state and performs any pending or mismatch clear. Returns true if
+        /// history was reset (the resolve runs anyway — a cleared history reads as the ordinary
+        /// first frame: meta N=0 pins blend to current, exactly the existing warmup path).
+        /// Contents stay unclaimed until Commit.
         /// </summary>
-        public bool BeginResolve(GraphicsDevice gd, ResolveTier tier, bool upscale)
+        public bool BeginResolve(GraphicsDevice gd, in TemporalFrameContract c)
         {
             if (HistoryA == null) return false;
-            if (_HasContents && (tier != _Tier || upscale != _Upscale))
+            if (_HasContents)
             {
-                Invalidate($"layout change ({_Tier}{(_Upscale ? "+U" : "")} -> {tier}{(upscale ? "+U" : "")})");
+                if (c.Tier != _Tier || c.Upscale != _Upscale)
+                    Invalidate($"layout change ({_Tier}{(_Upscale ? "+U" : "")} -> {c.Tier}{(c.Upscale ? "+U" : "")})");
+                else if (c.Color.Width != _InputW || c.Color.Height != _InputH || (int)c.JitterPhases != _Phases)
+                    // the TAAU render-scale case: history stays native-sized, but the input grid,
+                    // reconstruction footprint and jitter cycle all changed underneath it
+                    Invalidate($"input grid change ({_InputW}x{_InputH}/{_Phases}ph -> {c.Color.Width}x{c.Color.Height}/{(int)c.JitterPhases}ph)");
+                else if (c.ResolveVersion != _Version)
+                    Invalidate($"resolve version ({_Version} -> {c.ResolveVersion})");
+                else if (c.FrameId != _HistoryFrameId + 1)
+                    // frames were presented without a committed resolve (fade/zoom transition,
+                    // fall-through, aborted draw): one-frame motion can't reproject across the gap
+                    Invalidate($"frame gap (history frame {_HistoryFrameId} -> current {c.FrameId})");
             }
-            _Tier = tier;
-            _Upscale = upscale;
+            _PendingTier = c.Tier;
+            _PendingUpscale = c.Upscale;
+            _PendingInputW = c.Color.Width;
+            _PendingInputH = c.Color.Height;
+            _PendingPhases = (int)c.JitterPhases;
+            _PendingVersion = c.ResolveVersion;
             bool reset = _PendingInvalidate;
             if (reset) Clear(gd);
-            _HasContents = true;
             return reset;
+        }
+
+        /// <summary>
+        /// Called by the resolve AFTER the draw was issued: promotes the declared layout to the
+        /// committed record, stamps the frame id, marks contents valid, and rotates the ping-pong.
+        /// Every path that skips this leaves the committed state untouched — the frame-gap check in
+        /// BeginResolve then handles the miss.
+        /// </summary>
+        public void Commit(long frameId)
+        {
+            _Tier = _PendingTier;
+            _Upscale = _PendingUpscale;
+            _InputW = _PendingInputW;
+            _InputH = _PendingInputH;
+            _Phases = _PendingPhases;
+            _Version = _PendingVersion;
+            _HistoryFrameId = frameId;
+            _HasContents = true;
+            Swap();
         }
 
         private void Clear(GraphicsDevice gd)
         {
             _PendingInvalidate = false;
             _HasContents = false;
+            ResetSerial++;
             if (HistoryA == null || gd == null) return;
             var prevRTs = gd.GetRenderTargets();
             gd.SetRenderTarget(HistoryA); gd.Clear(Color.Transparent);
@@ -112,7 +176,8 @@ namespace FSO.Common.Utils
         /// Allocate (or free) the ping-pong at the given size. Prefers fp16 history (RGBA8 quantized
         /// the packed depth -> false disocclusions, and stalled color accumulation at one 8-bit LSB),
         /// falling back to Color where HalfVector4 isn't renderable; TAAResolve keys the blunted
-        /// depth-reject tuning off IsFP16 on that path. A (re)allocation always clears.
+        /// depth-reject tuning off IsFP16 on that path. A (re)allocation always clears, so a size or
+        /// format change can never leave committed contents behind.
         /// </summary>
         public void Ensure(GraphicsDevice gd, bool enable, int w, int h)
         {
