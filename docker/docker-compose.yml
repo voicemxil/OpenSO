@@ -59,14 +59,17 @@ services:
 
   # HTTPS reverse proxy for the public API: https://api.openso.org -> Caddy:443 -> openso-server:9000,
   # with automatic Let's Encrypt certs. api.openso.org must be a DNS-only (grey-cloud) record pointing at
-  # this box so Caddy's ACME challenge reaches it. Set API_DOMAIN to your API hostname.
+  # this box so Caddy's ACME challenge reaches it. To point at a different hostname/cert email WITHOUT
+  # editing the tracked Caddyfile, set OPENSO_API_DOMAIN / OPENSO_ACME_EMAIL in the gitignored docker/.env
+  # (or a docker-compose.override.yml) — the Caddyfile reads them as {$VAR:default} placeholders.
   caddy:
     image: caddy:2
     restart: unless-stopped
     depends_on:
       - openso-server
     environment:
-      API_DOMAIN: ${API_DOMAIN:-api.openso.org}
+      OPENSO_API_DOMAIN: ${OPENSO_API_DOMAIN:-api.openso.org}
+      OPENSO_ACME_EMAIL: ${OPENSO_ACME_EMAIL:-admin@openso.org}
     ports:
       - "80:80"
       - "443:443"
