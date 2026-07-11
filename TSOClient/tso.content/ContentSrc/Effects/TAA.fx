@@ -4,7 +4,7 @@
 //   colorTex       — this frame's rendered color (post-scale-resolve, pre-blur).
 //   historyTex     — previous frame's TAA output (RGB) + packed dilated depth (A), velocity-reprojected.
 //   metaHistoryTex — previous frame's meta: R = accumulation count N (N/MaxAccum), GB = previous dilated
-//                    velocity (v*10+0.5), A = packed luma-oscillation state (sign bit + 7-bit EMA).
+//                    velocity (v*10+0.5), A = packed oscillation state (sign 1 + osc 4 + amp 3 bits).
 //   velocityTex    — per-pixel screen-space velocity (.rg) + normalized linear depth (.b) + valid mask (.a).
 //
 // Outputs to TWO render targets:
@@ -255,7 +255,7 @@ struct TAAOut
     // Meta layout (RGBA8): R = new accumulation count N (N/MaxAccum), GB = this frame's dilated velocity
     // encoded v*10+0.5 (saturates at +/-0.05 UV on store — writers clamp at +/-0.5, so beyond that the
     // stored value pins and the velocity-disparity reactive fires during ultra-fast motion: desirable),
-    // A = packed luma-oscillation state (sign bit + 7-bit EMA; 0 on non-reprojectable / meta clear).
+    // A = packed oscillation state (sign 1 + osc 4 + amp 3 bits; 0 on non-reprojectable / meta clear).
     // The TAADebug technique repurposes GB+A for diagnostics and disables their consuming logic.
     float4 meta  : COLOR1;
 };
@@ -539,6 +539,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float4 pm = tex2Dlod(metaHistorySampler, float4(histUV, 0, 0));
     float prevN = pm.r * MaxAccum;
 
+    // META.A DECODE — byte-exact layout sign(1) + osc(4) + amp(3): bit 7 = the last real luma delta's
+    // sign, bits 3-6 = oscillation EMA (16 levels), bits 0-2 = witnessed alternating amplitude
+    // (8 levels spanning 0.35 luma). Mirrors the pack at the bottom of the resolve; RESOLVE_VERSION
+    // guards the layout. debugMeta repurposes meta bytes and must decode as zero state.
+    float metaByte = debugMeta ? 0.0 : floor(pm.a * 255.0 + 0.5);
+    float prevSgn = step(128.0, metaByte);
+    float metaRem = metaByte - prevSgn * 128.0;
+    float prevOscQ = floor(metaRem * (1.0 / 8.0));
+    float prevOsc = prevOscQ * (1.0 / 15.0);
+    float prevAmp = (metaRem - prevOscQ * 8.0) * (1.0 / 7.0);
+
     // Depth disocclusion (relative — depth is normalized linear 0=near..1=far). historyPoint.a holds the
     // dilated depth visible at this texel last frame. Compare against the whole 3x3 valid depth RANGE, not
     // the single dilated depth: at a static edge the jitter flips which neighbour wins the nearest-depth
@@ -578,10 +589,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // from the pixel's own, while canopy during a pan shares the camera's motion — relative motion
         // restores authority regardless of oscillation evidence (a slow trail over osc-proven ground must
         // still scrub).
-        float prevOscE = debugMeta ? 0.0 : saturate((pm.a - 0.5 * step(0.5, pm.a)) / 0.498);
         float relFgnPxE = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale;
         float relMotionE = smoothstep(0.75, 2.5, max(velFgnPx, relFgnPxE));
-        float authFloor = max(lerp(0.3, 0.05, smoothstep(0.25, 0.6, prevOscE)), relMotionE * 0.65);
+        float authFloor = max(lerp(0.3, 0.05, smoothstep(0.25, 0.6, prevOsc)), relMotionE * 0.65);
         rejAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.08, length(m1 - hLow)));
     }
 #endif
@@ -713,11 +723,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // sign-alternation is a signal a ghost structurally cannot produce. Measured on pre-blend curr vs
     // pre-clamp historyRaw so deeper trust doesn't extinguish its own evidence. Disabled under debugMeta.
     float osc = 0.0;
+    float oscAmp = 0.0;
     float packedA = 0.0;
     if (!debugMeta)
     {
-        float prevSgn = step(0.5, pm.a);
-        float prevOsc = saturate((pm.a - 0.5 * prevSgn) / 0.498);
         float dl   = curr.x - historyRaw.x; // signed, pre-clamp history
         // Amplitude gate 0.03 keeps low-contrast texture shimmer out of trust-deepening: in the
         // small-delta regime, slight ghost residue over a textured surface sign-alternates exactly like
@@ -737,18 +746,39 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // made borderline clutter chatter across the lock thresholds). Ghost-safety: a monotonic ghost
         // emits flip=0 streams, which still decay to zero.
         float oscRateUp = 0.15 * lerp(1.0, 2.2, saturate(upscaleRatio - 2.0)); // 0.15 <=0.5x -> 0.33 at 0.33x
-        float oscRate = lerp(0.15, oscRateUp, flip); // build boosted, decay base
-        osc = lerp(prevOsc, flip, oscRate * testify); // ~6-7 frame EMA on witnessing frames
+        // 4-BIT STORAGE AWARENESS: build steps (boosted rate toward 1) always exceed a quantization
+        // level; decay is floored at one 4-bit level per witnessed frame — an unfloored EMA tail
+        // rounds away in storage and would hold residual osc forever (a monotonic ghost must decay
+        // to zero).
+        float oscUp = lerp(prevOsc, 1.0, oscRateUp * testify);
+        float oscDn = max(prevOsc - max(0.15 * prevOsc, 1.0 / 15.0) * testify, 0.0);
+        osc = lerp(oscDn, oscUp, flip); // ~6-7 witnessed-flip build, base-rate decay
+        // ALTERNATING AMPLITUDE (TSR Moire-lite state): the witnessed |delta| on flip frames, kept as
+        // a 3-bit saturating counter — quantized one-level nudges instead of an EMA (3-bit EMA updates
+        // round away in storage). Builds one level per witnessed flip whose observed amplitude exceeds
+        // the stored level; decays one level on a witnessed ONE-SIDED real delta (a ghost's signature)
+        // or when the observed flip amplitude drops a level; holds on quiet frames. Encode spans 0.35
+        // luma (~0.05/level). Consumed as clamp-box slack at the box below.
+        float obsQ = saturate(abs(dl) * (1.0 / 0.35)) * 7.0;
+        float prevAmpQ = prevAmp * 7.0;
+        float ampDir = flip * (step(prevAmpQ + 0.5, obsQ) - step(obsQ, prevAmpQ - 0.5)) - (1.0 - flip) * mag;
+        oscAmp = saturate(prevAmp + ampDir * (1.0 / 7.0) * testify);
         // EVIDENCE WIPE: alternation evidence must not survive history invalidation, or locks re-engage on
         // contaminated history the moment motion stops (bypassing the warmup floor). Locks are RE-EARNED
         // after any invalidation event. Curved (knee 0.25): only meaningful invalidation wipes — grazing
         // partial rejects are noisy and constant near any motion and would nuke locks screen-adjacent to
         // movers every frame.
-        osc *= 1.0 - smoothstep(0.4, 0.85, max(max(depthReject, ghostReject), max(reactive, featReject)));
+        float wipe = 1.0 - smoothstep(0.4, 0.85, max(max(depthReject, ghostReject), max(reactive, featReject)));
+        osc *= wipe;
+        oscAmp *= wipe; // amplitude slack must not survive invalidation either
         // Hold the sign bit through quiet/blind frames. BINARY select: a fractional sign bit under TAAU
         // partial-witness frames corrupts the packedA encode; step() keeps it MojoShader-safe.
         float newSgn = lerp(prevSgn, sgn, step(0.5, mag * testify));
-        packedA = reprojectable ? saturate(newSgn * 0.5 + osc * 0.498) : 0.0; // off-screen = evidence reset
+        // PACK sign(1) + osc(4) + amp(3), byte-exact against RGBA8 rounding (see the decode at the meta
+        // fetch). Off-screen = full evidence reset.
+        packedA = reprojectable
+            ? (newSgn * 128.0 + floor(osc * 15.0 + 0.5) * 8.0 + floor(oscAmp * 7.0 + 0.5)) * (1.0 / 255.0)
+            : 0.0;
     }
 
     // EVIDENCE-CONDITIONED ACCUMULATION (Kalman-gain counter): N counts EVIDENCE, not frames. The
@@ -831,9 +861,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // standing in for the first witnessed flips, halving the entry edge — proven thin geometry reaches
     // partial lock in roughly half the frames; the kill-gates below are unaffected.
     float lockLo = lerp(0.24, 0.32, floorScale) * lerp(1.0, 0.5, thinLine);
-    float oscLock = smoothstep(lockLo, 0.7, osc) * stillGate
-                  * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
-                  * (1.0 - featReject) * (1.0 - noVel);
+    // Lock gate stack — shared by the lock and the amplitude slack below: stillness plus every
+    // disocclusion/contamination detector silent.
+    float lockGates = stillGate
+                    * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
+                    * (1.0 - featReject) * (1.0 - noVel);
+    float oscLock = smoothstep(lockLo, 0.7, osc) * lockGates;
     // Locks do NOT widen the box (no reference does — FSR2's locks lerp toward unclamped history instead;
     // see the lock escape after the clamp below, bounded by its endpoints and unable to compound).
     float gammaEff = GAMMA;
@@ -855,6 +888,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     gammaEff *= lerp(1.0, TuneMotionClampTighten, moveGate * 0.8 * smoothstep(1.0, 1.5, upscaleRatio));
     float3 cmin = m1 - gammaEff * sigma;
     float3 cmax = m1 + gammaEff * sigma;
+    // AMPLITUDE-PROPORTIONAL FLICKER SLACK (TSR Moire-lite consumption; TSR: StableFilteredBoxMax =
+    // max(BoxMax, BoxMin + MoireErrorSize)): widen the LUMA clamp by exactly the witnessed alternating
+    // amplitude — a smooth, evidence-priced allowance replacing lock-threshold chatter on partial-osc
+    // content. Gated by the full lock gate stack (any motion/disocclusion evidence removes it) and
+    // structurally ghost-safe: a monotonic ghost cannot build or hold amplitude state. Chroma untouched.
+    float ampSlackY = oscAmp * 0.35 * lockGates;
+    cmin.x -= ampSlackY;
+    cmax.x += ampSlackY;
     // INPUT-RESOLUTION RECTIFICATION under TAAU (TSR mechanism): the box statistics come from bilinear
     // taps whose mixture changes with jitter phase, so clamping the native-res history re-clips converged
     // output-res detail slightly differently every frame on pixels that can't fully lock. Split the
@@ -900,7 +941,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // phase-independent, and gated by everything oscLock already requires: proven sign-alternation,
     // stillness, and zero rejects — the exact gates that break FSR2 locks. Partial locks get a partial
     // escape. The diff below stays on the resolution-matched lumaHCmp (pre-escape) by design.
-    history = lerp(history, historyRaw, oscLock);
+    // Escape share scales DOWN as measured amplitude rises: the box slack above already admits the
+    // oscillation, and keeping both at full strength would license a ghost band.
+    history = lerp(history, historyRaw, oscLock * (1.0 - 0.5 * oscAmp));
 
     // --- Blend: content-adaptive luminance-feedback weight, diff-driven. The counter (newN) feeds the
     //     deep end and the warmup ramp; it does not drive the clamp. ---
@@ -1087,7 +1130,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     else
     {
         // Shipping encode: R = N, GB = this frame's dilated velocity for next frame's disparity reactive,
-        // A = packed oscillation state (sign bit + 7-bit EMA; 0 on non-reprojectable = evidence reset).
+        // A = packed oscillation state (sign 1 + osc 4 + amp 3; 0 on non-reprojectable = evidence reset).
         o.meta = float4(newN / MaxAccum,
                         velocity.x * 10.0 + 0.5,
                         velocity.y * 10.0 + 0.5,

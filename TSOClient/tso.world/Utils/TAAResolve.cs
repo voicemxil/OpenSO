@@ -18,7 +18,7 @@ namespace FSO.LotView.Utils
         // Part of the history layout signature: bump when the history/meta ENCODING or the
         // accumulation semantics change (shader meta layout, depth packing, N decode), so a new
         // resolve can never interpret bytes accumulated by an old one.
-        private const int RESOLVE_VERSION = 1;
+        private const int RESOLVE_VERSION = 2; // v2: meta.A re-packed sign(1) + osc(4) + amp(3)
 
         // stable-area current-frame weight; 0.06 = ~16-frame accumulation window at native
         private const float BLEND_FACTOR = 0.06f;
