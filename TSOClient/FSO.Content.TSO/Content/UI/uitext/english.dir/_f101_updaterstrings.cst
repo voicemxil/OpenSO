@@ -64,3 +64,5 @@ Error Message:
 %s^
 
 32 ^This server requires OpenSO version %s (you currently have %s). Automatic in-game updates are only available on Windows. Please download and install the latest version using the OpenSO Launcher (https://openso.org), then start the game again.^
+
+33 ^This server requires OpenSO version %s (you currently have %s). Click OK to hand this update to the OpenSO Launcher, which will update your game and relaunch it automatically.^
