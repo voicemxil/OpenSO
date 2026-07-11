@@ -205,13 +205,12 @@ namespace FSO.LotView
             get
             {
                 var p = Cameras.Projection;
-                // jitter at the getter, so consumers that compute view*Projection themselves also get it
-                if (TAAJitter.X != 0 || TAAJitter.Y != 0)
-                {
-                    p.M31 -= TAAJitter.X;
-                    p.M32 -= TAAJitter.Y;
-                }
-                return p;
+                // jitter at the getter, so consumers that compute view*Projection themselves also get it.
+                // Projection-agnostic NDC translation (not a raw M31/M32 offset): during the 2D<->3D camera
+                // transition Cameras.Projection is a lerp of an ortho and a perspective matrix, on which an
+                // M31/M32-only jitter is depth-dependent and blows up (the "accentuated/drifted" transition
+                // jitter). Bit-identical to the old path once the camera settles into pure perspective.
+                return FSO.Common.Utils.PPXDepthEngine.JitterProjection(p, TAAJitter);
             }
         }
 

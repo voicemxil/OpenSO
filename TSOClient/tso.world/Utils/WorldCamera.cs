@@ -177,6 +177,12 @@ namespace FSO.LotView.Utils
             depthRange /= PreciseZoom;
 
             var isoScale = Math.Sqrt(WorldSpace.WorldUnitsPerTile * WorldSpace.WorldUnitsPerTile * 2.0f) / diagnal;
+            // NOTE: the box SIZE (hb/vb) intentionally tracks the LIVE bound viewport while the ORIGIN
+            // (hb2/vb2) anchors to ViewDimensions - 2D-mode floor/lightmap rendering draws into padded
+            // offscreen buffers and needs the box to extend to the bound target. Do NOT unify these to
+            // ViewDimensions (tried 2026-07-11: offset floors/lightmaps in 2D after a 3D->2D switch).
+            // The 2D->3D transition-endpoint skew this caused under render scale is fixed by snapshotting
+            // the outgoing camera in CameraControllers.SetCameraType instead.
             var hb = (float)(m_Device.Viewport.Width * isoScale);
             var vb = (float)(m_Device.Viewport.Height * isoScale);
 

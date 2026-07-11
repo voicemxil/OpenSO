@@ -28,6 +28,24 @@ namespace FSO.Common.Utils
         // (sky dome) un-jitter their motion vectors
         public static Vector2 TAAJitterNDC = Vector2.Zero;
 
+        /// <summary>
+        /// Apply a sub-pixel TAA jitter to a projection matrix as a TRUE constant NDC translation that is
+        /// correct for ANY projection — perspective, orthographic, or a component-wise lerp between them
+        /// (the lot's 2D&lt;-&gt;3D camera transition blends an ortho and a perspective matrix each frame).
+        /// Offsetting only M31/M32 is a constant NDC shift ONLY for a pure-perspective matrix (clip.w = -z);
+        /// on a blended/near-orthographic matrix the shift becomes depth-dependent and explodes near the
+        /// blend's w-singularity — the "accentuated / drifted" jitter seen mid-transition. General form:
+        /// new col1 += jx*col4, col2 += jy*col4, so ndc' = ndc + (jx, jy) for every vertex regardless of w.
+        /// Bit-identical to the old M31/M32 path for a pure-perspective matrix (M14=M24=M44=0, M34=-1).
+        /// </summary>
+        public static Matrix JitterProjection(Matrix p, Vector2 ndcJitter)
+        {
+            if (ndcJitter.X == 0f && ndcJitter.Y == 0f) return p;
+            p.M11 += ndcJitter.X * p.M14; p.M21 += ndcJitter.X * p.M24; p.M31 += ndcJitter.X * p.M34; p.M41 += ndcJitter.X * p.M44;
+            p.M12 += ndcJitter.Y * p.M14; p.M22 += ndcJitter.Y * p.M24; p.M32 += ndcJitter.Y * p.M34; p.M42 += ndcJitter.Y * p.M44;
+            return p;
+        }
+
         // Bloom mip chain (half, quarter, ... of viewport res). HalfVector4 so blurred highlights don't
         // clip while accumulating. Allocated on demand by EnableBloomTargets, used by BloomPass.
         public const int BLOOM_MIPS = 5;

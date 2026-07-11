@@ -237,10 +237,11 @@ namespace FSO.LotView.Components
             var scaleVec = Vector3.TransformNormal(new Vector3(1, 0, 0), view);
             view = Matrix.CreateScale(1 / scaleVec.Length()) * view;
             effect.View = view;
-            // apply TAA jitter (incoming projection is un-jittered), same M31/M32 convention as WorldState.Projection
+            // apply TAA jitter (incoming projection is un-jittered), same projection-agnostic NDC
+            // translation as WorldState.Projection — a raw M31/M32 offset would warp the dome relative to
+            // the world through the ortho<->perspective 2D/3D transition (see PPXDepthEngine.JitterProjection)
             var jitter = PPXDepthEngine.TAAJitterNDC;
-            var projJit = projection;
-            if (jitter.X != 0 || jitter.Y != 0) { projJit.M31 -= jitter.X; projJit.M32 -= jitter.Y; }
+            var projJit = PPXDepthEngine.JitterProjection(projection, jitter);
             effect.Projection = projJit;// (state.Camera as WorldCamera3D)?.BaseProjection() ?? state.Camera.Projection;
             effect.World = Matrix.CreateScale(5f * scale);
             gd.DepthStencilState = DepthStencilState.None;

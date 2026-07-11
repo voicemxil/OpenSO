@@ -157,8 +157,19 @@ namespace FSO.LotView.Utils.Camera
             if (transitionTime < 0) transitionTime = TransitionTime;
             if (_ActiveCamera != null && transitionTime > 0)
             {
-                //start transitioning the last camera
-                TransitionWeights.Add(new CameraTransition(_ActiveCamera.BaseCamera, 1f, transitionTime, type == CameraControllerType._3D ? (1/50f) : 5f));
+                //start transitioning the last camera. SNAPSHOT its matrices instead of holding the live
+                //camera: the outgoing endpoint must stay what was on screen at the switch. WorldCamera's
+                //ortho sizes itself to the LIVE bound viewport (by design - see CalculateProjection), so a
+                //live 2D endpoint recalculated mid-draw against the render-scaled PPX backbuffer (3D mode
+                //activates render scale; GameResized dirties projections right after this) shifts half a
+                //screen and zooms - the 2D->3D transition "starts way over to the left" jank. Captured here
+                //during Update, the native window viewport is bound, so the matrices match the last frame.
+                var snap = new DummyCamera
+                {
+                    View = _ActiveCamera.BaseCamera.View,
+                    Projection = _ActiveCamera.BaseCamera.Projection
+                };
+                TransitionWeights.Add(new CameraTransition(snap, 1f, transitionTime, type == CameraControllerType._3D ? (1/50f) : 5f));
             }
             ICameraController target;
             switch (type)
