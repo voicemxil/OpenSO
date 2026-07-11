@@ -13,7 +13,7 @@ namespace FSO.TAALab
     /// Interactive TAA tuning lab. Renders a synthetic animated scene at render resolution (output *
     /// renderScale), builds an exact per-object velocity buffer, then runs the game's REAL compiled TAA
     /// resolve (Content/DX/Effects/TAA.xnb, technique "TAA" = TAA_Core or "TAALite" — live A/B combo;
-    /// the SM4 build, so ALL 22 Tune* uniforms incl. the #if SM4-only ones are live) on it exactly the way
+    /// the SM4 build, so ALL 17 Tune* uniforms incl. the #if SM4-only ones are live) on it exactly the way
     /// TAAResolve.Draw does — history/meta ping-pong at OUTPUT res (Cosmic TAAU when renderScale < 1) —
     /// with every promoted Tune* uniform live-adjustable from the keyboard.
     ///
@@ -40,11 +40,13 @@ namespace FSO.TAALab
         private SpriteBatch SB;
         private Effect TAA;
         private Effect LabVel;
+        private Effect LabDown; // lab-only ground-truth downsampler (linear-light + Gaussian reference)
         private PixelFont Font;
 
         private Texture2D White;
         private Texture2D Checker;
         private Texture2D Gradient;
+        private Texture2D Noise;   // fine-noise patch (fixed-seed; stipple/texture-crunch venue)
 
         private RenderTarget2D SceneRT;   // render res, Color
         private RenderTarget2D VelRT;     // render res, HalfVector4
@@ -104,6 +106,25 @@ namespace FSO.TAALab
         private static readonly Color RevealCol = new Color(0.88f, 0.58f, 0.46f);
         private const float TeleportDX = 400f, TeleportDY = 150f;
 
+        // Bright-highlight cluster (2026-07-10 — the ringing artifact's venue was missing from the
+        // scene): near-white sub-pixel dots the negative-lobe kernels can ring against and the Karis
+        // weighting must keep from sparkling. Three static + one slow ORBITER (sub-pixel tangential
+        // creep ~0.2 px/frame — also exercises the slow phase).
+        private static readonly Vector2 GlintOrbitCenter = new Vector2(870, 100);
+        private const float GlintOrbitRadius = 4f;
+        private const float GlintOrbitSpeed = 0.05f; // rad/frame at speed 1
+        // Fine-noise texture patch (sand analogue — the stipple-at-full-accumulation venue; finer
+        // than a render pixel under upscale). Static, top-right, clear of the rotator's swept reach.
+        private static readonly Rectangle NoisePatchRect = new Rectangle(1150, 60, 96, 96);
+        // VELOCITY-LESS mover: drawn in the COLOR pass only — its region keeps the background's
+        // zero-velocity/0.95-depth write, so it moves while the velocity buffer says still. This is
+        // the game's animated-texture / velocity-MRT-skipping overlay case: the resolve must catch
+        // it with the variance clamp + luma feedback alone (no reprojection, no depth reject).
+        private static readonly Vector2 NoVelStart = new Vector2(60, 24);
+        private const float NoVelSpeed = 1.5f; // px/frame at speed 1
+        private static readonly Point NoVelSize = new Point(90, 56);
+        private static readonly Color NoVelCol = new Color(0.55f, 0.40f, 0.35f);
+
         /// <summary>Full scene state for one frame — computed by PoseAt, never mutated.</summary>
         private struct ScenePose
         {
@@ -112,6 +133,8 @@ namespace FSO.TAALab
             public float LineX;
             public Vector2 PairA, PairB;
             public bool Reveal;
+            public float GlintAngle;
+            public Vector2 NoVelMover;
             public float[] MeshAngles;
         }
         private float SimT, MeshT;          // interactive virtual scene time (frames at speed 1)
@@ -179,18 +202,15 @@ namespace FSO.TAALab
             public float RespEnd = TAATuning.RespEnd;
             public float MotionTrustCap = TAATuning.MotionTrustCap;
             public float MotionClampTighten = TAATuning.MotionClampTighten;
-            public float RawSoftenOnset = TAATuning.RawSoftenOnset;
-            public float RawSoftenSlope = TAATuning.RawSoftenSlope;
-            public float RawSoftenMotionSup = TAATuning.RawSoftenMotionSup;
-            public float Gamma = TAATuning.Gamma;
-            public float TexDetailFloor = TAATuning.TexDetailFloor;
+            // gamma schedule endpoints — a FIXED reference schedule, NOT in the optimizer vector
+            public float GammaNative = TAATuning.GammaNative;
+            public float GammaUpscale = TAATuning.GammaUpscale;
             public float ConfFloor = TAATuning.ConfFloor;
             public float RingLo = TAATuning.RingLo;
             public float RingHi = TAATuning.RingHi;
-            // structural constants (2026-07-07 promotion — the full-vs-lite haze/ghost hunt)
+            // structural constants (2026-07-07 promotion; 2026-07-10 reference-alignment prune removed
+            // RawSoften*/TexDetailFloor/KarisFade/GammaMotionDecay — see TAATuning.cs)
             public float DirectClampMix = TAATuning.DirectClampMix;
-            public float KarisFade = TAATuning.KarisFade;
-            public float GammaMotionDecay = TAATuning.GammaMotionDecay;
             public float ConfFadeN = TAATuning.ConfFadeN;
             public float GrowOffPhase = TAATuning.GrowOffPhase;
             public float DeepCapBase = TAATuning.DeepCapBase;
@@ -212,44 +232,99 @@ namespace FSO.TAALab
         // fresh instance serves as the reset-to-SHIPPED-defaults table.
         private static readonly Tunables Defaults = new Tunables();
 
+        // --- A/B slot: B starts as the SHIPPED defaults, snapshottable from the sliders. Key 'B'
+        //     (or the checkbox) swaps which set feeds the interactive resolve; "Score A vs B" runs
+        //     both through the auto-tuner's 240-frame metric for a numbers-backed verdict. ---
+        private readonly Tunables TuneB = new Tunables();
+        private bool UseB;
+        /// <summary>Full copy: the 15 Tune* + 10 Lite* optimizer vectors cover 25 of the 27 fields;
+        /// the 2 gamma-schedule fields (non-optimized) are copied explicitly.</summary>
+        private static Tunables CloneTunables(Tunables s)
+        {
+            var t = new Tunables();
+            CopyTunables(s, t);
+            return t;
+        }
+        private static void CopyTunables(Tunables src, Tunables dst)
+        {
+            ApplyVector(ToVector(src), dst);
+            ApplyLiteVector(ToLiteVector(src), dst);
+            dst.GammaNative = src.GammaNative;   // non-optimized: explicit copy (not in any vector)
+            dst.GammaUpscale = src.GammaUpscale;
+        }
+
         // --- 22-parameter vector view of Tunables for the auto-tuner. Order matches the print block;
         //     bounds ARE the ImGui slider ranges (the optimizer reflects+clamps at them). ---
+        // Lo+GAP reparameterization (tuner-v2 fix) for the paired bounds: optimizing (Lo, Hi) with a
+        // Hi = max(Hi, Lo) repair creates a degenerate Lo == Hi manifold the search kept collapsing
+        // into; optimizing (Lo, Gap >= 0) makes every point of the space valid by construction.
+        // The Tunables/print block stay in Lo/Hi terms — only the optimizer's vector view changes.
+        // (15 optimizer params since 2026-07-10: the reference-alignment prune removed RawSoften*/
+        // TexDetailFloor/KarisFade/GammaMotionDecay, then Gamma/GammaScale were pulled OUT of the
+        // search space — gamma is now a fixed reference SCHEDULE (GammaNative->GammaUpscale), still
+        // uniforms/sliders but never optimized. Print block below keeps all 17 TAATuning fields.)
         private static readonly string[] ParamNames =
         {
-            "MotionBoostFloor", "MotionBoostMax", "StillGateFloor", "MoveGateLo", "MoveGateHi",
-            "RespEnd", "MotionTrustCap", "MotionClampTighten", "RawSoftenOnset", "RawSoftenSlope",
-            "RawSoftenMotionSup", "Gamma", "TexDetailFloor", "ConfFloor", "RingLo", "RingHi",
-            "DirectClampMix", "KarisFade", "GammaMotionDecay", "ConfFadeN", "GrowOffPhase", "DeepCapBase"
+            "MotionBoostFloor", "MotionBoostMax", "StillGateFloor", "MoveGateLo", "MoveGateGap",
+            "RespEnd", "MotionTrustCap", "MotionClampTighten",
+            "ConfFloor", "RingLo", "RingGap",
+            "DirectClampMix", "ConfFadeN", "GrowOffPhase", "DeepCapBase"
         };
         // GrowOffPhase floor 0.25: meta N is RGBA8-quantized (1 LSB ~ 0.5 N), so per-frame growth
         // increments below ~0.25 N round to the SAME code point — the optimizer exploring below the
         // floor is silently tuning "no growth at all", not a slower rate.
         private static readonly float[] ParamLo =
         {
-            0f, 0f, 0f, 0f, 0f,  0f, 0f, 0f, 0f, 0f,  0f, 0.5f, 0f, 0f, 0f, 0f,  0f, 0f, 0f, 1f, 0.25f, 0.9f
+            0f, 0f, 0f, 0f, 0f,  0f, 0f, 0f,  0f, 0f, 0f,  0f, 1f, 0.25f, 0.9f
         };
         private static readonly float[] ParamHi =
         {
-            1f, 1f, 1f, 6f, 6f,  1f, 1f, 1f, 1f, 5f,  1f, 3f, 1f, 1f, 1f, 1f,  1f, 1f, 1f, 64f, 1f, 0.999f
+            1f, 1f, 1f, 6f, 6f,  1f, 1f, 1f,  1f, 1f, 1f,  1f, 64f, 1f, 0.999f
         };
         private static float[] ToVector(Tunables t) => new[]
         {
-            t.MotionBoostFloor, t.MotionBoostMax, t.StillGateFloor, t.MoveGateLo, t.MoveGateHi,
-            t.RespEnd, t.MotionTrustCap, t.MotionClampTighten, t.RawSoftenOnset, t.RawSoftenSlope,
-            t.RawSoftenMotionSup, t.Gamma, t.TexDetailFloor, t.ConfFloor, t.RingLo, t.RingHi,
-            t.DirectClampMix, t.KarisFade, t.GammaMotionDecay, t.ConfFadeN, t.GrowOffPhase, t.DeepCapBase
+            t.MotionBoostFloor, t.MotionBoostMax, t.StillGateFloor, t.MoveGateLo, t.MoveGateHi - t.MoveGateLo,
+            t.RespEnd, t.MotionTrustCap, t.MotionClampTighten,
+            t.ConfFloor, t.RingLo, t.RingHi - t.RingLo,
+            t.DirectClampMix, t.ConfFadeN, t.GrowOffPhase, t.DeepCapBase
         };
         private static void ApplyVector(float[] v, Tunables t)
         {
             t.MotionBoostFloor = v[0]; t.MotionBoostMax = v[1]; t.StillGateFloor = v[2];
-            t.MoveGateLo = v[3]; t.MoveGateHi = Math.Max(v[4], v[3]); // lo <= hi, like the sliders
+            t.MoveGateLo = v[3]; t.MoveGateHi = Math.Min(v[3] + v[4], 6f); // gap-encoded, capped at the slider max
             t.RespEnd = v[5]; t.MotionTrustCap = v[6]; t.MotionClampTighten = v[7];
-            t.RawSoftenOnset = v[8]; t.RawSoftenSlope = v[9]; t.RawSoftenMotionSup = v[10];
-            t.Gamma = v[11]; t.TexDetailFloor = v[12]; t.ConfFloor = v[13];
-            t.RingLo = v[14]; t.RingHi = Math.Max(v[15], v[14]); // lo <= hi
-            t.DirectClampMix = v[16]; t.KarisFade = v[17]; t.GammaMotionDecay = v[18];
-            t.ConfFadeN = v[19]; t.GrowOffPhase = v[20]; t.DeepCapBase = v[21];
+            t.ConfFloor = v[8];
+            t.RingLo = v[9]; t.RingHi = Math.Min(v[9] + v[10], 1f); // gap-encoded
+            t.DirectClampMix = v[11];
+            t.ConfFadeN = v[12]; t.GrowOffPhase = v[13]; t.DeepCapBase = v[14];
+            // (gamma schedule is NOT in the vector — left at t's existing values)
         }
+        // TAATuning field names/values for the print block: all 17 fields (true Lo/Hi, NOT the
+        // gap-encoded vector; includes the non-tuned gamma schedule so the paste-over is complete).
+        private static readonly string[] PrintNames =
+        {
+            "MotionBoostFloor", "MotionBoostMax", "StillGateFloor", "MoveGateLo", "MoveGateHi",
+            "RespEnd", "MotionTrustCap", "MotionClampTighten", "GammaNative", "GammaUpscale",
+            "ConfFloor", "RingLo", "RingHi",
+            "DirectClampMix", "ConfFadeN", "GrowOffPhase", "DeepCapBase"
+        };
+        private static float[] PrintVector(Tunables t) => new[]
+        {
+            t.MotionBoostFloor, t.MotionBoostMax, t.StillGateFloor, t.MoveGateLo, t.MoveGateHi,
+            t.RespEnd, t.MotionTrustCap, t.MotionClampTighten, t.GammaNative, t.GammaUpscale,
+            t.ConfFloor, t.RingLo, t.RingHi,
+            t.DirectClampMix, t.ConfFadeN, t.GrowOffPhase, t.DeepCapBase
+        };
+        private static readonly string[] LitePrintNames =
+        {
+            "LiteGamma", "LiteGammaScale", "LiteDeepCap", "LiteRespEnd", "LiteMotionBoost",
+            "LiteConfFloor", "LiteMoveGateLo", "LiteMoveGateHi", "LiteHonestLo", "LiteHonestHi"
+        };
+        private static float[] LitePrintVector(Tunables t) => new[]
+        {
+            t.LiteGamma, t.LiteGammaScale, t.LiteDeepCap, t.LiteRespEnd, t.LiteMotionBoost,
+            t.LiteConfFloor, t.LiteMoveGateLo, t.LiteMoveGateHi, t.LiteHonestLo, t.LiteHonestHi
+        };
         private static Tunables FromVector(float[] v)
         {
             var t = new Tunables();
@@ -262,27 +337,33 @@ namespace FSO.TAALab
         private static readonly string[] LiteParamNames =
         {
             "LiteGamma", "LiteGammaScale", "LiteDeepCap", "LiteRespEnd", "LiteMotionBoost",
-            "LiteConfFloor", "LiteMoveGateLo", "LiteMoveGateHi", "LiteHonestLo", "LiteHonestHi"
+            "LiteConfFloor", "LiteMoveGateLo", "LiteMoveGateGap", "LiteHonestLo", "LiteHonestGap"
         };
-        private static readonly float[] LiteParamLo = { 0.5f, 1f, 0.9f, 0.4f, 0f, 0f, 0f, 0.5f, 0.2f, 0.5f };
-        private static readonly float[] LiteParamHi = { 3f, 3f, 0.999f, 0.9f, 1f, 1f, 4f, 6f, 0.9f, 1f };
+        private static readonly float[] LiteParamLo = { 0.5f, 1f, 0.9f, 0.4f, 0f, 0f, 0f, 0f, 0.2f, 0f };
+        private static readonly float[] LiteParamHi = { 3f, 3f, 0.999f, 0.9f, 1f, 1f, 4f, 5.5f, 0.9f, 0.8f };
         private static float[] ToLiteVector(Tunables t) => new[]
         {
             t.LiteGamma, t.LiteGammaScale, t.LiteDeepCap, t.LiteRespEnd, t.LiteMotionBoost,
-            t.LiteConfFloor, t.LiteMoveGateLo, t.LiteMoveGateHi, t.LiteHonestLo, t.LiteHonestHi
+            t.LiteConfFloor, t.LiteMoveGateLo, t.LiteMoveGateHi - t.LiteMoveGateLo,
+            t.LiteHonestLo, t.LiteHonestHi - t.LiteHonestLo
         };
         private static void ApplyLiteVector(float[] v, Tunables t)
         {
             t.LiteGamma = v[0]; t.LiteGammaScale = v[1]; t.LiteDeepCap = v[2]; t.LiteRespEnd = v[3];
             t.LiteMotionBoost = v[4]; t.LiteConfFloor = v[5];
-            t.LiteMoveGateLo = v[6]; t.LiteMoveGateHi = Math.Max(v[7], v[6]); // lo <= hi, like the sliders
-            t.LiteHonestLo = v[8]; t.LiteHonestHi = Math.Max(v[9], v[8]);     // lo <= hi
+            // gap-encoded pairs, Hi clamped into its slider range
+            t.LiteMoveGateLo = v[6]; t.LiteMoveGateHi = Math.Clamp(v[6] + v[7], 0.5f, 6f);
+            t.LiteHonestLo = v[8]; t.LiteHonestHi = Math.Clamp(v[8] + v[9], 0.5f, 1f);
         }
 
         // --- technique-aware search space: the tuner optimizes the param set the SELECTED technique
-        //     actually reads (22 Tune* under "TAA", 10 Lite* under "TAALite"). RunLite is captured at
+        //     actually reads (15 Tune* under "TAA", 10 Lite* under "TAALite"). RunLite is captured at
         //     StartTuning and describes BestVec until the next run. ---
         private bool RunLite;
+        // Gamma schedule captured at run start (StartTuning/StartCompare) from the live sliders, so
+        // every eval of a run uses the SAME fixed schedule deterministically even if a slider is
+        // dragged mid-run. The tuner never optimizes these — it optimizes around them.
+        private float RunGammaNative = TAATuning.GammaNative, RunGammaUpscale = TAATuning.GammaUpscale;
         private string[] ActiveNames => RunLite ? LiteParamNames : ParamNames;
         private float[] ActiveLo => RunLite ? LiteParamLo : ParamLo;
         private float[] ActiveHi => RunLite ? LiteParamHi : ParamHi;
@@ -292,6 +373,8 @@ namespace FSO.TAALab
         {
             var t = new Tunables();
             ActiveApply(v, t);
+            t.GammaNative = RunGammaNative;   // non-optimized fixed schedule (see field comment)
+            t.GammaUpscale = RunGammaUpscale;
             return t;
         }
 
@@ -319,6 +402,7 @@ namespace FSO.TAALab
             SB = new SpriteBatch(GraphicsDevice);
             TAA = Content.Load<Effect>("Effects/TAA");
             LabVel = Content.Load<Effect>("Effects/LabVelocity");
+            LabDown = Content.Load<Effect>("Effects/LabDownsample");
             Font = new PixelFont(GraphicsDevice);
 
             White = new Texture2D(GraphicsDevice, 1, 1);
@@ -347,6 +431,19 @@ namespace FSO.TAALab
                 }
             Gradient = new Texture2D(GraphicsDevice, gs, gs);
             Gradient.SetData(gdata);
+
+            // Deterministic fine-noise patch (sand analogue): 1 texel per OUTPUT pixel, so it is
+            // sub-render-pixel under upscale — the texture-crunch / stipple-at-full-accumulation venue.
+            // FIXED seed: the control cache and every eval must see the identical texture.
+            var nrng = new Random(1234);
+            var ndata = new Color[NoisePatchRect.Width * NoisePatchRect.Height];
+            for (int i = 0; i < ndata.Length; i++)
+            {
+                float v = 0.30f + 0.55f * (float)nrng.NextDouble();
+                ndata[i] = new Color(v, v * 0.96f, v * 0.88f);
+            }
+            Noise = new Texture2D(GraphicsDevice, NoisePatchRect.Width, NoisePatchRect.Height);
+            Noise.SetData(ndata);
 
             // Fullscreen strip — byte-identical layout to WorldContent.GetTextureVerts (the resolve's VS
             // flips Coord.y itself).
@@ -452,9 +549,9 @@ namespace FSO.TAALab
         }
 
         /// <summary>
-        /// Startup sanity check: report which of the 32 tunable uniforms (22 Tune* + 10 Lite*) resolved
-        /// in the loaded TAA.xnb. On the DX/SM4 build all 32 must bind; the OGL build strips the
-        /// #if SM4-only ones (RawSoften*/Ring* plus TuneDirectClampMix — its only reference is the SM4
+        /// Startup sanity check: report which of the 27 tunable uniforms (17 Tune* + 10 Lite*) resolved
+        /// in the loaded TAA.xnb. On the DX/SM4 build all 27 must bind; the OGL build strips the
+        /// #if SM4-only ones (Ring* plus TuneDirectClampMix — its only reference is the SM4
         /// rectified branch).
         /// </summary>
         private void LogParamBindings()
@@ -463,9 +560,8 @@ namespace FSO.TAALab
             {
                 "TuneMotionBoostFloor", "TuneMotionBoostMax", "TuneStillGateFloor", "TuneMoveGateLo",
                 "TuneMoveGateHi", "TuneRespEnd", "TuneMotionTrustCap", "TuneMotionClampTighten",
-                "TuneRawSoftenOnset", "TuneRawSoftenSlope", "TuneRawSoftenMotionSup", "TuneGamma",
-                "TuneTexDetailFloor", "TuneConfFloor", "TuneRingLo", "TuneRingHi",
-                "TuneDirectClampMix", "TuneKarisFade", "TuneGammaMotionDecay", "TuneConfFadeN",
+                "TuneGammaNative", "TuneGammaUpscale", "TuneConfFloor", "TuneRingLo", "TuneRingHi",
+                "TuneDirectClampMix", "TuneConfFadeN",
                 "TuneGrowOffPhase", "TuneDeepCapBase",
                 // TAALite tunables (2026-07-07 promotion, commit c2979599)
                 "LiteGamma", "LiteGammaScale", "LiteDeepCap", "LiteRespEnd", "LiteMotionBoost",
@@ -563,6 +659,9 @@ namespace FSO.TAALab
                     if (Pressed(Keys.Space)) Paused = !Paused;
                     if (Pressed(Keys.R)) NeedHistoryReset = true;
                     if (Pressed(Keys.T)) { TAAEnabled = !TAAEnabled; if (TAAEnabled) NeedHistoryReset = true; }
+                    // A/B: sliders (A) vs baseline snapshot (B). History resets so each set converges
+                    // from scratch — stale accumulation tuned under the other set would contaminate.
+                    if (Pressed(Keys.B)) { UseB = !UseB; NeedHistoryReset = true; }
                     if (Pressed(Keys.P)) PrintTuningBlock();
                 }
             }
@@ -594,6 +693,8 @@ namespace FSO.TAALab
             p.LineX = Wrap(LineDriftMin + LineDriftBase * simT, LineDriftMin, LineDriftMax);
             p.PairA = new Vector2(Wrap(PairAStart.X + PairAVelBase.X * simT, -PairSize.X, OutW), PairAStart.Y);
             p.PairB = new Vector2(Wrap(PairBStart.X + PairBVelBase.X * simT, -PairSize.X, OutW), PairBStart.Y);
+            p.GlintAngle = GlintOrbitSpeed * simT;
+            p.NoVelMover = new Vector2(Wrap(NoVelStart.X + NoVelSpeed * simT, -NoVelSize.X, OutW), NoVelStart.Y);
             p.MeshAngles = new float[MeshObjs.Count];
             for (int i = 0; i < MeshObjs.Count; i++) p.MeshAngles[i] = MeshObjs[i].AngleAt(meshT);
             return p;
@@ -641,6 +742,8 @@ namespace FSO.TAALab
             {
                 SmokeStarted = true;
                 if (SmokeLite && TechIdx != 1) { TechIdx = 1; NeedHistoryReset = true; }
+                if (SmokeMulti) MultiScale = true;
+                if (SmokeCont) ContinuousTrain = true;
                 Console.WriteLine($"[AutoTune] SMOKE MODE ({TechNames[TechIdx]}): auto-starting capped run (2 determinism evals + {SmokeEvals} optimizer evals), exiting on completion.");
                 StartTuning(TuneMode.Smoke);
             }
@@ -658,7 +761,7 @@ namespace FSO.TAALab
 
             if (ShowControl)
             {
-                // Debug view: the auto-tuner's ground truth (2x2 supersample of the output grid, no
+                // Debug view: the auto-tuner's ground truth (ControlSS x supersample of the output grid, no
                 // jitter, no TAA, box-downsampled). TAA history goes stale meanwhile — reset on return.
                 RenderControl(CurPose, drawMeshes);
                 GraphicsDevice.SetRenderTarget(null);
@@ -676,11 +779,11 @@ namespace FSO.TAALab
                 var sampleJitterUV = new Vector2(-jpx.X / RW, jpx.Y / RH);
 
                 DrawSceneColor(CurPose, SceneRT, RenderScale, jpx, drawMeshes);
-                DrawVelocity(CurPose, PrevPose, jpx, drawMeshes);
+                DrawVelocity(CurPose, PrevPose, jpx, drawMeshes, VelRT, RenderScale, RW, RH);
 
                 if (TAAEnabled)
                 {
-                    RunResolve(Tune, sampleJitterUV);
+                    RunResolve(UseB ? TuneB : Tune, sampleJitterUV, SceneRT, VelRT, RW, RH, RenderScale);
                     // Blit resolved history to the screen; swap the ping-pong.
                     GraphicsDevice.SetRenderTarget(null);
                     SB.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.LinearClamp);
@@ -713,7 +816,7 @@ namespace FSO.TAALab
 
         /// <summary>
         /// Synthetic scene + game meshes for one pose, into any target: scale maps OUTPUT pixel space to
-        /// the target (RenderScale for the TAA input, 2.0 for the supersampled control), jpx is the
+        /// the target (RenderScale for the TAA input, ControlSS for the supersampled control), jpx is the
         /// content jitter in target px (zero for the control).
         /// </summary>
         private void DrawSceneColor(ScenePose pose, RenderTarget2D target, float scale, Vector2 jpx, bool withMeshes)
@@ -724,6 +827,10 @@ namespace FSO.TAALab
             var world = Matrix.CreateScale(scale, scale, 1f) * Matrix.CreateTranslation(shift.X, shift.Y, 0f);
             SB.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp, null, null, null, world);
             SB.Draw(Gradient, new Rectangle(-2, -2, OutW + 4, OutH + 4), Color.White); // bg (overscan covers jitter)
+            // static fine-noise patch (stipple venue; 1 texel per output px)
+            SB.Draw(Noise, NoisePatchRect, Color.White);
+            // VELOCITY-LESS mover (color pass only — deliberately absent from DrawVelocity)
+            SB.Draw(White, new Rectangle((int)pose.NoVelMover.X, (int)pose.NoVelMover.Y, NoVelSize.X, NoVelSize.Y), NoVelCol);
             // similar-color pair (B over A where they cross)
             SB.Draw(White, new Rectangle((int)pose.PairA.X, (int)pose.PairA.Y, PairSize.X, PairSize.Y), PairColA);
             SB.Draw(White, new Rectangle((int)pose.PairB.X, (int)pose.PairB.Y, PairSize.X, PairSize.Y), PairColB);
@@ -735,6 +842,15 @@ namespace FSO.TAALab
             // phase-C abrupt-reveal block (textured for re-convergence detail)
             if (pose.Reveal)
                 SB.Draw(Checker, new Rectangle((int)RevealPos.X, (int)RevealPos.Y, RevealSize.X, RevealSize.Y), RevealCol);
+            // bright-highlight cluster: three static near-white sub-pixel dots + one slow orbiter
+            // (negative-lobe ringing + Karis anti-sparkle venue; drawn over the mid-gray gradient)
+            SB.Draw(White, new Rectangle(800, 80, 2, 2), Color.White);
+            SB.Draw(White, new Rectangle(830, 100, 1, 1), Color.White);
+            SB.Draw(White, new Rectangle(816, 130, 1, 2), Color.White);
+            // float position (NOT an int Rectangle): the orbit is sub-pixel by design, and rounding
+            // here would desync the color pass from the velocity pass's float matrix.
+            var glint = GlintOrbitCenter + GlintOrbitRadius * new Vector2((float)Math.Cos(pose.GlintAngle), (float)Math.Sin(pose.GlintAngle));
+            SB.Draw(White, glint, null, Color.White, 0f, Vector2.Zero, new Vector2(2f, 2f), SpriteEffects.None, 0f);
             // thin bright lines, 1 OUTPUT px thick (sub-render-pixel under upscale): one static, one drifting
             DrawLine(SB, new Vector2(180, 620), MathHelper.ToRadians(-32), 300, new Color(1f, 1f, 0.85f));
             DrawLine(SB, new Vector2(pose.LineX, 655), MathHelper.ToRadians(-70), 240, new Color(0.95f, 1f, 0.9f));
@@ -775,17 +891,18 @@ namespace FSO.TAALab
         /// writes a true spatially-varying field). Both WVPs carry the SAME current-frame jitter, so the
         /// jitter translation cancels — buffer stays jitter-free.
         /// </summary>
-        private void DrawVelocity(ScenePose pose, ScenePose prev, Vector2 jpx, bool withMeshes)
+        private void DrawVelocity(ScenePose pose, ScenePose prev, Vector2 jpx, bool withMeshes,
+            RenderTarget2D velRT, float scale, int rw, int rh)
         {
-            GraphicsDevice.SetRenderTarget(VelRT);
+            GraphicsDevice.SetRenderTarget(velRT);
             GraphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer, Color.Transparent, 1f, 0);
             GraphicsDevice.DepthStencilState = DepthStencilState.None;
             GraphicsDevice.BlendState = BlendState.Opaque;
             GraphicsDevice.RasterizerState = RasterizerState.CullNone;
 
             var shift = new Vector2(jpx.X, -jpx.Y);
-            var world = Matrix.CreateScale(RenderScale, RenderScale, 1f) * Matrix.CreateTranslation(shift.X, shift.Y, 0f);
-            var ortho2D = world * Matrix.CreateOrthographicOffCenter(0, RW, RH, 0, -1, 1);
+            var world = Matrix.CreateScale(scale, scale, 1f) * Matrix.CreateTranslation(shift.X, shift.Y, 0f);
+            var ortho2D = world * Matrix.CreateOrthographicOffCenter(0, rw, rh, 0, -1, 1);
             LabVel.CurrentTechnique = LabVel.Techniques["Velocity"];
             // Unit quad -> output-pixel-space model matrix pair -> jittered ortho. Depth constant per object.
             void Quad(Matrix now, Matrix prevM, float depth)
@@ -808,6 +925,11 @@ namespace FSO.TAALab
 
             var bgM = RectM(new Vector2(-2, -2), new Vector2(OutW + 4, OutH + 4));
             Quad(bgM, bgM, 0.95f);
+            // static noise patch (same depth-plane family as other static backdrops)
+            var npM = RectM(new Vector2(NoisePatchRect.X, NoisePatchRect.Y), new Vector2(NoisePatchRect.Width, NoisePatchRect.Height));
+            Quad(npM, npM, 0.85f);
+            // (the VELOCITY-LESS mover is deliberately NOT drawn here — its color-pass motion must
+            // arrive with the background's zero velocity, the game's animated-texture/overlay case)
             Quad(RectM(pose.PairA, PairSize.ToVector2()), RectM(prev.PairA, PairSize.ToVector2()), 0.60f);
             Quad(RectM(pose.PairB, PairSize.ToVector2()), RectM(prev.PairB, PairSize.ToVector2()), 0.55f);
             Quad(RectM(pose.Checker, new Vector2(CheckerSize)), RectM(prev.Checker, new Vector2(CheckerSize)), 0.50f);
@@ -819,17 +941,28 @@ namespace FSO.TAALab
                 var rvM = RectM(RevealPos, RevealSize.ToVector2());
                 Quad(rvM, rvM, 0.40f);
             }
+            // glint cluster: statics + the sub-pixel orbiter (honest matrix-pair velocity)
+            var g1 = RectM(new Vector2(800, 80), new Vector2(2, 2));
+            var g2 = RectM(new Vector2(830, 100), new Vector2(1, 1));
+            var g3 = RectM(new Vector2(816, 130), new Vector2(1, 2));
+            Quad(g1, g1, 0.25f); Quad(g2, g2, 0.25f); Quad(g3, g3, 0.25f);
+            Vector2 GlintPos(float a) => GlintOrbitCenter + GlintOrbitRadius * new Vector2((float)Math.Cos(a), (float)Math.Sin(a));
+            Quad(RectM(GlintPos(pose.GlintAngle), new Vector2(2, 2)),
+                 RectM(GlintPos(prev.GlintAngle), new Vector2(2, 2)), 0.25f);
+            // Depths match the color pass's painter order at the crossing (~x400,y465): the DRIFT line
+            // draws on top, so it must be the NEARER surface (2026-07-10 audit fix — they were swapped,
+            // giving the crossing pixels a depth that contradicted the visible line).
             var stLineM = LineM(new Vector2(180, 620), MathHelper.ToRadians(-32), 300);
-            Quad(stLineM, stLineM, 0.30f);
+            Quad(stLineM, stLineM, 0.35f);
             Quad(LineM(new Vector2(pose.LineX, 655), MathHelper.ToRadians(-70), 240),
-                 LineM(new Vector2(prev.LineX, 655), MathHelper.ToRadians(-70), 240), 0.35f);
+                 LineM(new Vector2(prev.LineX, 655), MathHelper.ToRadians(-70), 240), 0.30f);
 
             // Mesh velocities: per-pixel rotational velocity from the model matrix pair, alpha cutout
             // matching the color pass, per-pixel linear depth (saturate(clip.w/800) — the game's
             // PackDepth). Z-tested against a fresh depth buffer like the color pass.
             if (withMeshes)
             {
-                var meshProj = MeshProj(jpx, RW, RH);
+                var meshProj = MeshProj(jpx, rw, rh);
                 GraphicsDevice.DepthStencilState = DepthStencilState.Default;
                 LabVel.CurrentTechnique = LabVel.Techniques["VelocityMasked"];
                 var vp = MeshView * meshProj;
@@ -851,28 +984,31 @@ namespace FSO.TAALab
             }
         }
 
-        /// <summary>The real resolve — uniform-for-uniform what TAAResolve.Draw sets — into Hist/Meta[HistCurr].</summary>
-        private void RunResolve(Tunables t, Vector2 sampleJitterUV)
+        /// <summary>The real resolve — uniform-for-uniform what TAAResolve.Draw sets — into Hist/Meta[HistCurr].
+        /// The input targets/dimensioning are parameters so the multi-scale objective can resolve at
+        /// scales other than the UI-selected one; interactive callers pass the SceneRT/VelRT globals.</summary>
+        private void RunResolve(Tunables t, Vector2 sampleJitterUV,
+            RenderTarget2D sceneRT, RenderTarget2D velRT, int rw, int rh, float scale)
         {
             var histPrev = Hist[1 - HistCurr];
             var metaPrev = Meta[1 - HistCurr];
             GraphicsDevice.SetRenderTargets(Hist[HistCurr], Meta[HistCurr]);
             GraphicsDevice.BlendState = BlendState.Opaque;
 
-            TAA.Parameters["colorTex"]?.SetValue(SceneRT);
+            TAA.Parameters["colorTex"]?.SetValue(sceneRT);
             TAA.Parameters["historyTex"]?.SetValue(histPrev);
             TAA.Parameters["metaHistoryTex"]?.SetValue(metaPrev);
-            TAA.Parameters["velocityTex"]?.SetValue(VelRT);
+            TAA.Parameters["velocityTex"]?.SetValue(velRT);
             TAA.Parameters["InvScreenSize"]?.SetValue(new Vector2(1f / OutW, 1f / OutH));
-            TAA.Parameters["InvColorSize"]?.SetValue(new Vector2(1f / RW, 1f / RH));
-            TAA.Parameters["BlendFactor"]?.SetValue(ScaledBlendFactor(RenderScale));
+            TAA.Parameters["InvColorSize"]?.SetValue(new Vector2(1f / rw, 1f / rh));
+            TAA.Parameters["BlendFactor"]?.SetValue(ScaledBlendFactor(scale));
             TAA.Parameters["MaxAccum"]?.SetValue(128f); // TAAResolve.MAX_ACCUM
             TAA.Parameters["JitterDelta"]?.SetValue(Vector2.Zero); // velocity buffer is jitter-free
             // fp16 history variant (the lab's history IS HalfVector4)
             TAA.Parameters["DepthRejectParams"]?.SetValue(new Vector4(0.0015f, 12f, 0f, 0.02f));
             TAA.Parameters["SampleJitterUV"]?.SetValue(sampleJitterUV);
             TAA.Parameters["VelGatePxScale"]?.SetValue(1f); // TAAU/native grids are native-sized
-            TAA.Parameters["JitterPhases"]?.SetValue((float)HaltonCycle(RenderScale));
+            TAA.Parameters["JitterPhases"]?.SetValue((float)HaltonCycle(scale));
             // live tunables (same null-safe pattern as TAAResolve — SM3-stripped uniforms just skip)
             TAA.Parameters["TuneMotionBoostFloor"]?.SetValue(t.MotionBoostFloor);
             TAA.Parameters["TuneMotionBoostMax"]?.SetValue(t.MotionBoostMax);
@@ -882,17 +1018,12 @@ namespace FSO.TAALab
             TAA.Parameters["TuneRespEnd"]?.SetValue(t.RespEnd);
             TAA.Parameters["TuneMotionTrustCap"]?.SetValue(t.MotionTrustCap);
             TAA.Parameters["TuneMotionClampTighten"]?.SetValue(t.MotionClampTighten);
-            TAA.Parameters["TuneRawSoftenOnset"]?.SetValue(t.RawSoftenOnset);
-            TAA.Parameters["TuneRawSoftenSlope"]?.SetValue(t.RawSoftenSlope);
-            TAA.Parameters["TuneRawSoftenMotionSup"]?.SetValue(t.RawSoftenMotionSup);
-            TAA.Parameters["TuneGamma"]?.SetValue(t.Gamma);
-            TAA.Parameters["TuneTexDetailFloor"]?.SetValue(t.TexDetailFloor);
+            TAA.Parameters["TuneGammaNative"]?.SetValue(t.GammaNative);
+            TAA.Parameters["TuneGammaUpscale"]?.SetValue(t.GammaUpscale);
             TAA.Parameters["TuneConfFloor"]?.SetValue(t.ConfFloor);
             TAA.Parameters["TuneRingLo"]?.SetValue(t.RingLo);
             TAA.Parameters["TuneRingHi"]?.SetValue(t.RingHi);
             TAA.Parameters["TuneDirectClampMix"]?.SetValue(t.DirectClampMix);
-            TAA.Parameters["TuneKarisFade"]?.SetValue(t.KarisFade);
-            TAA.Parameters["TuneGammaMotionDecay"]?.SetValue(t.GammaMotionDecay);
             TAA.Parameters["TuneConfFadeN"]?.SetValue(t.ConfFadeN);
             TAA.Parameters["TuneGrowOffPhase"]?.SetValue(t.GrowOffPhase);
             TAA.Parameters["TuneDeepCapBase"]?.SetValue(t.DeepCapBase);
@@ -922,22 +1053,48 @@ namespace FSO.TAALab
         }
 
         // ==================================== Auto-tuner ====================================
-        // Classical (Nelder-Mead) search over the 22 Tune* params, minimizing perceptual difference of
-        // the real resolve's output from a 2x2-supersampled no-TAA control over the fixed 240-frame
-        // scripted sequence. The control is scale/tunable-independent, so it is pre-rendered ONCE per
-        // session (per mesh-visibility setting) into CPU sample arrays; each candidate eval then only
-        // re-runs the TAA path. All GPU work stays on the Draw thread, chunked across Draw calls so the
-        // UI stays clickable (STOP). Score determinism is checked explicitly by evaluating the defaults
-        // twice at the start of every run — bit-identical totals or the tool flags itself unreliable.
+        // Derivative-free search (CMA-ES default, Nelder-Mead selectable) over the active param space,
+        // minimizing perceptual difference of the real resolve's output from an 8x-supersampled (8K+) no-TAA
+        // control over the fixed 240-frame scripted sequence. The control is scale/tunable-independent,
+        // so it is pre-rendered ONCE per session (per mesh-visibility setting) into CPU sample arrays;
+        // each candidate eval then only re-runs the TAA path. Warm-startable from shipped defaults,
+        // the live sliders, or the session's previous best. Efficiency: monotone partial-score bounds
+        // early-prune hopeless candidates, exact-duplicate vectors are served from a score cache, and
+        // metric readback is pipelined one frame behind the render. All GPU work stays on the Draw
+        // thread, chunked across Draw calls so the UI stays clickable (STOP). Score determinism is
+        // checked explicitly by evaluating the defaults twice at the start of every optimize run —
+        // bit-identical totals or the tool flags itself unreliable.
 
         private enum TuneState { Idle, ControlPreRender, Evaluating }
         private enum TuneMode { Quick, Full, Smoke }
+
+        // ---- artifact-class metric terms (2026-07-10 — "stricter and smarter on ghosting, noise,
+        //      fizzle/trails"). All CPU-side, deterministic, and MONOTONE-accumulating (the prune
+        //      bound stays valid). Detail-weighted like the base terms except Strict (strict is
+        //      unweighted by design — a wrong pixel is wrong).
+        //  GHOST/TRAIL PERSISTENCE (ritchie metric-v3's PersGain idea): a ghost is a same-signed luma
+        //      error that PERSISTS at a pixel across frames — first-difference temporal terms
+        //      underweight a slowly-decaying trail (each step is small). Per-slot signed run counter;
+        //      error starts scoring once it has held the same sign > 2 frames, ramping to full by 6.
+        //      (The rotating metric parity changes the sampled output pixel every 2 frames — fine:
+        //      ghosts/trails are regional, so the persistence signal survives the rotation.)
+        //  FIZZLE/NOISE: TAA changing where the ground truth did NOT change (|dCtrl| < 1/255 on a
+        //      same-parity pair) — the rest-state churn term, scored above the 1/255 dead-band.
+        //  STRICT bad-pixel fractions (ritchie strict-metrics idea, folded into the OBJECTIVE):
+        //      fraction of pixel-frames whose max-channel error exceeds 2/255 (+4x extra beyond
+        //      5/255) — the optimizer can no longer trade a small very-wrong region for mean gains.
+        private const double GhostWeight = 4.0;
+        private const double FizzleWeight = 3.0;
+        private const double StrictWeight = 0.03; // fractions are ~1e-2 magnitude; ~10-20% of total at baseline
+        private float[] PersState;                // per-slot signed persistence run (sign = error sign)
+        private double[] RowG, RowF, RowB;
+        private readonly double[] PhaseG = new double[4], PhaseF = new double[4], PhaseB = new double[4];
 
         // metric weights (task constants): total = SpatialWeight * MSE + TemporalWeight * TD
         private const double SpatialWeight = 1.0;
         private const double TemporalWeight = 2.0;
         private const int ChunkFramesEval = 80;     // sequence frames processed per Draw call (UI cadence)
-        private const int ChunkFramesControl = 48;
+        private const int ChunkFramesControl = 6; // 8x-supersampled frames are ~16x the old 2x cost — keep STOP clickable
         private const int FullRestarts = 3;
         private const int FullEvalsPerRestart = 200;
         private const int QuickEvals = 60;
@@ -947,21 +1104,58 @@ namespace FSO.TAALab
         private TuneState TState = TuneState.Idle;
         private TuneMode TMode;
         private bool StopRequested;
-        // TAALAB_SMOKE=1 -> smoke run on the current (full) technique; TAALAB_SMOKE=lite -> TAALite.
+        // TAALAB_SMOKE=1 -> smoke run on the current (full) technique; =lite -> TAALite;
+        // =ms -> full technique with the multi-scale objective.
         private static readonly string SmokeEnv = Environment.GetEnvironmentVariable("TAALAB_SMOKE");
         private readonly bool SmokeMode = !string.IsNullOrEmpty(SmokeEnv) && SmokeEnv != "0";
         private readonly bool SmokeLite = string.Equals(SmokeEnv, "lite", StringComparison.OrdinalIgnoreCase);
+        private readonly bool SmokeMulti = string.Equals(SmokeEnv, "ms", StringComparison.OrdinalIgnoreCase);
+        // =cont -> verifies continuous self-training: two chained cycles at smoke budget, then exits.
+        private readonly bool SmokeCont = string.Equals(SmokeEnv, "cont", StringComparison.OrdinalIgnoreCase);
         private bool SmokeStarted;
         private bool ShowControl; // debug: present the supersampled control instead of the TAA output
 
         // control cache (pre-rendered ground truth, sampled every 2nd output pixel)
         private int MetricW => OutW / 2;
         private int MetricH => OutH / 2;
+        // Reference final-stage filter: BOX by default (crispest honest linear-light average — the
+        // tuner must not target Gaussian softness; user call 2026-07-10). The sigma-0.44 Gaussian
+        // stays selectable: it is the anti-alias-honest reference (box passes stair-step combing as
+        // truth, which resists tuning out stipple). A/B the tuning TARGETS by re-running with each.
+        private bool GaussianRef;
+        private bool ControlCacheGauss;
         private Color[][] ControlSamples;
+        // ---- detail-weighted error (tuner-v2 feature): per-pixel weight from the CONTROL's luma
+        //      gradient (never the TAA output — ungameable), w = Floor + (1-Floor)*sat(detail*Gain),
+        //      applied to the spatial AND temporal terms pre-reduction and normalized by the frame's
+        //      mean weight — small details count ~4x more than flat background. Quantized to a byte
+        //      per pixel (deterministic, ~55 MB per 240-frame cache). ----
+        private byte[][] ControlWeightQ;
+        private double[] ControlMeanW;
+        private const float DetailWeightFloor = 0.25f;
+        private const float DetailWeightGain = 8f;
         private bool ControlCacheValid;
         private bool ControlCacheMeshes;
         private int ControlFrame;
-        private RenderTarget2D ControlRT, ControlDownRT, MetricRT;
+        // Ground-truth supersample factor: 8x the OUTPUT grid (10240x5760 for the 720p window — 8K+),
+        // clamped to the D3D11 texture limit as powers of two so the downsample chain stays an EXACT
+        // box filter (each 2:1 bilinear blit averages a 2x2 quad; 8x = three chained blits).
+        private const int ControlSSMax = 8;
+        private const int MaxTextureDim = 16384; // D3D11 FL11 guarantee
+        private int ControlSS
+        {
+            get
+            {
+                int ss = ControlSSMax;
+                // floor 4: the downsample chain needs at least BoxDecode -> GaussDown (see
+                // RenderControl); OutW would have to exceed 4096 to violate the texture limit at 4x.
+                while (ss > 4 && (OutW * ss > MaxTextureDim || OutH * ss > MaxTextureDim)) ss >>= 1;
+                return ss;
+            }
+        }
+        private RenderTarget2D ControlRT, ControlDownRT, MetricRT, MetricRTB;
+        private RenderTarget2D[] ControlChain; // halving blit chain: SS/2, SS/4, ... 2x (1x is ControlDownRT)
+        private RenderTarget2D MetricTarget(int frame) => (frame & 1) == 0 ? MetricRT : MetricRTB;
 
         // per-candidate eval state
         private Tunables EvalTune;
@@ -973,7 +1167,90 @@ namespace FSO.TAALab
         private readonly int[] PhaseTN = new int[4]; // temporal samples per phase (odd frames only — parity pairs)
 
         // optimizer driver state
-        private NelderMeadOptimizer Opt;
+        private IOptimizer Opt;
+        // Auto (default): NM for DISCOVERY (fresh starts + escalation cycles — its early simplex
+        // moves are greedier in 22-D than CMA-ES, which spends a full lambda per generation before
+        // adapting), CMA-ES for REFINEMENT cycles around a fresh best (superior local model).
+        // Field observation that motivated this (2026-07-10): improvement rate is highest at the
+        // front of a run and decays as CMA's sigma contracts; a manual stop/restart recovered the
+        // early speed. The stall cutoff below automates that restart.
+        private static readonly string[] OptimizerLabels = { "Nelder-Mead", "CMA-ES", "Auto (NM discover / CMA refine)" };
+        private int OptimizerIdx = 2;
+        private bool UseNmNow;                      // optimizer actually chosen for the current restart
+        private int RestartLambda;                  // CMA population of the current restart (stall scaling)
+        private int RestartSinceImprove;            // evals since the best last improved, this restart
+        // end a restart once it stops paying: no best-improvement in this many evals -> roll into
+        // the next restart/cycle (fresh sigma + seed) instead of grinding out the full budget
+        private int StallLimit => UseNmNow ? 30 : Math.Min(60, Math.Max(30, 3 * RestartLambda));
+        private static readonly string[] StartFromLabels = { "shipped defaults", "current sliders", "session best" };
+        private int StartFromIdx = 1;               // warm-start from the sliders by default
+        private float[] SessionBestFull, SessionBestLite;   // best vector of the last finished run, per space
+        private float[] SessionBest => RunLite ? SessionBestLite : SessionBestFull;
+
+        // efficiency: early-prune evals whose monotone partial-score lower bound already exceeds the
+        // best total, and never re-run a full eval of an exact-duplicate vector (NM shrink revisits).
+        private bool PruneEnabled = true;
+        private int PrunedEvals, PrunedFramesSaved, CacheHits;
+        private readonly Dictionary<string, double> ScoreCache = new Dictionary<string, double>();
+        private (bool lite, int scale, bool meshes, bool gauss) CacheCtx = (false, -1, false, false);
+        private static string VecKey(float[] v)
+        {
+            var sb = new StringBuilder(v.Length * 8);
+            foreach (var x in v) sb.Append(BitConverter.SingleToInt32Bits(x).ToString("X8"));
+            return sb.ToString();
+        }
+
+        // ---- multi-scale objective (returned from the tuner-v2 arc, reimplemented on this driver):
+        //      every candidate is evaluated at several render scales and the optimizer minimizes the
+        //      weighted sum, so one tuning covers the upscale range instead of overfitting the UI
+        //      scale. The ground truth is OUTPUT-res, so the control cache is scale-independent (no
+        //      extra pre-renders); history is output-res, so passes share the ping-pong (reset between
+        //      passes). Cost: one 240-frame sequence per scale per eval. ----
+        private bool MultiScale;
+        private static readonly float[] MultiScales = { 1f / 3f, 0.5f, 1f };
+        private static readonly double[] MultiScaleWeights = { 0.5, 0.3, 0.2 };
+        private float[] EvalScales; private double[] EvalWeights;  // captured per run
+        private int ScalePass;                                     // current scale pass of the eval
+        private EvalScores[] PassScores;
+        private double EvalBoundBase;                              // weighted totals of finished passes (pruning)
+        // per-scale eval-res scene/velocity targets (the UI-scale SceneRT/VelRT are presentation-owned)
+        private readonly Dictionary<int, (RenderTarget2D scene, RenderTarget2D vel)> EvalRTs =
+            new Dictionary<int, (RenderTarget2D, RenderTarget2D)>();
+        private (RenderTarget2D scene, RenderTarget2D vel) EvalTargetsFor(float scale)
+        {
+            int key = (int)Math.Round(scale * 1000f);
+            if (!EvalRTs.TryGetValue(key, out var t))
+            {
+                int rw = Math.Max(1, (int)Math.Round(OutW * scale)), rh = Math.Max(1, (int)Math.Round(OutH * scale));
+                t = (new RenderTarget2D(GraphicsDevice, rw, rh, false, SurfaceFormat.Color, DepthFormat.Depth24),
+                     new RenderTarget2D(GraphicsDevice, rw, rh, false, SurfaceFormat.HalfVector4, DepthFormat.Depth24));
+                EvalRTs[key] = t;
+            }
+            return t;
+        }
+
+        // ---- continuous self-training: when enabled, a finished optimize run chains straight into
+        //      the next cycle, warm-started from the carried best (best/score cache/determinism
+        //      verdict all survive — no repeated det checks or baseline evals). Improving cycles
+        //      refine (small CMA sigma); stagnant cycles escalate IPOP-style (sigma up, population
+        //      doubled, fresh seed) to escape the local optimum; after MaxStagnantCycles fruitless
+        //      escalations the loop declares convergence and stops. ----
+        private bool ContinuousTrain;
+        private bool CycleRun;                   // current run is a chained cycle (skip det/baseline)
+        private bool CycleEscalated;             // current cycle is a stagnation escalation (Auto -> NM)
+        private int CycleIdx, StagnantCycles;
+        private double CycleStartBest = double.MaxValue;
+        private double CycleSigma = 0.15;
+        private int CycleLambda;                 // 0 = CMA-ES default for the dimension
+        private const int MaxStagnantCycles = 3;
+        private int DefaultLambda => 4 + (int)(3.0 * Math.Log(ActiveNames.Length));
+
+        // scored A/B compare run (uses the same control cache + eval machinery, no optimizer)
+        private enum RunKind { Optimize, Compare }
+        private RunKind Kind = RunKind.Optimize;
+        private Tunables[] CmpSets; private string[] CmpLabels; private int CmpIdx;
+        private readonly EvalScores[] CmpScores = new EvalScores[2];
+        private bool HaveCmp; private string CmpCtx = "";
         private int DetPhase = 2;                    // 0/1 = determinism-check evals pending, 2 = done
         private EvalScores DetA;
         private bool? DetIdentical;
@@ -993,24 +1270,69 @@ namespace FSO.TAALab
         private void EnsureTuningTargets()
         {
             if (ControlRT != null) return;
-            // 2x2 supersample of the OUTPUT grid (2560x1440 for the 720p window) + box-downsample stage
+            // ControlSS x supersample of the OUTPUT grid + the exact box-downsample chain
             // + half-res metric-sampling stage (rotating-parity point grid — see ReadMetricSamples).
-            // Output-res fixed, so render-scale changes don't touch these.
-            ControlRT = new RenderTarget2D(GraphicsDevice, OutW * 2, OutH * 2, false, SurfaceFormat.Color, DepthFormat.Depth24);
-            ControlDownRT = new RenderTarget2D(GraphicsDevice, OutW, OutH, false, SurfaceFormat.Color, DepthFormat.None);
-            MetricRT = new RenderTarget2D(GraphicsDevice, MetricW, MetricH, false, SurfaceFormat.Color, DepthFormat.None);
+            // Output-res fixed, so render-scale changes don't touch these. The 8x target + chain is
+            // heavy VRAM (~0.5 GB at 720p) but only exists while a control pre-render (or the
+            // ground-truth debug view) needs it — freed once the control cache is CPU-resident.
+            int ss = ControlSS;
+            ControlRT = new RenderTarget2D(GraphicsDevice, OutW * ss, OutH * ss, false, SurfaceFormat.Color, DepthFormat.Depth24);
+            // fp16 intermediates: the chain carries LINEAR-light values (see LabDownsample.fx) and
+            // 8-bit storage would band them; bilinear blits on fp16 stay exact linear box averages.
+            var chain = new List<RenderTarget2D>();
+            for (int f = ss / 2; f >= 2; f >>= 1)
+                chain.Add(new RenderTarget2D(GraphicsDevice, OutW * f, OutH * f, false, SurfaceFormat.HalfVector4, DepthFormat.None));
+            ControlChain = chain.ToArray();
+            ControlDownRT ??= new RenderTarget2D(GraphicsDevice, OutW, OutH, false, SurfaceFormat.Color, DepthFormat.None);
+            MetricRT ??= new RenderTarget2D(GraphicsDevice, MetricW, MetricH, false, SurfaceFormat.Color, DepthFormat.None);
+            // second metric target: eval frames alternate blit destinations so frame f's readback only
+            // has to wait for work issued THROUGH frame f, not the frame f+1 commands already queued.
+            MetricRTB ??= new RenderTarget2D(GraphicsDevice, MetricW, MetricH, false, SurfaceFormat.Color, DepthFormat.None);
         }
 
-        /// <summary>Ground-truth path: pose at 2x output res, NO jitter/TAA/velocity, box-downsampled.</summary>
+        /// <summary>Release the supersample target + downsample chain (the VRAM-heavy part; the
+        /// metric targets stay). The control cache itself lives in CPU arrays, and ControlDownRT is
+        /// kept for the progress present / debug view of the last pre-rendered frame.</summary>
+        private void FreeControlTargets()
+        {
+            ControlRT?.Dispose(); ControlRT = null;
+            if (ControlChain != null) foreach (var rt in ControlChain) rt.Dispose();
+            ControlChain = null;
+        }
+
+        /// <summary>Fullscreen 2:1 pass through LabDownsample (BoxDecode / GaussDown).</summary>
+        private void DownsamplePass(string technique, Texture2D src, RenderTarget2D dst)
+        {
+            GraphicsDevice.SetRenderTarget(dst);
+            GraphicsDevice.BlendState = BlendState.Opaque;
+            GraphicsDevice.DepthStencilState = DepthStencilState.None;
+            LabDown.Parameters["srcTex"].SetValue(src);
+            LabDown.Parameters["InvSrcSize"].SetValue(new Vector2(1f / src.Width, 1f / src.Height));
+            LabDown.CurrentTechnique = LabDown.Techniques[technique];
+            LabDown.CurrentTechnique.Passes[0].Apply();
+            GraphicsDevice.SetVertexBuffer(FSQuad);
+            GraphicsDevice.DrawPrimitives(PrimitiveType.TriangleStrip, 0, 2);
+        }
+
+        /// <summary>Ground-truth path: pose at ControlSS x output res (8K+ at the default 8x), NO
+        /// jitter/TAA/velocity, downsampled in LINEAR light with a sigma-0.44-out-px Gaussian
+        /// reference filter (see LabDownsample.fx header for why box/gamma were reference bugs):
+        /// BoxDecode (gamma -> linear, 2:1) -> bilinear fp16 halvings to 2x -> GaussDown (2:1 +
+        /// re-encode). Requires ControlSS >= 4 (always true at sane window sizes).</summary>
         private void RenderControl(ScenePose pose, bool withMeshes)
         {
             EnsureTuningTargets();
-            DrawSceneColor(pose, ControlRT, 2f, Vector2.Zero, withMeshes);
-            // Exact 2x2 box filter: a bilinear fetch lands on the corner of each 2x2 source quad.
-            GraphicsDevice.SetRenderTarget(ControlDownRT);
-            SB.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.LinearClamp);
-            SB.Draw(ControlRT, new Rectangle(0, 0, OutW, OutH), Color.White);
-            SB.End();
+            DrawSceneColor(pose, ControlRT, ControlSS, Vector2.Zero, withMeshes);
+            DownsamplePass("BoxDecode", ControlRT, ControlChain[0]);
+            for (int i = 1; i < ControlChain.Length; i++)
+            {
+                // bilinear fetch at each 2x2 corner = exact box average, already in linear light
+                GraphicsDevice.SetRenderTarget(ControlChain[i]);
+                SB.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.LinearClamp);
+                SB.Draw(ControlChain[i - 1], new Rectangle(0, 0, ControlChain[i].Width, ControlChain[i].Height), Color.White);
+                SB.End();
+            }
+            DownsamplePass(GaussianRef ? "GaussDown" : "BoxEncode", ControlChain[ControlChain.Length - 1], ControlDownRT);
         }
 
         /// <summary>
@@ -1028,76 +1350,181 @@ namespace FSO.TAALab
         /// </summary>
         private void ReadMetricSamples(Texture2D tex, Color[] dst, int frame)
         {
+            BlitMetric(tex, MetricRT, frame);
+            MetricRT.GetData(dst);
+        }
+
+        /// <summary>The point-blit half of ReadMetricSamples — the eval loop separates it from the
+        /// GetData so the readback of frame f can happen just before frame f+1's GPU work is issued
+        /// (the CPU-side AccumulateMetric of f-1 overlaps the GPU rendering f).</summary>
+        private void BlitMetric(Texture2D tex, RenderTarget2D rt, int frame)
+        {
             int parity = (frame >> 1) & 3;
             int ox = -(parity & 1);        //  0 -> odd source columns, -1 -> even
             int oy = -((parity >> 1) & 1); //  0 -> odd source rows,    -1 -> even
-            GraphicsDevice.SetRenderTarget(MetricRT);
+            GraphicsDevice.SetRenderTarget(rt);
             SB.Begin(SpriteSortMode.Deferred, BlendState.Opaque, SamplerState.PointClamp);
             // dest pixel x samples source column 2x+1+ox (never negative: min is ox+1 = 0)
             SB.Draw(tex, new Rectangle(0, 0, MetricW, MetricH), new Rectangle(ox, oy, OutW, OutH), Color.White);
             SB.End();
             GraphicsDevice.SetRenderTarget(null);
-            MetricRT.GetData(dst);
         }
 
-        private void StartTuning(TuneMode mode)
+        private void StartTuning(TuneMode mode, bool cycle = false)
         {
             if (TState != TuneState.Idle) return;
+            Kind = RunKind.Optimize;
             TMode = mode;
+            CycleRun = cycle;
             StopRequested = false;
-            DetPhase = 0; DetIdentical = null; HaveDefaultsScores = false;
-            BestVec = null; BestTotal = double.MaxValue; BestEvalNum = 0;
+            if (cycle)
+            {
+                // chained self-training cycle: best/defaults/determinism verdict carry over —
+                // pruning is strong from the first eval and no det/baseline evals are repeated
+                DetPhase = 2;
+            }
+            else
+            {
+                DetPhase = 0; DetIdentical = null; HaveDefaultsScores = false;
+                BestVec = null; BestTotal = double.MaxValue; BestEvalNum = 0;
+                CycleIdx = 0; StagnantCycles = 0; CycleStartBest = double.MaxValue;
+                CycleSigma = 0.15; CycleLambda = 0; CycleEscalated = false;
+            }
             EvalsDone = 0; EvalMsTotal = 0; EvalMsCount = 0;
             RestartIdx = 0;
-            RestartCount = mode == TuneMode.Full ? FullRestarts : 1;
+            RestartCount = cycle ? 1 : mode == TuneMode.Full ? FullRestarts : 1;
             RestartBudget = mode == TuneMode.Full ? FullEvalsPerRestart : mode == TuneMode.Quick ? QuickEvals : SmokeEvals;
             Opt = null;
             RunLite = TechIdx == 1; // technique-aware search space, captured for the whole run
+            RunGammaNative = Tune.GammaNative; RunGammaUpscale = Tune.GammaUpscale; // fixed schedule for the run
             EnsureTuningTargets();
             PrevFixedTimeStep = IsFixedTimeStep;
             IsFixedTimeStep = false; // no fixed-step catch-up spiral while Draw calls take ~0.2s
             RunSW.Restart();
 
             bool meshes = MeshesEnabled && MeshesAvailable;
-            Console.WriteLine($"[AutoTune] run started: mode {mode}, {RestartCount} restart(s) x {RestartBudget} evals, " +
-                $"scale {RenderScale.ToString("0.00", CultureInfo.InvariantCulture)}, technique {TechNames[TechIdx]}, " +
+            CaptureObjectiveScales();
+            // the score cache is only valid for one (space, objective, meshes, reference) context
+            var ctx = (RunLite, MultiScale ? -1 : ScaleIdx, meshes, GaussianRef);
+            if (ctx != CacheCtx) { ScoreCache.Clear(); CacheCtx = ctx; }
+            PrunedEvals = 0; PrunedFramesSaved = 0; CacheHits = 0;
+            if (StartFromIdx == 2 && SessionBest == null)
+                Console.WriteLine("[AutoTune] no session best for this space yet — starting from shipped defaults instead.");
+            Console.WriteLine($"[AutoTune] run started: mode {mode}, optimizer {OptimizerLabels[OptimizerIdx]}, " +
+                $"start from {StartFromLabels[StartFromIdx]}, {RestartCount} restart(s) x {RestartBudget} evals, " +
+                $"objective {ObjectiveDesc()}, technique {TechNames[TechIdx]}, " +
                 $"optimizing {ActiveNames.Length} params ({(RunLite ? "Lite*" : "Tune*")}), meshes {(meshes ? "on" : "off")}, " +
+                $"pruning {(PruneEnabled ? "on" : "off")}, " +
                 $"weights spatial {SpatialWeight} / temporal {TemporalWeight}, metric grid {MetricW}x{MetricH} (rotating parity, pair cadence).");
-            if (!ControlCacheValid || ControlCacheMeshes != meshes)
+            EnsureControl(meshes);
+        }
+
+        private void CaptureObjectiveScales()
+        {
+            EvalScales = MultiScale ? MultiScales : new[] { RenderScale };
+            EvalWeights = MultiScale ? MultiScaleWeights : new[] { 1.0 };
+        }
+
+        private string ObjectiveDesc()
+        {
+            if (!MultiScale) return "scale " + RenderScale.ToString("0.00", CultureInfo.InvariantCulture);
+            var sb = new StringBuilder("multi-scale ");
+            for (int i = 0; i < MultiScales.Length; i++)
+                sb.Append(string.Format(CultureInfo.InvariantCulture, "{0}{1:0.00}x*{2:0.0}",
+                    i > 0 ? "+" : "", MultiScales[i], MultiScaleWeights[i]));
+            return sb.ToString();
+        }
+
+        /// <summary>Scored A/B: run the full 240-frame metric on the A (sliders) and B (baseline)
+        /// sets under the CURRENT technique and objective (single-scale or the multi-scale set) —
+        /// exact scores, no optimizer, no pruning.</summary>
+        private void StartCompare()
+        {
+            if (TState != TuneState.Idle) return;
+            Kind = RunKind.Compare;
+            StopRequested = false;
+            CaptureObjectiveScales();
+            CmpSets = new[] { CloneTunables(Tune), CloneTunables(TuneB) };
+            CmpLabels = new[] { "A (sliders) ", "B (baseline)" };
+            CmpIdx = 0; HaveCmp = false;
+            EvalMsTotal = 0; EvalMsCount = 0; EvalsDone = 0;
+            EnsureTuningTargets();
+            PrevFixedTimeStep = IsFixedTimeStep;
+            IsFixedTimeStep = false;
+            RunSW.Restart();
+            bool meshes = MeshesEnabled && MeshesAvailable;
+            CmpCtx = $"technique {TechNames[TechIdx]}, {ObjectiveDesc()}, meshes {(meshes ? "on" : "off")}";
+            Console.WriteLine($"[A/B] scoring A (sliders) vs B (baseline): {CmpCtx}");
+            EnsureControl(meshes);
+        }
+
+        private void EnsureControl(bool meshes)
+        {
+            if (!ControlCacheValid || ControlCacheMeshes != meshes || ControlCacheGauss != GaussianRef)
             {
                 ControlSamples = new Color[SeqFrames][];
+                ControlWeightQ = new byte[SeqFrames][];
+                ControlMeanW = new double[SeqFrames];
                 ControlCacheValid = false;
                 ControlCacheMeshes = meshes;
+                ControlCacheGauss = GaussianRef;
                 ControlFrame = 0;
                 TState = TuneState.ControlPreRender;
-                Console.WriteLine($"[AutoTune] pre-rendering supersampled control ({SeqFrames} frames at {OutW * 2}x{OutH * 2})...");
+                Console.WriteLine($"[AutoTune] pre-rendering {ControlSS}x supersampled control ({SeqFrames} frames at {OutW * ControlSS}x{OutH * ControlSS}, " +
+                    $"linear-light {(GaussianRef ? "sigma-0.44 Gaussian" : "box")} reference)...");
             }
             else
             {
                 Console.WriteLine("[AutoTune] control sequence already cached — reusing.");
-                BeginDeterminismCheck();
+                AfterControlReady();
             }
+        }
+
+        private void AfterControlReady()
+        {
+            if (Kind == RunKind.Compare) { TState = TuneState.Evaluating; BeginEvalTunables(CmpSets[0]); }
+            else BeginDeterminismCheck();
         }
 
         private void BeginDeterminismCheck()
         {
             TState = TuneState.Evaluating;
+            if (DetPhase == 2) { StartRestart(); return; } // chained cycle: det already verified this session
             BeginEval(ActiveDefaults);
         }
 
         private void BeginEval(float[] vec)
         {
             CurVec = vec;
-            EvalTune = ActiveFromVector(vec); // untuned set stays at defaults (inert for this technique)
-            for (int i = 0; i < 4; i++) { PhaseS[i] = 0; PhaseT[i] = 0; PhaseTN[i] = 0; }
-            EvalFrame = 0;
-            HistCurr = 0;          // fixed ping-pong start (identical target usage every eval)
-            ResetHistory();        // history black + warmup meta clear, exactly like the game
+            BeginEvalTunables(ActiveFromVector(vec)); // untuned set stays at defaults (inert for this technique)
+        }
+
+        private void BeginEvalTunables(Tunables t)
+        {
+            EvalTune = t;
+            ScalePass = 0;
+            PassScores = new EvalScores[EvalScales.Length];
+            EvalBoundBase = 0;
             TaaCur ??= new Color[MetricW * MetricH];
             TaaPrev ??= new Color[MetricW * MetricH];
             RowS ??= new double[MetricH];
             RowT ??= new double[MetricH];
+            RowG ??= new double[MetricH];
+            RowF ??= new double[MetricH];
+            RowB ??= new double[MetricH];
+            PersState ??= new float[MetricW * MetricH];
+            BeginScalePass();
             EvalSW.Restart();
+        }
+
+        /// <summary>Reset the per-sequence state for the current scale pass of the eval.</summary>
+        private void BeginScalePass()
+        {
+            for (int i = 0; i < 4; i++) { PhaseS[i] = 0; PhaseT[i] = 0; PhaseTN[i] = 0; PhaseG[i] = 0; PhaseF[i] = 0; PhaseB[i] = 0; }
+            Array.Clear(PersState, 0, PersState.Length); // persistence must not leak across passes/evals
+            EvalFrame = 0;
+            HistCurr = 0;          // fixed ping-pong start (identical target usage every pass)
+            ResetHistory();        // history black + warmup meta clear, exactly like the game
         }
 
         /// <summary>One control-sequence frame: render 2x, downsample, sample, store.</summary>
@@ -1107,33 +1534,143 @@ namespace FSO.TAALab
             var arr = new Color[MetricW * MetricH];
             ReadMetricSamples(ControlDownRT, arr, ControlFrame);
             ControlSamples[ControlFrame] = arr;
+            BuildDetailWeights(ControlFrame);
             if (++ControlFrame >= SeqFrames)
             {
                 ControlCacheValid = true;
+                FreeControlTargets(); // the cache is CPU-resident now — release the 8K chain's VRAM
                 Console.WriteLine("[AutoTune] control sequence cached (session-persistent).");
-                BeginDeterminismCheck();
+                AfterControlReady();
             }
         }
 
-        /// <summary>One TAA-path frame of the current candidate eval.</summary>
+        /// <summary>
+        /// One TAA-path frame of the current candidate eval. Readback is PIPELINED one frame behind
+        /// the render: frame f-1's metric samples are collected (and its CPU accumulate runs) BEFORE
+        /// frame f's GPU work is issued, so the GetData only waits on commands through f-1 while the
+        /// CPU reduce of the previous frame overlapped the GPU rendering it. Collect may early-PRUNE
+        /// the eval (monotone partial-score bound exceeds the best total) — then this eval is already
+        /// over and a new one (or the run epilogue) has begun.
+        /// </summary>
         private void StepEvalFrame()
         {
             int f = EvalFrame;
-            var jpx = SampleHalton(f, RenderScale);
-            var sampleJitterUV = new Vector2(-jpx.X / RW, jpx.Y / RH);
+            if (f > 0 && !CollectMetricFrame(f - 1)) return; // pruned — eval advanced inside
+
+            float es = EvalScales[ScalePass];
+            var (sceneRT, velRT) = EvalTargetsFor(es);
+            int erw = sceneRT.Width, erh = sceneRT.Height;
+            var jpx = SampleHalton(f, es);
+            var sampleJitterUV = new Vector2(-jpx.X / erw, jpx.Y / erh);
             var pose = EvalPose(f);
             // Reveal frame: new content appears with ZERO velocity (prev == current), the honest convention.
             var prev = f == RevealFrame ? pose : EvalPose(f - 1);
 
-            DrawSceneColor(pose, SceneRT, RenderScale, jpx, ControlCacheMeshes);
-            DrawVelocity(pose, prev, jpx, ControlCacheMeshes);
-            RunResolve(EvalTune, sampleJitterUV);
-            ReadMetricSamples(Hist[HistCurr], TaaCur, f);
-            AccumulateMetric(f);
-            (TaaCur, TaaPrev) = (TaaPrev, TaaCur);
+            DrawSceneColor(pose, sceneRT, es, jpx, ControlCacheMeshes);
+            DrawVelocity(pose, prev, jpx, ControlCacheMeshes, velRT, es, erw, erh);
+            RunResolve(EvalTune, sampleJitterUV, sceneRT, velRT, erw, erh, es);
+            BlitMetric(Hist[HistCurr], MetricTarget(f), f);
             HistCurr = 1 - HistCurr;
 
-            if (++EvalFrame >= SeqFrames) OnEvalComplete(ComputeScores());
+            if (++EvalFrame >= SeqFrames)
+            {
+                if (!CollectMetricFrame(SeqFrames - 1)) return; // may prune when later scale passes remain
+                PassScores[ScalePass] = ComputeScores();
+                EvalBoundBase += EvalWeights[ScalePass] * PassScores[ScalePass].Total;
+                if (++ScalePass < EvalScales.Length) { BeginScalePass(); return; }
+                OnEvalComplete(CombineScores());
+            }
+        }
+
+        /// <summary>Scale-weighted combination of the per-pass scores (identity for single-scale runs).</summary>
+        private EvalScores CombineScores()
+        {
+            var r = new EvalScores();
+            for (int i = 0; i < PassScores.Length; i++)
+            {
+                double w = EvalWeights[i];
+                var s = PassScores[i];
+                r.Total += w * s.Total; r.Rest += w * s.Rest; r.Motion += w * s.Motion;
+                r.Reveal += w * s.Reveal; r.Slow += w * s.Slow;
+                r.SpatialMean += w * s.SpatialMean; r.TemporalMean += w * s.TemporalMean;
+                r.GhostMean += w * s.GhostMean; r.FizzleMean += w * s.FizzleMean; r.StrictMean += w * s.StrictMean;
+            }
+            return r;
+        }
+
+        private string FmtPerScale()
+        {
+            var sb = new StringBuilder();
+            for (int i = 0; i < PassScores.Length; i++)
+                sb.Append(string.Format(CultureInfo.InvariantCulture, "{0}{1:0.00}x {2:0.000000}",
+                    i > 0 ? "  " : "", EvalScales[i], PassScores[i].Total));
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Read back + accumulate eval frame g, then apply the early-prune test. The partial score
+        /// SW*S_acc/240 + TW*T_acc/120 uses the FINAL normalization denominators over non-negative
+        /// per-frame terms, so it is a monotone lower bound of the eval's eventual total — once it
+        /// exceeds the best total the candidate cannot win and the remaining frames are skipped
+        /// (the optimizer is Tell()ed the bound: optimistic but still ranked worse than best).
+        /// Returns false if the eval was pruned (the driver has already moved on).
+        /// </summary>
+        private bool CollectMetricFrame(int g)
+        {
+            MetricTarget(g).GetData(TaaCur);
+            AccumulateMetric(g);
+            (TaaCur, TaaPrev) = (TaaPrev, TaaCur);
+
+            // Prune anywhere except the very last frame of the LAST scale pass (there the bound IS
+            // the exact total — that's a normal worse-than-best eval, not a prune). Finished passes
+            // contribute their exact weighted totals via EvalBoundBase.
+            bool lastFrameOfEval = ScalePass == EvalScales.Length - 1 && g == SeqFrames - 1;
+            if (PruneEnabled && !lastFrameOfEval && Kind == RunKind.Optimize && DetPhase == 2
+                && BestTotal < double.MaxValue)
+            {
+                double passLb = SpatialWeight * (PhaseS[0] + PhaseS[1] + PhaseS[2] + PhaseS[3]) / SeqFrames
+                              + TemporalWeight * (PhaseT[0] + PhaseT[1] + PhaseT[2] + PhaseT[3]) / (SeqFrames / 2)
+                              + GhostWeight * (PhaseG[0] + PhaseG[1] + PhaseG[2] + PhaseG[3]) / SeqFrames
+                              + FizzleWeight * (PhaseF[0] + PhaseF[1] + PhaseF[2] + PhaseF[3]) / (SeqFrames / 2)
+                              + StrictWeight * (PhaseB[0] + PhaseB[1] + PhaseB[2] + PhaseB[3]) / SeqFrames;
+                double lb = EvalBoundBase + EvalWeights[ScalePass] * passLb;
+                if (lb > BestTotal)
+                {
+                    OnEvalPruned(lb, ScalePass * SeqFrames + g + 1);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// <summary>Quantized detail weights for control frame f (see the field block comment):
+        /// luma central-difference gradient magnitude on the metric grid, byte-quantized over
+        /// [Floor, 1]. Deterministic; the per-frame mean is the metric normalizer.</summary>
+        private void BuildDetailWeights(int f)
+        {
+            int w = MetricW, h = MetricH;
+            var ctrl = ControlSamples[f];
+            var q = new byte[w * h];
+            double sum = 0;
+            for (int y = 0; y < h; y++)
+            {
+                int o = y * w;
+                int oUp = Math.Max(0, y - 1) * w, oDn = Math.Min(h - 1, y + 1) * w;
+                for (int x = 0; x < w; x++)
+                {
+                    float Luma(Color c) => (0.25f * c.R + 0.5f * c.G + 0.25f * c.B) * (1f / 255f);
+                    int xl = Math.Max(0, x - 1), xr = Math.Min(w - 1, x + 1);
+                    float gx = Math.Abs(Luma(ctrl[o + xr]) - Luma(ctrl[o + xl]));
+                    float gy = Math.Abs(Luma(ctrl[oDn + x]) - Luma(ctrl[oUp + x]));
+                    float detail = Math.Max(gx, gy);
+                    float wt = DetailWeightFloor + (1f - DetailWeightFloor) * Math.Clamp(detail * DetailWeightGain, 0f, 1f);
+                    byte qb = (byte)Math.Round((wt - DetailWeightFloor) / (1f - DetailWeightFloor) * 255f);
+                    q[o + x] = qb;
+                    sum += DetailWeightFloor + (1f - DetailWeightFloor) * (qb * (1f / 255f)); // mean of the QUANTIZED weights
+                }
+            }
+            ControlWeightQ[f] = q;
+            ControlMeanW[f] = sum / (w * h);
         }
 
         /// <summary>
@@ -1149,76 +1686,134 @@ namespace FSO.TAALab
             int w = MetricW, h = MetricH;
             var taa = TaaCur; var taaPrev = TaaPrev;
             var ctrl = ControlSamples[f];
+            var wq = ControlWeightQ[f];
             bool hasPrev = (f & 1) == 1; // same-parity predecessor exists (also implies f > 0)
             var ctrlPrev = hasPrev ? ControlSamples[f - 1] : null;
             var rowS = RowS; var rowT = RowT;
+            var rowG = RowG; var rowF = RowF; var rowB = RowB;
+            var pers = PersState;
             Parallel.For(0, h, y =>
             {
-                double s = 0, td = 0;
+                double s = 0, td = 0, gp = 0, fz = 0, bp = 0;
                 int o = y * w;
                 for (int x = 0; x < w; x++)
                 {
                     int i = o + x;
+                    double wt = DetailWeightFloor + (1.0 - DetailWeightFloor) * (wq[i] * (1.0 / 255.0));
                     Color a = taa[i], c = ctrl[i];
                     double dr = (a.R - c.R) * (1.0 / 255.0);
                     double dg = (a.G - c.G) * (1.0 / 255.0);
                     double db = (a.B - c.B) * (1.0 / 255.0);
-                    s += (dr * dr + dg * dg + db * db) * (1.0 / 3.0);
+                    s += wt * (dr * dr + dg * dg + db * db) * (1.0 / 3.0);
+
+                    // GHOST/TRAIL persistence: signed luma-error run counter (see field block)
+                    double lumaErr = 0.25 * dr + 0.5 * dg + 0.25 * db;
+                    float ps = pers[i];
+                    if (Math.Abs(lumaErr) <= 2.0 / 255.0) pers[i] = 0f;
+                    else if (lumaErr > 0) pers[i] = ps > 0 ? ps + 1 : 1;
+                    else pers[i] = ps < 0 ? ps - 1 : -1;
+                    // Ramp IN over runs 3..6 (a trail), ramp OUT over 12..30: a same-signed error that
+                    // persists FOREVER is steady-state reconstruction bias (already scored spatially,
+                    // every frame), not a ghost — without the fade-out the term scored converged
+                    // approximation offset and dominated the total at defaults (52% at 0.33x).
+                    float run = Math.Abs(pers[i]);
+                    if (run > 2f)
+                        gp += wt * Math.Abs(lumaErr) * Math.Min((run - 2f) * 0.25f, 1f)
+                            * Math.Max(1f - Math.Max(run - 12f, 0f) / 18f, 0f);
+
+                    // STRICT bad-pixel fractions: unweighted max-channel error (a wrong pixel is wrong)
+                    int maxErr = Math.Max(Math.Abs(a.R - c.R), Math.Max(Math.Abs(a.G - c.G), Math.Abs(a.B - c.B)));
+                    if (maxErr > 2) bp += maxErr > 5 ? 5.0 : 1.0;
+
                     if (hasPrev)
                     {
                         Color ap = taaPrev[i], cp = ctrlPrev[i];
                         double tr = ((a.R - ap.R) - (c.R - cp.R)) * (1.0 / 255.0);
                         double tg = ((a.G - ap.G) - (c.G - cp.G)) * (1.0 / 255.0);
                         double tb = ((a.B - ap.B) - (c.B - cp.B)) * (1.0 / 255.0);
-                        td += (Math.Abs(tr) + Math.Abs(tg) + Math.Abs(tb)) * (1.0 / 3.0);
+                        td += wt * (Math.Abs(tr) + Math.Abs(tg) + Math.Abs(tb)) * (1.0 / 3.0);
+
+                        // FIZZLE: TAA luma changed where the ground truth held still (dead-band 1/255)
+                        double ctrlD = Math.Abs((0.25 * (c.R - cp.R) + 0.5 * (c.G - cp.G) + 0.25 * (c.B - cp.B)) * (1.0 / 255.0));
+                        if (ctrlD < 1.0 / 255.0)
+                        {
+                            double taaD = Math.Abs((0.25 * (a.R - ap.R) + 0.5 * (a.G - ap.G) + 0.25 * (a.B - ap.B)) * (1.0 / 255.0));
+                            fz += wt * Math.Max(taaD - 1.0 / 255.0, 0.0);
+                        }
                     }
                 }
-                rowS[y] = s; rowT[y] = td;
+                rowS[y] = s; rowT[y] = td; rowG[y] = gp; rowF[y] = fz; rowB[y] = bp;
             });
-            double fs = 0, ft = 0;
-            for (int y = 0; y < h; y++) { fs += rowS[y]; ft += rowT[y]; }
+            double fs = 0, ft = 0, fg = 0, ff = 0, fb = 0;
+            for (int y = 0; y < h; y++) { fs += rowS[y]; ft += rowT[y]; fg += rowG[y]; ff += rowF[y]; fb += rowB[y]; }
             int phase = f < 60 ? 0 : f < 120 ? 1 : f < 180 ? 2 : 3;
-            double n = w * h;
+            // normalize by the frame's mean weight so weighting shifts emphasis, not magnitude
+            double n = w * h * ControlMeanW[f];
             PhaseS[phase] += fs / n;
-            if (hasPrev) { PhaseT[phase] += ft / n; PhaseTN[phase]++; }
+            PhaseG[phase] += fg / n;
+            PhaseB[phase] += fb / (w * h); // strict stays unweighted: plain pixel fraction
+            if (hasPrev) { PhaseT[phase] += ft / n; PhaseF[phase] += ff / n; PhaseTN[phase]++; }
         }
 
         private EvalScores ComputeScores()
         {
             var r = new EvalScores();
-            double s = 0, t = 0; int tn = 0;
+            double s = 0, t = 0, g = 0, fz = 0, b = 0; int tn = 0;
             var ps = new double[4];
             for (int i = 0; i < 4; i++)
             {
                 s += PhaseS[i]; t += PhaseT[i]; tn += PhaseTN[i];
-                // spatial: 60 frames/phase; temporal: counted (parity pairs -> 30/phase, see AccumulateMetric)
-                ps[i] = SpatialWeight * PhaseS[i] / 60.0 + TemporalWeight * PhaseT[i] / Math.Max(1, PhaseTN[i]);
+                g += PhaseG[i]; fz += PhaseF[i]; b += PhaseB[i];
+                // per-frame terms: 60 frames/phase; pair terms: counted (parity pairs -> 30/phase)
+                ps[i] = SpatialWeight * PhaseS[i] / 60.0 + TemporalWeight * PhaseT[i] / Math.Max(1, PhaseTN[i])
+                      + GhostWeight * PhaseG[i] / 60.0 + FizzleWeight * PhaseF[i] / Math.Max(1, PhaseTN[i])
+                      + StrictWeight * PhaseB[i] / 60.0;
             }
             r.Rest = ps[0]; r.Motion = ps[1]; r.Reveal = ps[2]; r.Slow = ps[3];
             r.SpatialMean = s / SeqFrames;
             r.TemporalMean = t / Math.Max(1, tn);
-            r.Total = SpatialWeight * r.SpatialMean + TemporalWeight * r.TemporalMean;
+            r.GhostMean = g / SeqFrames;
+            r.FizzleMean = fz / Math.Max(1, tn);
+            r.StrictMean = b / SeqFrames;
+            r.Total = SpatialWeight * r.SpatialMean + TemporalWeight * r.TemporalMean
+                    + GhostWeight * r.GhostMean + FizzleWeight * r.FizzleMean + StrictWeight * r.StrictMean;
             return r;
         }
 
         private static string Fmt(EvalScores s) => string.Format(CultureInfo.InvariantCulture,
-            "total {0:0.000000} | rest {1:0.000000} motion {2:0.000000} reveal {3:0.000000} slow {4:0.000000} | spatial {5:0.000000} temporal {6:0.000000}",
-            s.Total, s.Rest, s.Motion, s.Reveal, s.Slow, s.SpatialMean, s.TemporalMean);
+            "total {0:0.000000} | rest {1:0.000000} motion {2:0.000000} reveal {3:0.000000} slow {4:0.000000} | spatial {5:0.000000} temporal {6:0.000000} ghost {7:0.000000} fizzle {8:0.000000} strict {9:0.0000}",
+            s.Total, s.Rest, s.Motion, s.Reveal, s.Slow, s.SpatialMean, s.TemporalMean, s.GhostMean, s.FizzleMean, s.StrictMean);
 
-        private void Consider(float[] vec, EvalScores sc)
+        private bool Consider(float[] vec, EvalScores sc)
         {
-            if (sc.Total >= BestTotal) return;
+            if (sc.Total >= BestTotal) return false;
             BestTotal = sc.Total;
             BestVec = (float[])vec.Clone();
             BestScoresV = sc;
             BestEvalNum = EvalsDone;
-            Console.WriteLine($"[AutoTune] eval #{EvalsDone}: new best — {Fmt(sc)}");
+            Console.WriteLine($"[AutoTune] eval #{EvalsDone}: new best — {Fmt(sc)}"
+                + (EvalScales.Length > 1 ? $"  [per-scale: {FmtPerScale()}]" : ""));
+            return true;
+        }
+
+        /// <summary>The run's chosen warm-start vector (clamped into bounds), per the GUI combo.</summary>
+        private float[] StartVector()
+        {
+            float[] v;
+            switch (StartFromIdx)
+            {
+                case 1: v = RunLite ? ToLiteVector(Tune) : ToVector(Tune); break;
+                case 2 when SessionBest != null: v = (float[])SessionBest.Clone(); break;
+                default: v = ActiveDefaults; break;
+            }
+            for (int i = 0; i < v.Length; i++) v[i] = Math.Clamp(v[i], ActiveLo[i], ActiveHi[i]);
+            return v;
         }
 
         private float[] RestartStart(int idx)
         {
-            var d = ActiveDefaults;
-            if (idx == 0) return d; // restart 1 = exact defaults
+            var d = CycleRun && BestVec != null ? (float[])BestVec.Clone() : StartVector();
+            if (idx == 0) return d; // restart 1 = the exact chosen start
             var rng = new Random(7777 * idx + 1); // FIXED seed per restart — runs stay reproducible
             for (int i = 0; i < d.Length; i++)
             {
@@ -1231,10 +1826,23 @@ namespace FSO.TAALab
         private void StartRestart()
         {
             RestartEvals = 0;
-            Opt = new NelderMeadOptimizer(RestartStart(RestartIdx), ActiveLo, ActiveHi);
+            RestartSinceImprove = 0;
+            var start = RestartStart(RestartIdx);
+            // cycles vary the seed so a re-run from the same best explores NEW candidates (identical
+            // seed + start would replay the previous cycle straight into the score cache forever)
+            int seed = 7777 * (RestartIdx + 1) + 13 + 101 * CycleIdx;
+            // Auto: NM discovers (a fresh run's exact-start restart, and escalation cycles — with its
+            // step scaled to the escalated sigma), CMA-ES everywhere else (jittered restarts, refine cycles)
+            UseNmNow = OptimizerIdx == 0 || (OptimizerIdx == 2 && (CycleRun ? CycleEscalated : RestartIdx == 0));
+            RestartLambda = CycleRun && CycleLambda > 0 ? CycleLambda : DefaultLambda;
+            Opt = UseNmNow
+                ? new NelderMeadOptimizer(start, ActiveLo, ActiveHi,
+                    initStepFrac: CycleRun ? (float)CycleSigma : 0.08f)
+                : (IOptimizer)new CmaEsOptimizer(start, ActiveLo, ActiveHi, seed,
+                    sigma0: CycleRun ? CycleSigma : 0.15, lambda: CycleRun ? CycleLambda : 0);
             Console.WriteLine($"[AutoTune] restart {RestartIdx + 1}/{RestartCount} " +
-                $"({(RestartIdx == 0 ? "defaults start" : "defaults +/-10% jitter start")}) — budget {RestartBudget} evals.");
-            BeginEval(Opt.Ask());
+                $"({(UseNmNow ? "Nelder-Mead" : "CMA-ES")}, {(CycleRun ? FormattableString.Invariant($"cycle {CycleIdx} from best, sigma {CycleSigma:0.00}{(UseNmNow ? "" : $", lambda {RestartLambda}")}") : RestartIdx == 0 ? "exact start" : "start +/-10% jitter")}) — budget {RestartBudget} evals, stall cutoff {StallLimit}.");
+            AskNextOrAdvance();
         }
 
         private void OnEvalComplete(EvalScores sc)
@@ -1244,6 +1852,17 @@ namespace FSO.TAALab
             EvalMsTotal += EvalSW.Elapsed.TotalMilliseconds;
             EvalMsCount++;
 
+            if (Kind == RunKind.Compare)
+            {
+                CmpScores[CmpIdx] = sc;
+                Console.WriteLine($"[A/B] {CmpLabels[CmpIdx]}: {Fmt(sc)}"
+                    + (EvalScales.Length > 1 ? $"  [per-scale: {FmtPerScale()}]" : ""));
+                CmpIdx++;
+                if (StopRequested || CmpIdx >= CmpSets.Length) FinishCompare(StopRequested);
+                else BeginEvalTunables(CmpSets[CmpIdx]);
+                return;
+            }
+
             if (DetPhase < 2)
             {
                 if (DetPhase == 0)
@@ -1251,7 +1870,8 @@ namespace FSO.TAALab
                     DetPhase = 1;
                     DetA = sc;
                     DefaultsScores = sc; HaveDefaultsScores = true;
-                    Console.WriteLine($"[AutoTune] defaults baseline ({(RunLite ? "Lite*" : "Tune*")}): {Fmt(sc)}");
+                    Console.WriteLine($"[AutoTune] defaults baseline ({(RunLite ? "Lite*" : "Tune*")}): {Fmt(sc)}"
+                        + (EvalScales.Length > 1 ? $"  [per-scale: {FmtPerScale()}]" : ""));
                     BeginEval(ActiveDefaults); // second identical-params eval — THE determinism check
                 }
                 else
@@ -1270,23 +1890,82 @@ namespace FSO.TAALab
             }
 
             Opt.Tell(sc.Total);
-            Consider(CurVec, sc);
+            bool improved = Consider(CurVec, sc);
+            ScoreCache[VecKey(CurVec)] = sc.Total; // full evals only — pruned bounds are not true scores
             RestartEvals++;
-            if (StopRequested) { FinishRun("stopped"); return; }
+            RestartSinceImprove = improved ? 0 : RestartSinceImprove + 1;
+            AskNextOrAdvance();
+        }
 
-            float[] next = RestartEvals >= RestartBudget ? null : Opt.Ask();
-            if (next == null)
+        /// <summary>Pruned-eval epilogue: the optimizer is Tell()ed the partial lower bound (already
+        /// worse than best, so ranking stays sound); no Consider, no cache entry.</summary>
+        private void OnEvalPruned(double bound, int framesRun)
+        {
+            EvalsDone++;
+            PrunedEvals++;
+            PrunedFramesSaved += SeqFrames * EvalScales.Length - framesRun;
+            EvalSW.Stop();
+            EvalMsTotal += EvalSW.Elapsed.TotalMilliseconds;
+            EvalMsCount++;
+            Opt.Tell(bound);
+            RestartEvals++;
+            RestartSinceImprove++; // a pruned eval by definition didn't improve the best
+            AskNextOrAdvance();
+        }
+
+        /// <summary>Advance the optimizer loop: serve exact-duplicate candidates from the score cache
+        /// for free (not counted against the eval budget), start the next real eval, or roll into the
+        /// next restart / the run epilogue.</summary>
+        private void AskNextOrAdvance()
+        {
+            int cacheStreak = 0; // safety valve: a degenerate optimizer cycling cached points forever
+            while (true)
             {
-                if (RestartEvals < RestartBudget)
-                    Console.WriteLine($"[AutoTune] restart {RestartIdx + 1} converged after {RestartEvals} evals.");
-                RestartIdx++;
-                if (RestartIdx >= RestartCount) { FinishRun("complete"); return; }
-                StartRestart();
-            }
-            else
-            {
+                if (StopRequested) { FinishRun("stopped"); return; }
+                bool stalled = RestartSinceImprove >= StallLimit;
+                float[] next = RestartEvals >= RestartBudget || stalled ? null : Opt.Ask();
+                if (next == null)
+                {
+                    if (stalled)
+                        Console.WriteLine($"[AutoTune] restart {RestartIdx + 1} STALLED — no best-improvement in {RestartSinceImprove} evals ({RestartEvals} total), rolling on.");
+                    else if (RestartEvals < RestartBudget)
+                        Console.WriteLine($"[AutoTune] restart {RestartIdx + 1} converged after {RestartEvals} evals.");
+                    RestartIdx++;
+                    if (RestartIdx >= RestartCount) { FinishRun("complete"); return; }
+                    StartRestart();
+                    return;
+                }
+                if (cacheStreak < 1000 && ScoreCache.TryGetValue(VecKey(next), out double cached))
+                {
+                    CacheHits++; cacheStreak++;
+                    Opt.Tell(cached);
+                    continue;
+                }
                 BeginEval(next);
+                return;
             }
+        }
+
+        private void FinishCompare(bool aborted)
+        {
+            RunSW.Stop();
+            if (!aborted && CmpIdx >= 2)
+            {
+                HaveCmp = true;
+                double dA = CmpScores[0].Total, dB = CmpScores[1].Total;
+                string verdict = dA == dB ? "TIE" : dA < dB
+                    ? string.Format(CultureInfo.InvariantCulture, "A (sliders) WINS by {0:0.0}% (lower is better)", (dB - dA) / dB * 100.0)
+                    : string.Format(CultureInfo.InvariantCulture, "B (baseline) WINS by {0:0.0}% (lower is better)", (dA - dB) / dA * 100.0);
+                Console.WriteLine($"[A/B] {CmpCtx} -> {verdict}");
+                Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
+                    "[A/B] phase deltas (A - B, negative = A better): rest {0:+0.000000;-0.000000;0} motion {1:+0.000000;-0.000000;0} reveal {2:+0.000000;-0.000000;0} slow {3:+0.000000;-0.000000;0}",
+                    CmpScores[0].Rest - CmpScores[1].Rest, CmpScores[0].Motion - CmpScores[1].Motion,
+                    CmpScores[0].Reveal - CmpScores[1].Reveal, CmpScores[0].Slow - CmpScores[1].Slow));
+            }
+            else Console.WriteLine("[A/B] compare stopped — incomplete, no verdict.");
+            TState = TuneState.Idle;
+            IsFixedTimeStep = PrevFixedTimeStep;
+            NeedHistoryReset = true;
         }
 
         private void FinishRun(string reason)
@@ -1295,6 +1974,9 @@ namespace FSO.TAALab
             Console.WriteLine(string.Format(CultureInfo.InvariantCulture,
                 "[AutoTune] {0} after {1} evals in {2:0.0}s (avg {3:0} ms/eval).",
                 reason, EvalsDone, RunSW.Elapsed.TotalSeconds, EvalMsCount > 0 ? EvalMsTotal / EvalMsCount : 0));
+            if (PrunedEvals > 0 || CacheHits > 0)
+                Console.WriteLine($"[AutoTune] efficiency: {PrunedEvals} evals early-pruned " +
+                    $"({PrunedFramesSaved} of {EvalsDone * SeqFrames * EvalScales.Length} frames skipped), {CacheHits} duplicate candidates served from cache.");
             if (DetIdentical.HasValue)
                 Console.WriteLine($"[AutoTune] determinism: {(DetIdentical.Value ? "PASS (two identical-params evals scored bit-identically)" : "FAIL")}");
             if (HaveDefaultsScores) Console.WriteLine($"[AutoTune] defaults: {Fmt(DefaultsScores)}");
@@ -1302,17 +1984,54 @@ namespace FSO.TAALab
             {
                 Console.WriteLine($"[AutoTune] best:     {Fmt(BestScoresV)} (eval #{BestEvalNum}, {(RunLite ? "Lite*" : "Tune*")} space)");
                 PrintTuningBlock(ActiveFromVector(BestVec), AutoTuneHeader);
+                // remember per-space session best so the next run can warm-start from it
+                if (RunLite) SessionBestLite = (float[])BestVec.Clone();
+                else SessionBestFull = (float[])BestVec.Clone();
             }
             TState = TuneState.Idle;
             IsFixedTimeStep = PrevFixedTimeStep;
             NeedHistoryReset = true; // interactive resumes from a clean history
-            if (SmokeMode) Exit();
+            // smoke exits here — except the 'cont' variant, which verifies two chained cycles first
+            if (SmokeMode && !(SmokeCont && ContinuousTrain && reason == "complete" && CycleIdx < 2)) { Exit(); return; }
+
+            // continuous self-training: chain the next cycle (see the field block comment)
+            if (ContinuousTrain && reason == "complete" && BestVec != null)
+            {
+                bool improved = BestTotal < CycleStartBest * (1.0 - 1e-4);
+                if (improved)
+                {
+                    StagnantCycles = 0;
+                    CycleSigma = 0.08;      // refine around the new best
+                    CycleLambda = 0;        // default population
+                    CycleEscalated = false; // Auto mode: CMA-ES refine
+                }
+                else
+                {
+                    StagnantCycles++;
+                    if (StagnantCycles >= MaxStagnantCycles)
+                    {
+                        Console.WriteLine($"[AutoTune] continuous training: {MaxStagnantCycles} stagnant cycles — converged, stopping. " +
+                            $"Final best {BestTotal.ToString("0.000000", CultureInfo.InvariantCulture)} (cycle {CycleIdx}).");
+                        return;
+                    }
+                    CycleSigma = Math.Min(0.3, CycleSigma * 1.8);                       // IPOP-style escalation
+                    CycleLambda = Math.Min(64, (CycleLambda > 0 ? CycleLambda : DefaultLambda) * 2);
+                    CycleEscalated = true; // Auto mode: NM discovery with the escalated step
+                    Console.WriteLine(FormattableString.Invariant(
+                        $"[AutoTune] continuous training: stagnant cycle ({StagnantCycles}/{MaxStagnantCycles}) — escalating: sigma {CycleSigma:0.00}, lambda {CycleLambda}."));
+                }
+                CycleIdx++;
+                CycleStartBest = BestTotal;
+                Console.WriteLine($"[AutoTune] continuous training: starting cycle {CycleIdx} from best.");
+                StartTuning(TMode, cycle: true); // chain with the originating mode's budget
+            }
         }
 
         private void CancelDuringControl()
         {
             Console.WriteLine("[AutoTune] stopped during control pre-render — no results (cache incomplete).");
             ControlCacheValid = false;
+            FreeControlTargets();
             TState = TuneState.Idle;
             IsFixedTimeStep = PrevFixedTimeStep;
             NeedHistoryReset = true;
@@ -1328,6 +2047,7 @@ namespace FSO.TAALab
                 if (StopRequested)
                 {
                     if (TState == TuneState.ControlPreRender) CancelDuringControl();
+                    else if (Kind == RunKind.Compare) FinishCompare(true);
                     else FinishRun("stopped");
                     break;
                 }
@@ -1349,8 +2069,15 @@ namespace FSO.TAALab
             SB.Draw(White, new Rectangle(4, 4, 700, 26), Color.Black * 0.62f);
             string msg = TState == TuneState.ControlPreRender
                 ? string.Format(CultureInfo.InvariantCulture, "AUTO-TUNE: CONTROL {0}/{1}", ControlFrame, SeqFrames)
-                : string.Format(CultureInfo.InvariantCulture, "AUTO-TUNE: EVAL {0} FRAME {1}/{2} BEST {3}",
-                    EvalsDone, EvalFrame, SeqFrames, BestVec != null ? BestTotal.ToString("0.000000", CultureInfo.InvariantCulture) : "-");
+                : Kind == RunKind.Compare
+                ? string.Format(CultureInfo.InvariantCulture, "A/B SCORING: {0} {1}FRAME {2}/{3}",
+                    CmpIdx < CmpLabels.Length ? CmpLabels[CmpIdx].Trim() : "?",
+                    EvalScales.Length > 1 ? FormattableString.Invariant($"SCALE {EvalScales[ScalePass]:0.00} ") : "",
+                    EvalFrame, SeqFrames)
+                : string.Format(CultureInfo.InvariantCulture, "AUTO-TUNE: EVAL {0} {1}FRAME {2}/{3} BEST {4}",
+                    EvalsDone,
+                    EvalScales.Length > 1 ? FormattableString.Invariant($"SCALE {EvalScales[ScalePass]:0.00} ") : "",
+                    EvalFrame, SeqFrames, BestVec != null ? BestTotal.ToString("0.000000", CultureInfo.InvariantCulture) : "-");
             Font.Draw(SB, msg, new Vector2(10, 8), Color.Yellow, 2f);
             SB.End();
 
@@ -1366,8 +2093,9 @@ namespace FSO.TAALab
             const float sc = 2f;
             SB.Draw(White, new Rectangle(4, 4, 470, 26), Color.Black * 0.62f);
             string status = string.Format(CultureInfo.InvariantCulture,
-                "TAA {0}  {1}  SCALE {2:0.00}  {3}X{4}  {5:0} FPS",
+                "TAA {0}  SET {1}  {2}  SCALE {3:0.00}  {4}X{5}  {6:0} FPS",
                 TAAEnabled ? (TechIdx == 1 ? "LITE" : "FULL") : "OFF",
+                UseB ? "B" : "A",
                 Paused ? "PAUSED" : "RUN", RenderScale, RW, RH, SmoothedFps);
             Font.Draw(SB, status, new Vector2(10, 8), Color.Yellow, sc);
             SB.End();
@@ -1426,6 +2154,7 @@ namespace FSO.TAALab
             }
 
             DrawAutoTuneGui(idle);
+            DrawABGui(idle);
 
             if (ImGui.CollapsingHeader("Motion gates", ImGuiTreeNodeFlags.DefaultOpen))
             {
@@ -1448,26 +2177,16 @@ namespace FSO.TAALab
                 ImGui.SliderFloat("RespEnd", ref Tune.RespEnd, 0f, 1f, "%.3f");
                 ImGui.SliderFloat("MotionTrustCap", ref Tune.MotionTrustCap, 0f, 1f, "%.3f");
                 ImGui.SliderFloat("MotionClampTighten", ref Tune.MotionClampTighten, 0f, 1f, "%.3f");
-                ImGui.SliderFloat("Gamma (clamp sigma)", ref Tune.Gamma, 0.5f, 3f, "%.3f");
+                ImGui.SliderFloat("GammaNative (rest sigma @ native)", ref Tune.GammaNative, 1f, 2f, "%.3f");
+                ImGui.SliderFloat("GammaUpscale (rest sigma @ 0.33x)", ref Tune.GammaUpscale, 1.5f, 3.5f, "%.3f");
+                ImGui.TextDisabled("gamma = FIXED reference schedule (native->upscale), NOT auto-tuned");
+                ImGui.SliderFloat("ConfFloor", ref Tune.ConfFloor, 0f, 1f, "%.3f");
                 if (ImGui.Button("Reset to defaults##trust"))
                 {
                     Tune.RespEnd = Defaults.RespEnd; Tune.MotionTrustCap = Defaults.MotionTrustCap;
-                    Tune.MotionClampTighten = Defaults.MotionClampTighten; Tune.Gamma = Defaults.Gamma;
-                }
-            }
-
-            if (ImGui.CollapsingHeader("Display", ImGuiTreeNodeFlags.DefaultOpen))
-            {
-                ImGui.SliderFloat("RawSoftenOnset", ref Tune.RawSoftenOnset, 0f, 1f, "%.3f");
-                ImGui.SliderFloat("RawSoftenSlope", ref Tune.RawSoftenSlope, 0f, 5f, "%.3f");
-                ImGui.SliderFloat("RawSoftenMotionSup", ref Tune.RawSoftenMotionSup, 0f, 1f, "%.3f");
-                ImGui.SliderFloat("ConfFloor", ref Tune.ConfFloor, 0f, 1f, "%.3f");
-                ImGui.SliderFloat("TexDetailFloor", ref Tune.TexDetailFloor, 0f, 1f, "%.3f");
-                if (ImGui.Button("Reset to defaults##display"))
-                {
-                    Tune.RawSoftenOnset = Defaults.RawSoftenOnset; Tune.RawSoftenSlope = Defaults.RawSoftenSlope;
-                    Tune.RawSoftenMotionSup = Defaults.RawSoftenMotionSup;
-                    Tune.ConfFloor = Defaults.ConfFloor; Tune.TexDetailFloor = Defaults.TexDetailFloor;
+                    Tune.MotionClampTighten = Defaults.MotionClampTighten;
+                    Tune.GammaNative = Defaults.GammaNative; Tune.GammaUpscale = Defaults.GammaUpscale;
+                    Tune.ConfFloor = Defaults.ConfFloor;
                 }
             }
 
@@ -1485,15 +2204,12 @@ namespace FSO.TAALab
             if (ImGui.CollapsingHeader("Structural", ImGuiTreeNodeFlags.DefaultOpen))
             {
                 ImGui.SliderFloat("DirectClampMix", ref Tune.DirectClampMix, 0f, 1f, "%.3f");
-                ImGui.SliderFloat("KarisFade", ref Tune.KarisFade, 0f, 1f, "%.3f");
-                ImGui.SliderFloat("GammaMotionDecay", ref Tune.GammaMotionDecay, 0f, 1f, "%.3f");
                 ImGui.SliderFloat("ConfFadeN", ref Tune.ConfFadeN, 1f, 64f, "%.1f");
                 ImGui.SliderFloat("GrowOffPhase", ref Tune.GrowOffPhase, 0.25f, 1f, "%.3f"); // <0.25 quantizes to zero growth (RGBA8 meta N), see ParamLo
                 ImGui.SliderFloat("DeepCapBase", ref Tune.DeepCapBase, 0.9f, 0.999f, "%.4f");
                 if (ImGui.Button("Reset to defaults##structural"))
                 {
-                    Tune.DirectClampMix = Defaults.DirectClampMix; Tune.KarisFade = Defaults.KarisFade;
-                    Tune.GammaMotionDecay = Defaults.GammaMotionDecay; Tune.ConfFadeN = Defaults.ConfFadeN;
+                    Tune.DirectClampMix = Defaults.DirectClampMix; Tune.ConfFadeN = Defaults.ConfFadeN;
                     Tune.GrowOffPhase = Defaults.GrowOffPhase; Tune.DeepCapBase = Defaults.DeepCapBase;
                 }
             }
@@ -1532,13 +2248,10 @@ namespace FSO.TAALab
                 Tune.MoveGateLo = Defaults.MoveGateLo; Tune.MoveGateHi = Defaults.MoveGateHi;
                 Tune.RespEnd = Defaults.RespEnd; Tune.MotionTrustCap = Defaults.MotionTrustCap;
                 Tune.MotionClampTighten = Defaults.MotionClampTighten;
-                Tune.RawSoftenOnset = Defaults.RawSoftenOnset; Tune.RawSoftenSlope = Defaults.RawSoftenSlope;
-                Tune.RawSoftenMotionSup = Defaults.RawSoftenMotionSup;
-                Tune.Gamma = Defaults.Gamma; Tune.TexDetailFloor = Defaults.TexDetailFloor;
+                Tune.GammaNative = Defaults.GammaNative; Tune.GammaUpscale = Defaults.GammaUpscale;
                 Tune.ConfFloor = Defaults.ConfFloor;
                 Tune.RingLo = Defaults.RingLo; Tune.RingHi = Defaults.RingHi;
-                Tune.DirectClampMix = Defaults.DirectClampMix; Tune.KarisFade = Defaults.KarisFade;
-                Tune.GammaMotionDecay = Defaults.GammaMotionDecay; Tune.ConfFadeN = Defaults.ConfFadeN;
+                Tune.DirectClampMix = Defaults.DirectClampMix; Tune.ConfFadeN = Defaults.ConfFadeN;
                 Tune.GrowOffPhase = Defaults.GrowOffPhase; Tune.DeepCapBase = Defaults.DeepCapBase;
                 Tune.LiteGamma = Defaults.LiteGamma; Tune.LiteGammaScale = Defaults.LiteGammaScale;
                 Tune.LiteDeepCap = Defaults.LiteDeepCap; Tune.LiteRespEnd = Defaults.LiteRespEnd;
@@ -1546,9 +2259,54 @@ namespace FSO.TAALab
                 Tune.LiteMoveGateLo = Defaults.LiteMoveGateLo; Tune.LiteMoveGateHi = Defaults.LiteMoveGateHi;
                 Tune.LiteHonestLo = Defaults.LiteHonestLo; Tune.LiteHonestHi = Defaults.LiteHonestHi;
             }
-            ImGui.TextDisabled("Space pause  R reset hist  T TAA A/B  P print  Esc quit");
+            ImGui.TextDisabled("Space pause  R reset hist  T TAA on/off  B set A/B  P print  Esc quit");
 
             ImGui.End();
+        }
+
+        /// <summary>
+        /// The "A/B" ImGui section: B is a full-tuning baseline snapshot (shipped defaults at launch).
+        /// Eyeball A/B with the 'B' key / the checkbox (history resets so each set converges honestly),
+        /// or score both sets on the auto-tuner's 240-frame metric for a numeric verdict.
+        /// </summary>
+        private void DrawABGui(bool idle)
+        {
+            if (!ImGui.CollapsingHeader("A/B (sliders vs baseline)", ImGuiTreeNodeFlags.DefaultOpen)) return;
+
+            ImGui.TextDisabled("A = live sliders. B = baseline snapshot (starts as shipped defaults).");
+            bool useB = UseB;
+            if (ImGui.Checkbox("View B (baseline)   [key: B]", ref useB) && useB != UseB)
+            {
+                UseB = useB;
+                NeedHistoryReset = true;
+            }
+            if (!idle) ImGui.BeginDisabled();
+            if (ImGui.Button("Snapshot sliders -> B")) CopyTunables(Tune, TuneB);
+            ImGui.SameLine();
+            if (ImGui.Button("Load B -> sliders")) { CopyTunables(TuneB, Tune); NeedHistoryReset = true; }
+            ImGui.SameLine();
+            if (ImGui.Button("Reset B to shipped")) CopyTunables(Defaults, TuneB);
+            if (ImGui.Button(MultiScale ? "Score A vs B (multi-scale metric)" : "Score A vs B (2 x 240-frame metric)"))
+                StartCompare();
+            if (!idle) ImGui.EndDisabled();
+            if (HaveCmp)
+            {
+                double dA = CmpScores[0].Total, dB = CmpScores[1].Total;
+                var col = dA < dB ? new System.Numerics.Vector4(0.4f, 1f, 0.4f, 1f)
+                        : dA > dB ? new System.Numerics.Vector4(1f, 0.75f, 0.35f, 1f)
+                        : new System.Numerics.Vector4(0.8f, 0.8f, 0.8f, 1f);
+                ImGui.TextColored(col, string.Format(CultureInfo.InvariantCulture,
+                    dA == dB ? "TIE at {0:0.000000}" : dA < dB ? "A wins: {0:0.000000} vs {1:0.000000} ({2:0.0}% better)"
+                                                               : "B wins: {1:0.000000} vs {0:0.000000} ({2:0.0}% better)",
+                    dA, dB, Math.Abs(dA - dB) / Math.Max(dA, dB) * 100.0));
+                ImGui.TextDisabled($"({CmpCtx})");
+                ImGui.Text(string.Format(CultureInfo.InvariantCulture,
+                    "A: R {0:0.0000} M {1:0.0000} V {2:0.0000} S {3:0.0000}",
+                    CmpScores[0].Rest, CmpScores[0].Motion, CmpScores[0].Reveal, CmpScores[0].Slow));
+                ImGui.Text(string.Format(CultureInfo.InvariantCulture,
+                    "B: R {0:0.0000} M {1:0.0000} V {2:0.0000} S {3:0.0000}",
+                    CmpScores[1].Rest, CmpScores[1].Motion, CmpScores[1].Reveal, CmpScores[1].Slow));
+            }
         }
 
         /// <summary>The "Auto-tune" ImGui section: start/stop, progress, best-so-far, load/print best.</summary>
@@ -1557,14 +2315,26 @@ namespace FSO.TAALab
             if (!ImGui.CollapsingHeader("Auto-tune", ImGuiTreeNodeFlags.DefaultOpen)) return;
 
             ImGui.TextDisabled(string.Format(CultureInfo.InvariantCulture,
-                "score = {0:0.0} x spatial MSE + {1:0.0} x temporal diff, vs 2x supersampled control",
-                SpatialWeight, TemporalWeight));
+                "score = {0:0.0}xMSE + {1:0.0}xTD + {2:0.0}xghost + {3:0.0}xfizzle + {4:0.00}xstrict, vs {5}x control",
+                SpatialWeight, TemporalWeight, GhostWeight, FizzleWeight, StrictWeight, ControlSS));
+            ImGui.TextDisabled($"reference: linear-light {(GaussianRef ? "sigma-0.44 Gaussian" : "box")}; error detail-weighted (~4x on fine detail)");
             ImGui.TextDisabled("sequence: 60 rest / 60 motion / 60 reveal+rest / 60 slow (240 @ virtual 60Hz)");
 
-            ImGui.TextDisabled($"search space follows the technique combo: {(TechIdx == 1 ? "10 Lite* params" : "22 Tune* params")}");
+            ImGui.TextDisabled($"search space follows the technique combo: {(TechIdx == 1 ? "10 Lite* params" : "15 Tune* params")}");
 
             if (idle)
             {
+                ImGui.Combo("Optimizer", ref OptimizerIdx, OptimizerLabels, OptimizerLabels.Length);
+                ImGui.Combo("Start from", ref StartFromIdx, StartFromLabels, StartFromLabels.Length);
+                if (StartFromIdx == 2 && SessionBestFull == null && SessionBestLite == null)
+                    ImGui.TextDisabled("(no session best yet — will fall back to shipped defaults)");
+                ImGui.Checkbox("Early pruning (skip evals that can't beat best)", ref PruneEnabled);
+                ImGui.Checkbox("Multi-scale objective (0.33*0.5 + 0.50*0.3 + 1.00*0.2)", ref MultiScale);
+                if (MultiScale) ImGui.TextDisabled("one tuning for the whole upscale range; ~3x eval cost");
+                if (ImGui.Checkbox("Gaussian reference (anti-alias-honest, reads softer)", ref GaussianRef))
+                    ControlCacheValid = false; // reference changed -> control cache must re-render
+                ImGui.Checkbox("Continuous self-training (chain cycles from best)", ref ContinuousTrain);
+                if (ContinuousTrain) ImGui.TextDisabled("refines while improving, escalates sigma/population when stuck,\nstops after 3 stagnant cycles. CMA-ES recommended. Uncheck or STOP to end.");
                 if (ImGui.Button("Start (3 restarts)")) StartTuning(TuneMode.Full);
                 ImGui.SameLine();
                 if (ImGui.Button("Start quick")) StartTuning(TuneMode.Quick);
@@ -1575,14 +2345,23 @@ namespace FSO.TAALab
             {
                 if (ImGui.Button("STOP")) StopRequested = true;
                 ImGui.SameLine();
+                if (ContinuousTrain || CycleRun)
+                {
+                    ImGui.Checkbox("chain##cont", ref ContinuousTrain); // uncheck mid-run to stop after this cycle
+                    ImGui.SameLine();
+                    ImGui.Text($"cycle {CycleIdx}  stagnant {StagnantCycles}/{MaxStagnantCycles}");
+                    ImGui.SameLine();
+                }
                 ImGui.Text(TState == TuneState.ControlPreRender
                     ? $"pre-rendering control {ControlFrame}/{SeqFrames}"
                     : $"restart {Math.Min(RestartIdx + 1, RestartCount)}/{RestartCount}  eval #{EvalsDone + 1}  frame {EvalFrame}/{SeqFrames}"
+                      + (EvalScales.Length > 1 ? FormattableString.Invariant($"  scale {EvalScales[ScalePass]:0.00}") : "")
                       + (DetPhase < 2 ? "  (determinism check)" : ""));
             }
 
             if (EvalMsCount > 0)
-                ImGui.Text(string.Format(CultureInfo.InvariantCulture, "evals: {0}   avg {1:0} ms/eval", EvalsDone, EvalMsTotal / EvalMsCount));
+                ImGui.Text(string.Format(CultureInfo.InvariantCulture, "evals: {0}   avg {1:0} ms/eval   pruned {2}   cache hits {3}",
+                    EvalsDone, EvalMsTotal / EvalMsCount, PrunedEvals, CacheHits));
             if (DetIdentical.HasValue)
             {
                 if (DetIdentical.Value) ImGui.TextColored(new System.Numerics.Vector4(0.4f, 1f, 0.4f, 1f), "determinism check: PASS (bit-identical)");
@@ -1627,7 +2406,10 @@ namespace FSO.TAALab
                 }
             }
             if (idle && ImGui.Checkbox("Debug view: supersampled control (ground truth)", ref ShowControl) && !ShowControl)
+            {
                 NeedHistoryReset = true;
+                FreeControlTargets(); // don't hold the 8K chain while the debug view is off
+            }
         }
 
         private void PrintCheatsheet()
@@ -1635,7 +2417,7 @@ namespace FSO.TAALab
             Console.WriteLine("==================== OpenSO TAA Lab ====================");
             Console.WriteLine("Runs the game's REAL compiled TAA resolve (DX/SM4 TAA.xnb, technique TAA or");
             Console.WriteLine("TAALite — live A/B combo) on a synthetic scene. History/meta at output res;");
-            Console.WriteLine("TAAU when scale < 1. All 32 tunable uniforms are live (22 Tune* incl. the");
+            Console.WriteLine("TAAU when scale < 1. All 27 tunable uniforms are live (17 Tune* incl. the");
             Console.WriteLine("SM4-only set + 10 Lite* for the TAALite technique).");
             Console.WriteLine();
             Console.WriteLine("Primary UI: the ImGui 'TAA Tuning' window (sliders, per-group + global");
@@ -1643,18 +2425,30 @@ namespace FSO.TAALab
             Console.WriteLine("  Space       pause/resume scene motion (jitter keeps running)");
             Console.WriteLine("  R           reset history (black + warmup meta clear)");
             Console.WriteLine("  T           toggle TAA off/on (raw upscaled A/B)");
+            Console.WriteLine("  B           toggle tuning set A (sliders) / B (baseline snapshot)");
             Console.WriteLine("  P           print current values as a C# TAATuning block");
             Console.WriteLine("  Esc         quit");
             Console.WriteLine();
             Console.WriteLine("Scene: gradient bg / checkerboard mover (interior-texture ghosting) /");
             Console.WriteLine("rotating rect (honest per-pixel rotational velocity) / thin 1-output-px lines");
             Console.WriteLine("(static + drifting; sub-render-pixel fizzle) / similar-color sliding pair /");
+            Console.WriteLine("bright-glint cluster (static + sub-px orbiter; highlight ringing + Karis) /");
+            Console.WriteLine("fine-noise patch (1 texel/output px; stipple + texture crunch) / VELOCITY-LESS");
+            Console.WriteLine("mover (color-only; clamp must catch it, the animated-texture case) /");
             Console.WriteLine("real game 3D meshes (christmastree spin, plumbob pedestal rocking self-reveal,");
             Console.WriteLine("bannerlamp slow spin) with per-pixel matrix-pair velocity + clip.w/800 depth.");
             Console.WriteLine();
-            Console.WriteLine("Auto-tune (ImGui section): Nelder-Mead vs a 2x supersampled no-TAA control on");
-            Console.WriteLine("a fixed 240-frame rest/motion/reveal/slow script. TECHNIQUE-AWARE: tunes the");
-            Console.WriteLine("22 Tune* params under Full Cosmic TAA, the 10 Lite* params under TAA Lite.");
+            Console.WriteLine("Auto-tune (ImGui section): CMA-ES (default) or Nelder-Mead vs an 8x supersampled");
+            Console.WriteLine("(8K+) no-TAA control (LINEAR-LIGHT averaged; BOX reference by default, sigma-0.44");
+            Console.WriteLine("GAUSSIAN toggle; DETAIL-WEIGHTED error) on a fixed 240-frame rest/motion/reveal/slow");
+            Console.WriteLine("script. TECHNIQUE-");
+            Console.WriteLine("AWARE: tunes the 15 Tune* params under Full Cosmic TAA, the 10 Lite* under TAA");
+            Console.WriteLine("Lite. Warm-startable (defaults / sliders / session best); optional MULTI-SCALE");
+            Console.WriteLine("objective (0.33/0.5/1.0 weighted 0.5/0.3/0.2 — one tuning for the upscale");
+            Console.WriteLine("range); optional CONTINUOUS SELF-TRAINING (chained cycles from best, IPOP-style");
+            Console.WriteLine("escalation when stagnant); early pruning + dup-candidate cache + pipelined");
+            Console.WriteLine("readback keep evals cheap. A/B section scores the sliders against a baseline");
+            Console.WriteLine("snapshot on the same metric (honors the multi-scale objective).");
             Console.WriteLine("Every run evaluates the defaults twice first (bit-identical or it flags FAIL).");
             Console.WriteLine("Env TAALAB_SMOKE=1 (full) / =lite (TAALite) runs a capped 10-eval pass + exits.");
             Console.WriteLine("=========================================================");
@@ -1673,9 +2467,11 @@ namespace FSO.TAALab
                     sb.AppendLine(string.Format(CultureInfo.InvariantCulture,
                         "        public static float {0} = {1}f;", names[i], Math.Round(vec[i], 4)));
             }
-            Section(ParamNames, ToVector(t));
+            // TAATuning field names/values — NOT the optimizer vector (which gap-encodes the paired
+            // bounds; printing it would emit "MoveGateGap" etc., invalid TAATuning fields).
+            Section(PrintNames, PrintVector(t));
             sb.AppendLine("        // TAALite tunables:");
-            Section(LiteParamNames, ToLiteVector(t));
+            Section(LitePrintNames, LitePrintVector(t));
             Console.WriteLine(sb.ToString());
         }
     }

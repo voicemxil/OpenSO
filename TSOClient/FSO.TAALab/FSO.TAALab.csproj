@@ -45,6 +45,8 @@
          because MonoGame cannot compile effects at runtime). -->
     <Content Include="..\tso.content\Content\DX\Effects\TAA.xnb" Link="Content\Effects\TAA.xnb" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="..\tso.content\Content\DX\Effects\LabVelocity.xnb" Link="Content\Effects\LabVelocity.xnb" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Lab-only ground-truth downsampler (linear-light box chain + sigma-0.44 Gaussian reference). -->
+    <Content Include="..\tso.content\Content\DX\Effects\LabDownsample.xnb" Link="Content\Effects\LabDownsample.xnb" CopyToOutputDirectory="PreserveNewest" />
     <!-- Real game 3D object meshes (.fsom remesh files + their custom PNG textures), loaded by the
          lab's own standalone parser (LabMesh.cs) — still no tso.* project references. -->
     <Content Include="..\tso.content\Content\MeshReplace\**" Link="Content\MeshReplace\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
