@@ -82,6 +82,7 @@ float TuneConfFadeN = 20.0;          // evidence depth (minN) at which the off-p
 float TuneGrowOffPhase = 0.3;        // off-phase growth discount floor for the evidence counter
 float TuneDeepCapBase = 0.992;       // Kalman deep-end cap at native/mild upscale
 float TuneThinLineEps = 0.02;        // thin-line depth-ridge relative step (TSR ErrorMultiplier analogue)
+float TuneThinRelax = 0.3;           // thin-line clamp relaxation weight (box bounds toward history)
 
 // ---- TAALite tunables (only consumed by TAALite_PS; TAATuning.cs is the C# single source). ----
 float LiteGamma = 1.5;               // variance box base width (sigma) at native
@@ -930,6 +931,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float ampSlackY = oscAmp * 0.35 * lockGates;
     cmin.x -= ampSlackY;
     cmax.x += ampSlackY;
+    // THIN-GEOMETRY CLAMP RELAXATION (TSR WeightRelaxation's consumption; detector = the depth
+    // thin-line prior): a thin feature is diluted in its own render-res box statistics, so the clamp
+    // re-erodes its converged history every frame until a lock lands — and the lock needs stillness
+    // plus witnessed flips. On a proven same-frame depth ridge, move the box bounds partway toward
+    // INCLUDING the history value: validated thin geometry partially clamps to itself instead of to
+    // the undersampled input, pre-lock and under motion, where the lock cannot help. Ghost-safe by
+    // the detector's argument (a color trail cannot fake a depth ridge) and suspicion-gated on top.
+    float thinRelax = thinLine * TuneThinRelax * (1.0 - suspicion);
+    cmin = lerp(cmin, min(cmin, historyRaw), thinRelax);
+    cmax = lerp(cmax, max(cmax, historyRaw), thinRelax);
     // INPUT-RESOLUTION RECTIFICATION under TAAU (TSR mechanism): the box statistics come from bilinear
     // taps whose mixture changes with jitter phase, so clamping the native-res history re-clips converged
     // output-res detail slightly differently every frame on pixels that can't fully lock. Split the

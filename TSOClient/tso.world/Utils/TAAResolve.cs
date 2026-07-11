@@ -207,6 +207,7 @@ namespace FSO.LotView.Utils
             effect.Parameters["TuneGrowOffPhase"]?.SetValue(TAATuning.GrowOffPhase);
             effect.Parameters["TuneDeepCapBase"]?.SetValue(TAATuning.DeepCapBase);
             effect.Parameters["TuneThinLineEps"]?.SetValue(TAATuning.ThinLineEps);
+            effect.Parameters["TuneThinRelax"]?.SetValue(TAATuning.ThinRelax);
             // TAALite tunables (2026-07-07 promotion — Lite is a first-class tunable tier now; its
             // raw-motion character is the design target, see TAATuning).
             effect.Parameters["LiteGamma"]?.SetValue(TAATuning.LiteGamma);

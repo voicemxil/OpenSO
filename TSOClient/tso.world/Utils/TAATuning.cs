@@ -62,6 +62,9 @@ namespace FSO.LotView.Utils
         // thin-line depth-ridge test: ridge fires when both opposite plus-tap depths exceed the center by
         // ThinLineEps * depth (TSR DetectThinGeometry ErrorMultiplier analogue)
         public static float ThinLineEps = 0.02f;
+        // thin-line clamp relaxation: box bounds lerp toward including the history value on proven
+        // ridges (TSR WeightRelaxation consumption), suspicion-gated
+        public static float ThinRelax = 0.3f;
 
         // ---- TAALite tunables (2026-07-07 promotion). Lite's "raw motion resolve" (the user's
         // Switch-2-DLSS-lite anchor) is the DESIGN CHARACTER — tune to taste, don't converge it toward
