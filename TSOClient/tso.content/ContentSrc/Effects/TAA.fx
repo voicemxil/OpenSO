@@ -1117,16 +1117,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float oscLock = smoothstep(lerp(0.24, 0.32, floorScale), 0.7, osc) * stillGate
                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
                   * (1.0 - featReject) * (1.0 - noVel);
-    // Locked widening. SUB-0.5x ESCALATION REMOVED (2026-07-11 gate audit, no reference support:
-    // FSR2.2's rest widening saturates at its 20-sigma cap by ~0.6x scale so 0.5x and 0.33x get the
-    // SAME value, FSR3 uses a flat 3.0 sigma, TSR rejects rather than widens — no shipping upscaler
-    // escalates clamp width specifically below 0.5x; the references answer locked-thin-feature
-    // clipping with a lock ESCAPE toward unclamped history instead. The past-2x term here widened
-    // locked pixels an extra x1.6 at 0.33x, added because at ratio 3 the box spans ~3 output pixels
-    // and a converged thin line is so diluted in its own statistics that even 3 sigma clips it on
-    // some jitter phases). Revert signature: converged thin lines wobbling in place at 0.33x —
-    // restore: gammaEff = GAMMA * (1.0 + oscLock * lerp(1.0, 1.6, saturate(upscaleRatio - 2.0)));
-    float gammaEff = GAMMA * (1.0 + oscLock);
+    // LOCK ESCAPE MOVED OFF THE BOX (2026-07-11, R4 of the 0a8e9901 reference alignment, ported in
+    // isolation after the sub-0.5x gate audit): the multiplicative lock widening — x(1 + oscLock),
+    // formerly escalating a further x1.6 past 2x ratio — inflated the clamp box multiplicatively,
+    // and no reference does that (FSR2.2's rest widening saturates by ~0.6x scale, FSR3 is flat
+    // 3 sigma, TSR rejects rather than widens). FSR2's locks never touch the box: they LERP from
+    // the clamped history toward the RAW history — bounded by its endpoints, cannot compound. Same
+    // here now: see `history = lerp(history, historyRaw, oscLock)` after the clamp below. oscLock
+    // keeps every one of its kill gates (motion, depth/ghost rejects, reactive, foreign, featReject,
+    // evidence wipe), so ghost-safety is the lock's own unchanged argument.
+    float gammaEff = GAMMA;
     // RECTIFY, DON'T REJECT (mid-evidence resolution — the escape from the ghost-vs-aliasing trade):
     // blend-side rejection only chooses between keeping history (ghosts) and injecting raw (aliased
     // edges). TIGHTENING THE CLAMP on reject evidence is the third option: the stale color is forcibly
@@ -1208,6 +1208,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         history = ClipAABB(cmin, cmax, historyRaw);
         lumaHCmp = history.x;
     }
+
+    // FSR-STYLE LOCK ESCAPE (2026-07-11, replaces the multiplicative lock box-widening — see the
+    // gammaEff comment above): on pixels with a proven oscillation lock, blend from the clamped
+    // history toward the RAW history — converged output-res detail (thin lines, sub-render-pixel at
+    // upscale) passes the clamp intact without the box ever growing. Bounded by its endpoints (raw
+    // history at worst), phase-independent, and gated by everything oscLock already requires: proven
+    // sign-alternation, stillness, and zero depth/ghost/reactive/foreign/feat rejects — the exact
+    // gates that break FSR2 locks. Partial locks (clutter's quasi-random alternation, osc ~0.3-0.5)
+    // get a partial escape, standing in for the old partial widening. The diff below stays on the
+    // resolution-matched lumaHCmp (pre-escape) by design. Revert signature: fine-geometry
+    // dim/flicker cycling returning at heavy upscale on LOCKED content (escape too weak) — check
+    // oscLock strength before touching the box.
+    history = lerp(history, historyRaw, oscLock);
 
     // --- Blend: the original content-adaptive luminance-feedback weight, unmodified — diff-driven, no
     //     counter-based deepening. Same reasoning as the clamp above: letting the accumulation counter push
