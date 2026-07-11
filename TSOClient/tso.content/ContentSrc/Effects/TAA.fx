@@ -1096,37 +1096,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float rawSoften = saturate((blend - TuneRawSoftenOnset) * TuneRawSoftenSlope) * (1.0 - moveGate * TuneRawSoftenMotionSup);
         dispCurr = lerp(curr, filtSoft / max(wsumSoft, 1e-4), rawSoften);
     }
-    // INLINE SPATIAL AA BY SAMPLING OFFSET (TSR SpatialAntiAliasing, single-iteration): where the
-    // reject path forces raw — the honest-disocclusion knee plus the low-N rebuild window a ghost
-    // reset opens — shift the displayed sample up to +/-0.5 texel ACROSS the detected edge, to the
-    // sub-pixel edge position estimated from the box-tap luma fraction. The bilinear fetch at the
-    // shifted position IS the anti-aliasing: rejected pixels are born AA'd instead of born jagged
-    // and healed over the rebuild. Current-frame data only (zero ghost risk); NOT motion-suppressed
-    // (reveals happen during motion, where the trust cap already removed temporal AA). One tangent
-    // luma pair gates coherence: a real edge is consistent along itself, clutter is not.
-    {
-        float rawForce = max(smoothstep(0.55, 0.9, max(depthReject, ghostReject)),
-                             1.0 - saturate(minN * 0.25));
-        float edgeStr = smoothstep(0.08, 0.25, gmag);
-        float aaGate = rawForce * edgeStr;
-        if (aaGate > 0.01)
-        {
-            float lT1 = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + et * InvColorSize, 0, 0)).rgb).x;
-            float lT2 = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV - et * InvColorSize, 0, 0)).rgb).x;
-            // Across-edge side lumas projected from the plus taps (en points toward increasing luma).
-            float ax = abs(en.x), ay = abs(en.y);
-            float lA = (ax * ((en.x > 0.0) ? cboxE.x : cboxW.x) + ay * ((en.y > 0.0) ? cboxS.x : cboxN.x)) / max(ax + ay, 1e-5);
-            float lB = (ax * ((en.x > 0.0) ? cboxW.x : cboxE.x) + ay * ((en.y > 0.0) ? cboxN.x : cboxS.x)) / max(ax + ay, 1e-5);
-            float span = max(lA - lB, 1e-4);
-            // Edge coherence: tangent lumas should match the center as strongly as the sides differ.
-            float coh = 1.0 - saturate((abs(lT1 - cboxC.x) + abs(lT2 - cboxC.x)) / span);
-            // Sub-pixel edge position: f = 0.5 means the edge crosses the pixel center (no shift).
-            float f = saturate((cboxC.x - lB) / span);
-            float aaShift = clamp(0.5 - f, -0.5, 0.5);
-            float3 dispAA = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + en * (aaShift * InvColorSize), 0, 0)).rgb);
-            dispCurr = lerp(dispCurr, dispAA, aaGate * coh);
-        }
-    }
 #endif
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
