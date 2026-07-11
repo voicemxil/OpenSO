@@ -356,27 +356,43 @@ namespace FSO.Client.Controllers
         /// <summary>
         /// Non-Windows (macOS/Linux/mobile) version-mismatch notice. These builds don't ship update.exe
         /// and the server's update payload is a Windows zip, so there is nothing safe to download or
-        /// unpack here. On a Launcher-managed install we can still hand off to the launcher (it updates
-        /// every platform); otherwise - or if the hand-off can't start - we keep the original behaviour of
-        /// pointing the player at the OpenSO Launcher and returning them to the login screen.
+        /// unpack here. Launcher-managed installs get the same Yes/No contract as the Windows update
+        /// dialog (Yes = hand off to the launcher, No = RejectUpdate, so the hold-Shift version-gate
+        /// bypass keeps working); unmanaged installs get an informational OK that also routes through
+        /// RejectUpdate for the same Shift bypass.
         /// </summary>
         private void ShowNonWindowsUpdateRequired()
         {
             var launcherPath = GetLauncherPath();
             var launcherManaged = launcherPath != null;
 
-            _UpdaterAlert = UIScreen.GlobalShowAlert(new UIAlertOptions
+            var options = new UIAlertOptions
             {
                 Title = GameFacade.Strings.GetString("f101", "21"),
                 Message = GameFacade.Strings.GetString("f101", launcherManaged ? "33" : "32", new string[] { _PendingUpdateVersion, GlobalSettings.Default.ClientVersion }),
-                Width = 500,
-                Buttons = UIAlertButton.Ok(y =>
+                Width = 500
+            };
+            if (launcherManaged)
+            {
+                options.Buttons = UIAlertButton.YesNo(x =>
                 {
-                    if (launcherManaged && TryHandoffToLauncher(launcherPath)) return;
+                    if (TryHandoffToLauncher(launcherPath)) return;
                     UIScreen.RemoveDialog(_UpdaterAlert);
                     Continue(false);
-                })
-            }, true);
+                },
+                x =>
+                {
+                    RejectUpdate();
+                });
+            }
+            else
+            {
+                options.Buttons = UIAlertButton.Ok(y =>
+                {
+                    RejectUpdate();
+                });
+            }
+            _UpdaterAlert = UIScreen.GlobalShowAlert(options, true);
         }
     }
 }
