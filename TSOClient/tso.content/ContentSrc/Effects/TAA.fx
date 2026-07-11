@@ -829,8 +829,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // higher edge starves fine geometry's protection under TAAU. Collapse 0.75: a verdict should need a
     // few consistent frames. RELATIVE-MOTION CARVE-OUT on the osc branch (matching rejAuth/ghostReject):
     // without it, a slow trail over oscillation-proven ground (sand, canopy) holds deep N under the very
-    // lock the osc signal granted; with it, the innovation branch alone governs there.
-    float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno), smoothstep(0.12, 0.35, osc) * (1.0 - relMotion));
+    // lock the osc signal granted; with it, the innovation branch alone governs there. SHADING-CHANGE
+    // FADE (matching the static-ghost osc shield): alternation evidence explains churn-sized phase
+    // differences, not a confirmed large one-sided blurred delta — when the content visibly changes, an
+    // edge pixel's stale osc credit must not hold its counter deep while the innovation votes collapse.
+    // Converged thin geometry keeps the credit (resolution-matched shadingChange ~0 there; 0 on SM3).
+    float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno),
+                       smoothstep(0.12, 0.35, osc) * (1.0 - relMotion) * (1.0 - smoothstep(0.25, 0.6, shadingChange)));
     // SLIGHT-BIAS PENALTY (persistent-tail discriminator): a faint monotonic ghost has a small ONE-SIDED
     // innovation the agreement branch reads as ~full agreement, so N maxes and deep history holds the
     // residue. Dock agreeK only in the discriminating band: low osc (non-textured surfaces — high-osc
