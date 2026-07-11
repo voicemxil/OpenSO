@@ -33,6 +33,7 @@ using FSO.Server.Database.DA.GlobalCooldowns;
 using FSO.Server.Database.DA.ArchiveUsers;
 using FSO.Server.Database.DA.ArchiveFeatured;
 using FSO.Server.Database.DA.ArchiveRecents;
+using FSO.Server.Database.DA.EmailSendLog;
 
 namespace FSO.Server.Database.DA
 {
@@ -69,6 +70,7 @@ namespace FSO.Server.Database.DA
         IHosts Hosts { get; }
         ITasks Tasks { get; }
         IEmailConfirmations EmailConfirmations { get; }
+        IEmailSendLog EmailSendLog { get; }
         IUpdates Updates { get; }
         IGlobalCooldowns GlobalCooldowns { get; }
         IArchiveUsers ArchiveUsers { get; }

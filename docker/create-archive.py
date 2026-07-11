@@ -4,7 +4,7 @@
 Usage: ./create-archive.py [archive-name]
 
 Prerequisites:
-  - Docker compose stack running (mariadb + freeso-server)
+  - Docker compose stack running (mariadb + openso-server)
 
 Output:
   - docker/archives/archive.zip                        (distributable archive)
@@ -313,7 +313,7 @@ def main():
         print(f"    {SKY}-h, --help{RESET}        {SLATE}Show this help{RESET}")
         print()
         print(f"  {WHITE}{BOLD}Requires:{RESET}")
-        print(f"    Docker compose stack running {SLATE}(mariadb + freeso-server){RESET}")
+        print(f"    Docker compose stack running {SLATE}(mariadb + openso-server){RESET}")
         print(f"    Start with: {MINT}docker compose -f docker/docker-compose.yml up -d{RESET}")
         print()
         print(f"  {WHITE}{BOLD}Note:{RESET}")

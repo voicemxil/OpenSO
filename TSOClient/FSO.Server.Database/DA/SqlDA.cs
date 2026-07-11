@@ -32,6 +32,7 @@ using FSO.Server.Database.DA.GlobalCooldowns;
 using FSO.Server.Database.DA.ArchiveUsers;
 using FSO.Server.Database.DA.ArchiveFeatured;
 using FSO.Server.Database.DA.ArchiveRecents;
+using FSO.Server.Database.DA.EmailSendLog;
 
 namespace FSO.Server.Database.DA
 {
@@ -423,6 +424,19 @@ namespace FSO.Server.Database.DA
                     _Cooldowns = new SqlGlobalCooldowns(Context);
                 }
                 return _Cooldowns;
+            }
+        }
+
+        private IEmailSendLog _EmailSendLog;
+        public IEmailSendLog EmailSendLog
+        {
+            get
+            {
+                if (_EmailSendLog == null)
+                {
+                    _EmailSendLog = new SqlEmailSendLog(Context);
+                }
+                return _EmailSendLog;
             }
         }
 

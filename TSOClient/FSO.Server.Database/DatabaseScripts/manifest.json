@@ -293,6 +293,22 @@
       "requires": [
         "49b2791e-7e2d-4219-94d5-000ba8a53c47"
       ]
+    },
+    {
+      "id": "44daae65-0097-4c44-ad99-375e858a9bb9",
+      "script": "changes/0033_email_confirm_token_unique.sql",
+      "idempotent": false,
+      "requires": [
+        "49b2791e-7e2d-4219-94d5-000ba8a53c47"
+      ]
+    },
+    {
+      "id": "f8919955-2d30-439f-978e-1c6a914eaa1a",
+      "script": "changes/0034_email_send_log.sql",
+      "idempotent": false,
+      "requires": [
+        "44daae65-0097-4c44-ad99-375e858a9bb9"
+      ]
     }
   ]
 }

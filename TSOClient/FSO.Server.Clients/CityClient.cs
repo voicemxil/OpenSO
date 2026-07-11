@@ -36,6 +36,10 @@ namespace FSO.Server.Clients
             var request = new RestRequest("cityselector/app/InitialConnectServlet")
                             .AddQueryParameter("ticket", input.Ticket)
                             .AddQueryParameter("version", input.Version);
+            // Advertise the client's platform so the server hands back a platform-correct update URL.
+            // Omitted for legacy callers with no RID (the server then defaults to the Windows payload).
+            if (!string.IsNullOrEmpty(input.RID))
+                request.AddQueryParameter("rid", input.RID);
 
             var response = client.Execute(request);
             if (response.StatusCode != System.Net.HttpStatusCode.OK)

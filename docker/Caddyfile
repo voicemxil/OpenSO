@@ -1,11 +1,21 @@
 # OpenSO public-API reverse proxy.
 # Terminates HTTPS (automatic Let's Encrypt) for the UserApi so the HTTPS website (openso.org) and the
-# email-verification links can reach it. API_DOMAIN is injected by docker-compose (default api.openso.org).
+# email-verification links can reach it.
 #
-# Requirement: API_DOMAIN must resolve to this box and be DNS-only in Cloudflare (grey cloud), otherwise
-# Cloudflare proxies the ACME HTTP-01 challenge and cert issuance fails. (If you'd rather keep it proxied,
-# use a Cloudflare Origin certificate + the tls directive instead of automatic issuance.)
-{$API_DOMAIN} {
+# Box-specific bits are Caddy `{$VAR:default}` env placeholders so this tracked file works out-of-the-box
+# for the canonical openso.org deployment AND a box can override WITHOUT editing this file — set the vars
+# in the gitignored docker/.env (docker-compose.yml passes them through to the caddy container):
+#   OPENSO_API_DOMAIN   the public API hostname            (default api.openso.org)
+#   OPENSO_ACME_EMAIL   Let's Encrypt account/expiry email (default admin@openso.org)
+#
+# Requirement: OPENSO_API_DOMAIN must resolve to this box and be DNS-only in Cloudflare (grey cloud),
+# otherwise Cloudflare proxies the ACME HTTP-01 challenge and cert issuance fails. (If you'd rather keep it
+# proxied, use a Cloudflare Origin certificate + the tls directive instead of automatic issuance.)
+{
+	email {$OPENSO_ACME_EMAIL:admin@openso.org}
+}
+
+{$OPENSO_API_DOMAIN:api.openso.org} {
 	encode zstd gzip
 
 	# 3D remesh pack: the launcher's ResourceCentral "3DModels" entry points at /launcher/remesh.
@@ -15,5 +25,5 @@
 	# launcher so the pack source can be repointed without redistributing the launcher.
 	redir /launcher/remesh https://github.com/voicemxil/FSO.Remeshes/releases/latest/download/freeso-remeshes-legacy.zip 302
 
-	reverse_proxy freeso-server:9000
+	reverse_proxy openso-server:9000
 }

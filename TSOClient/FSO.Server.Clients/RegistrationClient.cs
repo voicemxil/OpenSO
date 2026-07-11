@@ -14,12 +14,44 @@ namespace FSO.Server.Clients
     }
 
     /// <summary>
+    /// Server registration-mode discovery (userapi/registration/info). Contains only booleans - the
+    /// registration key itself is never transmitted. Defaults are the PUBLIC (fail-open) mode, so a failed
+    /// or absent discovery call leaves KeyRequired = false and the client behaves exactly as it did before.
+    /// </summary>
+    public class RegistrationInfo
+    {
+        public bool KeyRequired;
+        public bool SmtpEnabled;
+    }
+
+    /// <summary>
     /// Talks to the server's userapi/registration endpoints for in-client account creation: request a 6-digit
     /// email code, then confirm it with a chosen username + password. All callbacks run on the game thread.
     /// </summary>
     public class RegistrationClient : AbstractHttpClient
     {
         public RegistrationClient(string baseUrl) : base(baseUrl) { }
+
+        /// <summary>
+        /// Ask the server whether registration needs an invite key (and whether it uses email verification).
+        /// Fails OPEN: on any error the callback gets a default RegistrationInfo (KeyRequired = false), so the
+        /// public flow is never blocked by an older server that lacks this endpoint or a transient network
+        /// failure. The server still enforces the real key requirement when the form is actually submitted.
+        /// </summary>
+        public async Task GetInfo(Action<RegistrationInfo> callback)
+        {
+            var request = new RestRequest("userapi/registration/info", Method.Get);
+            try
+            {
+                var response = await Client().ExecuteAsync(request);
+                var info = ParseInfo(response?.Content);
+                GameThread.NextUpdate(_ => callback(info));
+            }
+            catch
+            {
+                GameThread.NextUpdate(_ => callback(new RegistrationInfo()));
+            }
+        }
 
         public async Task RequestCode(string email, string confirmationUrl, Action<RegistrationResult> callback)
         {
@@ -29,13 +61,16 @@ namespace FSO.Server.Clients
             await Execute(request, callback);
         }
 
-        public async Task ConfirmCode(string code, string email, string username, string password, Action<RegistrationResult> callback)
+        public async Task ConfirmCode(string code, string email, string username, string password, string key, Action<RegistrationResult> callback)
         {
             var request = new RestRequest("userapi/registration/confirm", Method.Post);
             request.AddParameter("token", code);
             request.AddParameter("email", email); // must match the email the code was issued to (server binds them)
             request.AddParameter("username", username);
             request.AddParameter("password", password);
+            // Invite-only servers require a registration key; sent only when we have one so the public flow
+            // (empty key) is byte-for-byte identical to before. The server maps a wrong/absent key to key_wrong.
+            if (!string.IsNullOrEmpty(key)) request.AddParameter("key", key);
             await Execute(request, callback);
         }
 
@@ -54,7 +89,9 @@ namespace FSO.Server.Clients
         }
 
         // Both endpoints return HTTP 200 with a JSON body: success = {status:"success"} (request) or a user
-        // model (confirm); failure = {error, error_description}. request may also report {status:"email_failed"}.
+        // model (confirm); failure = {error, error_description}. On a failed confirmation-email send, request
+        // reports {error:"registration_failed", error_description:"email_send_failed"}. The legacy
+        // {status:"email_failed"} shape is still tolerated below for older/rolling server builds.
         private static RegistrationResult Parse(string content)
         {
             try
@@ -75,5 +112,23 @@ namespace FSO.Server.Clients
         }
 
         private static RegistrationResult Fail(string err) => new RegistrationResult { Success = false, Error = err };
+
+        // Discovery is best-effort: any malformed/empty body fails open to the public-mode defaults
+        // (KeyRequired = false), matching GetInfo's catch. Never throws.
+        private static RegistrationInfo ParseInfo(string content)
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(content)) return new RegistrationInfo();
+                dynamic obj = JsonConvert.DeserializeObject(content);
+                if (obj == null) return new RegistrationInfo();
+                return new RegistrationInfo
+                {
+                    KeyRequired = obj.key_required != null && (bool)obj.key_required,
+                    SmtpEnabled = obj.smtp_enabled != null && (bool)obj.smtp_enabled
+                };
+            }
+            catch { return new RegistrationInfo(); }
+        }
     }
 }

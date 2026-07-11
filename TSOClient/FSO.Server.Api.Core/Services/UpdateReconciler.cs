@@ -13,6 +13,11 @@ namespace FSO.Server.Api.Core.Services
     /// attached by release.yml), producing the rows GET /userapi/update serves. The releases are the
     /// source of truth - no CI->DB connectivity or admin-webapp generation step. Runs in the background
     /// at UserApi startup; idempotent (existing rows only get their URLs/chain refreshed).
+    ///
+    /// Scope: fso_updates is the WINDOWS in-game patch chain only - the assets below are all win-x64, and
+    /// GET /userapi/update / InitialConnectServlet serve them exclusively to Windows clients. Cross-platform
+    /// distribution is NOT modelled here; it lives in the per-RID release asset openso-manifest.json (built
+    /// by .github/scripts/gen-manifest.py, consumed by the launcher). See Documentation/update-manifest.md.
     /// </summary>
     public class UpdateReconciler
     {

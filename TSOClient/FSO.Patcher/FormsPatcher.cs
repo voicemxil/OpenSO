@@ -30,8 +30,9 @@ namespace FSO.Patcher
                 var result = MessageBox.Show("OpenSO is still running, so the update can't be applied — its files are locked by the game.\r\n\r\nPlease close OpenSO completely, then click Retry. (If no game window is open, a background OpenSO process may still be running; end it in Task Manager.)", "Close OpenSO to continue", MessageBoxButtons.RetryCancel);
                 if (result == DialogResult.Cancel)
                 {
+                    //failure: couldn't gain write access and the user gave up. Restore and exit non-zero.
                     Cleanup();
-                    Application.Exit();
+                    Environment.Exit(1);
                 }
                 else
                 {
@@ -46,7 +47,7 @@ namespace FSO.Patcher
             Invoke(new Action(() => {
                 var result = MessageBox.Show($"A file has been removed while advancing through the update chain ({path}). The update must now be aborted.", "Error");
                 Cleanup();
-                Application.Exit();
+                Environment.Exit(1);
             }));
         }
 
@@ -56,7 +57,7 @@ namespace FSO.Patcher
             Invoke(new Action(() => {
                 var result = MessageBox.Show($"An update archive was corrupt ({path}). The update must now be aborted.", "Error");
                 Cleanup();
-                Application.Exit();
+                Environment.Exit(1);
             }));
         }
 
@@ -71,6 +72,24 @@ namespace FSO.Patcher
             {
 
             }
+        }
+
+        // Single terminal failure path: roll back any partially-applied step, restore the previous
+        // OpenSO.exe, show a visible error and exit NON-ZERO so the launcher/automation can see the update
+        // did not succeed. Never launches the game -- a failed update must be visible, not silently proceed.
+        // The install is left restorable (backups restored, OpenSO.exe.old put back).
+        private void FailUpdate(string message, ReversiblePatcher patcher = null)
+        {
+            try { patcher?.Revert(); } catch (Exception) { }
+            Cleanup();
+            try
+            {
+                Invoke(new Action(() => MessageBox.Show(
+                    message + "\r\n\r\nThe update was rolled back. Please try again, or reinstall from the launcher.",
+                    "Update Failed", MessageBoxButtons.OK, MessageBoxIcon.Error)));
+            }
+            catch (Exception) { }
+            Environment.Exit(1);
         }
 
         private async Task AdvanceExtract()
@@ -110,6 +129,13 @@ namespace FSO.Patcher
                     var patcher = new ReversiblePatcher(archive);
                     CurrentPatcher = patcher;
                     patcher.OnStatus += Patcher_OnStatus;
+                    // Validate the WHOLE archive before writing anything: an unsafe entry (traversal, rooted
+                    // path, symlink) rejects the archive with nothing extracted (see ReversiblePatcher.Validate).
+                    if (!patcher.Validate(out var reason))
+                    {
+                        FailUpdate($"Update archive {path} was rejected for safety: {reason}", patcher);
+                        return;
+                    }
                     if (PathProgress == 1)
                     {
                         //first patch — don't touch a single game file until OpenSO has actually closed.
@@ -164,10 +190,8 @@ namespace FSO.Patcher
                             var arc = await ShowErrors(remaining);
                             if (arc == 0)
                             {
-                                //abort.
-                                patcher.Revert();
-                                Cleanup();
-                                Invoke(new Action(() => StartOpenSO()));
+                                //abort: one or more required files couldn't be written -- roll back and fail.
+                                FailUpdate($"Update aborted: one or more required files in {path} could not be written.", patcher);
                                 return;
                             }
                             else if (arc == 1)
@@ -177,7 +201,11 @@ namespace FSO.Patcher
                             else if (arc == 2)
                             {
                                 //ignore
-                                patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path));
+                                if (!patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path)))
+                                {
+                                    FailUpdate($"Update failed: could not remove one or more files scheduled for deletion by {path}.", patcher);
+                                    return;
+                                }
                                 patcher.Final();
                                 File.Delete(path);
                                 break;
@@ -185,7 +213,11 @@ namespace FSO.Patcher
                         }
                         else
                         {
-                            patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path));
+                            if (!patcher.RemoveFiles(UpdateManifest.GetRemovedPaths(path)))
+                            {
+                                FailUpdate($"Update failed: could not remove one or more files scheduled for deletion by {path}.", patcher);
+                                return;
+                            }
                             patcher.Final();
                             File.Delete(path);
                         }

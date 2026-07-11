@@ -20,7 +20,7 @@ email-verification registration. Nothing here is live yet — this is the from-z
                                                           |  :443  Caddy (auto-TLS)
                                                           ▼  :9000  UserApi
    ┌──────────────────────────── the box (Docker) ───────────────────────────┐
-   │  caddy  ──►  freeso-server (UserApi 9000 + city 33100 + lots 34100 +     │
+   │  caddy  ──►  openso-server (UserApi 9000 + city 33100 + lots 34100 +     │
    │                              tasks 35100)  ◄──►  mariadb                 │
    └──────────────────────────────────────────────────────────────────────────┘
                        ▲
@@ -84,43 +84,77 @@ Put your TSO files at `docker/tso/TSOClient/` (so `docker/tso/TSOClient/tuning.d
 
 ## 4. Configure (`docker/config.json` + a `.env`)
 
-**`docker/config.json`** — already set for `game.openso.org` and email verification. Fill in the real
-values:
+Box-local config is deliberately **kept out of git** — `docker/config.json`, `docker/.env`, and
+`docker/docker-compose.override.yml` are all in `.gitignore` — so a `git pull` on the box never fights your
+local secrets or tweaks. The repo ships *examples/defaults*; you create your real files once and edit only
+those, never the tracked files.
 
-- `userApi.smtpHost / smtpPort / smtpUser / smtpPassword` → your SMTP provider's credentials. Having all
-  four present is what turns email verification **on** (`SmtpEnabled`). Remove them to fall back to
-  open (no-email) registration.
-- `database.connectionString` → set `pwd=` to your real DB password (see `.env` below).
+**`docker/config.json`** — copy it from the tracked example, then fill in the real values:
+
+```bash
+cp docker/config.example.json docker/config.json    # your real config; gitignored, so pulls won't touch it
+```
+
+- `userApi.smtpHost / smtpPort / smtpUser / smtpPassword` → your SMTP provider's credentials
+  (`smtpPassword` ships as `REPLACE_WITH_SMTP_APP_PASSWORD`). Having all four present is what turns email
+  verification **on** (`SmtpEnabled`). Remove them to fall back to open (no-email) registration.
+- `database.connectionString` → set `pwd=` (ships as `CHANGE_ME`) to your real DB password (see `.env` below).
 - `secret` → leave as `"GENERATE"` (the container generates a random one on first boot) or set your own
   64-hex string.
 - `services.*.public_host` → already `game.openso.org:<port>`; change if your game host differs.
 - `userApi.cdnUrl` → `https://api.openso.org` (already set; where the client fetches lot thumbnails).
 
-**`docker/.env`** (create it) — overrides the compose defaults so secrets aren't the well-known ones:
+**`docker/.env`** (create it) — overrides the compose defaults so secrets aren't the well-known ones, and
+points Caddy/mounts at your box without editing tracked files:
 
 ```env
 DB_ROOT_PASSWORD=<a-strong-root-password>
-DB_PASSWORD=<a-strong-fso-password>     # must equal the pwd= in config.json connectionString
-API_DOMAIN=api.openso.org
+DB_PASSWORD=<a-strong-fso-password>       # must equal the pwd= in config.json connectionString
+OPENSO_API_DOMAIN=api.openso.org          # public API hostname; Caddy reads it as {$OPENSO_API_DOMAIN:…}
+OPENSO_ACME_EMAIL=admin@openso.org        # Let's Encrypt account/expiry email
 TSO_GAME_PATH=./tso/TSOClient
 ```
+
+**`docker/docker-compose.override.yml`** (optional, create only if needed) — box-specific *structural*
+compose tweaks (port remaps, resource limits, extra volumes) go here, **never** in the tracked
+`docker-compose.yml`. Compose auto-merges an override file that sits next to the compose file **when you run
+from the `docker/` directory** — which the update/deploy scripts do (`cd docker` first), so overrides apply
+to the nightly auto-update too. If you instead run `docker compose -f docker/docker-compose.yml …` from the
+repo root, an explicit `-f` disables auto-merge, so add `-f docker/docker-compose.override.yml` as well.
+Example (`docker/docker-compose.override.yml`):
+
+```yaml
+services:
+  openso-server:
+    deploy:
+      resources:
+        limits:
+          memory: 3g
+```
+
+> **Already-running box?** If your box predates the `freeso-server` → `openso-server` service rename or the
+> untracking of `docker/config.json` (both landed together), do NOT just `git pull` — follow the one-visit
+> migration in §9b (["One-time: migrate an existing box"](#one-time-migrate-an-existing-box-service-rename--untracked-config)),
+> which applies both changes safely without leaking or losing your local config.
 
 ---
 
 ## 5. Bring it up
 
 The server image is **built by CI and published to GHCR**, so the box never compiles anything — it just
-pulls. The box tracks **`:release`** (set in docker-compose.yml): a stamped image cut ONLY when a
-`dev-#`/`alpha-#`/`beta-#` release is tagged (release.yml). Main-branch builds are `:edge` (docker.yml) —
-dirty, for testing, never deployed. From the repo root:
+pulls. The box tracks **`:release`** (set in docker-compose.yml): a stamped image cut when a release tag
+is pushed (release.yml). **Semantic version tags (`v0.1.0`, `v0.2.0`, …) are the current release scheme**;
+the legacy `dev-#`/`alpha-#`/`beta-#` tag naming still triggers a release too (kept so old tags keep
+resolving), but new releases should be cut as `vMAJOR.MINOR.PATCH`. Main-branch builds are `:edge`
+(docker.yml) — dirty, for testing, never deployed. `:release` is the channel you deploy. From the repo root:
 
 ```bash
 docker compose -f docker/docker-compose.yml pull        # download prebuilt server + mariadb + caddy
 docker compose -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml logs -f freeso-server   # watch startup
+docker compose -f docker/docker-compose.yml logs -f openso-server   # watch startup
 ```
 
-To ship new server code: cut a release (`git tag dev-2 && git push origin dev-2`) → release.yml builds the
+To ship new server code: cut a release (`git tag v0.2.2 && git push origin v0.2.2`) → release.yml builds the
 stamped image + moves `:release` → the box's nightly timer (below) pulls it. To deploy immediately instead
 of waiting for the timer: `docker compose pull && docker compose up -d` on the box.
 
@@ -139,7 +173,7 @@ curl -s https://api.openso.org/cityselector/app/InitialConnectServlet | head   #
 
 To re-run migrations after a server update that changes the schema:
 ```bash
-docker compose -f docker/docker-compose.yml exec freeso-server dotnet FSO.Server.Core.dll db-init
+docker compose -f docker/docker-compose.yml exec openso-server dotnet FSO.Server.Core.dll db-init
 ```
 
 ---
@@ -192,16 +226,20 @@ creds or missing SPF/DKIM, not the server.
 
 ## 9. Point the game client at the server
 
-- **Quick:** on the client login screen press **F1** → set the API URL to `https://api.openso.org`.
-- **For distribution:** patch `TSOClient/FSO.UI/GlobalSettings.cs` defaults `GameEntryUrl` /
-  `CitySelectorUrl` from `http://api.freeso.org` to `https://api.openso.org`, then build/release the client
-  so players don't have to. (This is part of the not-yet-done updater-wiring workstream.)
+- **Quick:** on the client login screen press **F1** → set the API URL to your own server.
+- **For distribution:** `GameEntryUrl`/`CitySelectorUrl` in `TSOClient/FSO.UI/GlobalSettings.cs` already
+  default to `https://api.openso.org` — released client builds point at this server out of the box, no
+  patch needed. **Migration note:** an existing install with a saved config pointing at the old
+  `http://api.freeso.org` is auto-migrated to `https://api.openso.org` on load (see the `GameEntryUrl`
+  check in `GlobalSettings.cs`); if you're running your *own* server under a different domain, still set it
+  via F1 or your own client config.
 
 ---
 
 ## 9b. Updates — server auto-update + client patching
 
-Two independent mechanisms. Both key off the **same release tag** (`dev-#`/`alpha-#`/`beta-#`).
+Two independent mechanisms. Both key off the **same release tag** — a semver tag (`v0.2.1`, current
+scheme) or a legacy `dev-#`/`alpha-#`/`beta-#` tag (still supported, not recommended for new releases).
 
 ### Nightly warned restart (fully automatic, like FreeSO)
 
@@ -229,7 +267,7 @@ sudo systemctl start openso-update.service        # optional: run an update chec
 ```
 
 Because the box tracks `:release` (not `:edge`/main), it only ever moves to a **cut release**. Pin a
-specific version in docker-compose.yml (e.g. `:dev-1`) to freeze the box and skip auto-updates.
+specific version in docker-compose.yml (e.g. `:v0.2.1`) to freeze the box and skip auto-updates.
 
 ### Admin-driven deploy (update from the dashboard, on demand)
 
@@ -254,7 +292,7 @@ sudo systemctl enable --now openso-deploy.path
 systemctl status openso-deploy.path               # confirm it's watching
 ```
 
-Recreate the container once (`docker compose up -d freeso-server`) after pulling these changes so the new
+Recreate the container once (`docker compose up -d openso-server`) after pulling these changes so the new
 `./deploy-trigger` volume + `serverDeployTriggerDir` config take effect. Watch a deploy with
 `journalctl -u openso-deploy.service -f`.
 
@@ -263,25 +301,133 @@ To **force** a plain restart (no image swap) off-schedule, use the same dialog w
 ### Client patching (the game updates itself at login)
 
 At login the client compares its `version.txt` to the version the **shard advertises** and, if behind,
-downloads the full client zip and relaunches via `update.exe`.
+downloads an update package — the full client zip, or an incremental patch if one exists for the gap (see
+below) — and relaunches via `update.exe`.
 
 **The advertised version tracks the running server automatically — never set it by hand.** On every boot
 the city server writes its own `version.txt` into the shard row (`CityServer.cs` → `Shards.UpdateStatus`),
 so `fso_shards.version_name`/`version_number` always equals the build the server actually is. That's why
-stamping the image (`VERSION` arg → `version.txt`) is essential: deploy the `dev-2` image and the shard
-advertises `dev-2` the moment it boots. A hand-set version that doesn't match the running build would tell
+stamping the image (`VERSION` arg → `version.txt`) is essential: deploy the `v0.2.2` image and the shard
+advertises `v0.2.2` the moment it boots. A hand-set version that doesn't match the running build would tell
 clients to "update" to a build the server isn't on — a patch loop. So patching needs only:
 
 - **The update URL** — already in `docker/config.json` (`userApi.updateUrl` →
   `…/releases/latest/download/OpenSO-client-win-x64.zip`), advertised as `FSOUpdateUrl`.
 - **A published release** matching the deployed image, so `releases/latest` actually serves that version's
-  client zip. (Deploy the image and publish the release together — if the server advertises `dev-2` but
-  `releases/latest` is still `dev-1`, outdated clients download `dev-1` and never catch up.)
+  client zip. (Deploy the image and publish the release together — if the server advertises `v0.2.2` but
+  `releases/latest` is still `v0.2.1`, outdated clients download `v0.2.1` and never catch up.)
 
 A client already on the advertised version sees no prompt; an older one patches up to it. **Caveat:** that
 single URL is win-x64 — in-game patching targets Windows; Linux/macOS players update through the launcher
-(which is per-platform). Smaller delta patches (vs. the full zip) need the admin-webapp update generator —
-a later workstream.
+(which is per-platform, see [update-manifest.md](../Documentation/update-manifest.md)).
+
+**Delta patches are automatic, no admin step needed.** At every UserApi startup, `UpdateReconciler` scans
+this repo's GitHub Releases for semver (`vX.Y.Z`) tags and populates the `fso_updates` chain (full zip +
+win-x64 incremental + manifest, all attached by `release.yml`'s `client-delta`/`client-manifest` jobs) that
+`GET /userapi/update` serves — so a Windows client several versions behind downloads only the incremental
+diffs, not a fresh full zip each time. This replaces FreeSO's old admin-webapp/GitHub-OAuth update-generator
+flow (still described in [Updates.md](../Documentation/Updates.md) for reference) — GitHub Releases are now
+the sole source of truth, nothing to configure beyond publishing releases normally.
+
+That reconciled chain lives under an **update branch** named by `updateBranch` in `docker/config.json`
+(shipped as `"dev"`). This is **not a git branch** — it's just the label of the `fso_update_branch` DB row
+the chain is stored under. Leave it as `dev` unless you specifically want to run more than one independent
+chain (e.g. to test a build against a subset of clients); renaming it starts a fresh chain from the next
+reconcile.
+
+### One-time: migrate an existing box (service rename + untracked config)
+
+Two box-affecting changes landed together and are applied in **one visit** (one `git pull`):
+
+1. **Service rename:** the compose game-server service `freeso-server` became **`openso-server`**. The
+   image, the database, and every volume are unchanged — only the service (and therefore its
+   container/DNS) name moves.
+2. **Untracked box config:** the tracked `docker/config.json` became the template
+   `docker/config.example.json`; your real `docker/config.json` (plus `docker/.env` and
+   `docker/docker-compose.override.yml`) is now **gitignored** (§4), so future pulls can never collide
+   with it again.
+
+⚠️ **Do NOT plain-`git pull` over local `config.json` edits, and do NOT hand-resolve a config.json
+conflict if one appears.** Git detects the `config.json → config.example.json` rename and will three-way
+merge your local edits — dragging your real secrets *into* the tracked `docker/config.example.json`
+(leaking them into a tracked file) while deleting your real `config.json`. The sequence below parks your
+secrets **outside** the repo, neutralizes the local edit so the pull is conflict-free, then drops the real
+file back in — verified end-to-end. Run it on the box (assumes the usual case: your local edits are
+*uncommitted*, e.g. you've been stashing them across pulls):
+
+```bash
+cd /root/OpenSO
+
+# 0. Record every local edit OUTSIDE the repo (reference copy), and back up the real config.
+git diff > ~/openso-local-edits.patch
+cp docker/config.json ~/openso-config.backup.json
+
+# 1. Neutralize the local config.json edit FIRST (see warning above), then stash any OTHER local edits.
+git checkout -- docker/config.json
+git stash push -m "box-local edits pre-migration"    # says "No local changes to save" if config was all
+
+# 2. Pull both changes — with the tree clean this fast-forwards, NO conflicts.
+git pull --no-rebase
+
+# 3. Put the real config back. It's gitignored now: git will never touch it again.
+cp ~/openso-config.backup.json docker/config.json
+git check-ignore docker/config.json                  # must print docker/config.json
+
+# 4. Re-express your OTHER local edits the untracked way (skip if step 1 said "No local changes to save").
+git stash pop
+#    Edits on lines the rename didn't touch re-apply (staged); edits that hit renamed lines report a
+#    CONFLICT (e.g. in docker-compose.yml or a script). Either way do NOT keep them in tracked files —
+#    that's what used to break every pull. Re-create the values you still want the untracked way (§4):
+#    compose tweaks in docker/docker-compose.override.yml or docker/.env; script/path tweaks via the
+#    OPENSO_DIR / OPENSO_SERVICE env vars. Your full original diff is in ~/openso-local-edits.patch.
+#    Then reset ALL tracked files to the pulled state — this clears conflicts and staged re-applies in one
+#    shot, and does not touch untracked/ignored files (your config.json, .env, override are safe):
+git checkout HEAD -- .
+git stash drop        # only if pop reported a conflict (a conflicted pop keeps the stash; a clean pop drops it)
+git status --porcelain                               # must print nothing: tree clean, box files invisible
+
+# 5. Swap the running stack onto the new service name (+ any newer :release image).
+#    --remove-orphans deletes the now-orphaned `freeso-server` container FIRST, freeing the game ports
+#    (33100-35101) so the new openso-server can bind them. mariadb and caddy keep running.
+cd docker
+docker compose pull
+docker compose up -d --remove-orphans
+
+# 6. Reload Caddy so it re-resolves the reverse-proxy upstream to the NEW service DNS name
+#    (openso-server:9000). Step 5 does NOT recreate caddy — its service definition is unchanged; only the
+#    bind-mounted Caddyfile *content* changed — so caddy still holds the dead `freeso-server` upstream and
+#    the API 502s until it reloads (zero-downtime; `docker compose restart caddy` also works, ~1s blip):
+docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+# 7. Refresh the systemd unit whose tracked text changed (openso-deploy.path — comment-only, but keeps
+#    /etc in sync). The .service/.timer units and both .sh scripts run from the git checkout, so the pull
+#    already updated them — nothing else to re-copy.
+sudo cp systemd/openso-deploy.path /etc/systemd/system/ && sudo systemctl daemon-reload
+
+# 8. Idempotent DB migration pass (safe no-op when the schema didn't change).
+docker compose exec openso-server dotnet FSO.Server.Core.dll db-init
+
+# 9. Verify.
+docker compose ps                                    # openso-server + mariadb + caddy Up; NO freeso-server left
+git -C .. status --porcelain                         # clean — your config.json is invisible (ignored)
+grep -o 'pwd=[^;]*' config.example.json              # -> pwd=CHANGE_ME  (your real secret was NOT leaked)
+curl -s https://api.openso.org/cityselector/app/InitialConnectServlet | head   # API answers through Caddy
+```
+
+Delete `~/openso-config.backup.json` and `~/openso-local-edits.patch` once everything checks out.
+
+*If the box had **committed** local edits instead:* first restore the tracked config.json to its upstream
+base and commit that — `git checkout "$(git merge-base HEAD origin/main)" -- docker/config.json && git
+commit -m "restore config.json to base before untracking"` — then continue from step 2 (the pull becomes a
+merge; resolve any non-config conflicts keeping the openso-server naming; **never** hand-merge
+config.json/config.example.json).
+
+**No data is lost by the rename.** The database lives in the named volume `openso_mariadb_data` (attached
+to the *mariadb* service, not the renamed one), and lots/objects live in the `./nfs` **bind mount** (a host
+path). Neither is keyed to the game server's name, so a service rename cannot touch them; the other named
+volumes (`openso_caddy_data`, `openso_caddy_config`) belong to caddy and are likewise untouched. The game
+server itself mounts only bind mounts (`./tso/TSOClient`, `./nfs`, `./config.json`, `./deploy-trigger`) —
+all host paths, all name-independent.
 
 ---
 
@@ -343,8 +489,8 @@ account is promoted (`UPDATE fso_users SET is_admin=1, is_moderator=1 WHERE user
 ## Notes
 
 - **Updates** are wired (§9b): the box auto-updates to the latest `:release` image nightly, and clients
-  patch themselves at login against the shard-advertised version. Delta (incremental) patches via the admin
-  update generator remain a later enhancement; today the client pulls the full release zip.
+  patch themselves at login against the shard-advertised version, via an automatically-reconciled delta
+  chain built from GitHub Releases (no admin update-generator step required).
 - **Backups:** the `mariadb_data` volume (DB) and `docker/nfs/` (lots/objects) are your state — snapshot both.
 - **Constraints (from the brief):** no cash donations, never redistribute TSO/copyrighted assets (hosts
   supply their own), keep the build open-source (MPL).

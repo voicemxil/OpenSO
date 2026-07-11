@@ -7,7 +7,7 @@
   "serverDeployTriggerDir": "/deploy-trigger",
 
   "database": {
-    "connectionString": "server=mariadb;uid=fsoserver;pwd=password;database=fso;"
+    "connectionString": "server=mariadb;uid=fsoserver;pwd=CHANGE_ME;database=fso;"
   },
 
   "services": {

@@ -78,6 +78,27 @@ namespace FSO.Patcher
             StatusLabel.Text = "Extracting OpenSO Files...";
 
             var archive = ZipFile.OpenRead("PatchFiles/patch.zip");
+
+            // Validate the WHOLE archive before any disk mutation: reject traversal/rooted/symlink entries
+            // up front (shared ArchivePathGuard policy). No partial extraction of an unvalidated archive.
+            var root = Path.GetFullPath(".");
+            foreach (var entry in archive.Entries)
+            {
+                try
+                {
+                    ArchivePathGuard.RejectIfLinkOrSpecial(entry);
+                    ArchivePathGuard.ResolveContainedPath(root, entry.FullName);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show($"Update archive rejected for safety ({entry.FullName}): {ex.Message}", "Update Failed", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    archive.Dispose();
+                    Cleanup();
+                    Environment.Exit(1);
+                    return;
+                }
+            }
+
             foreach (var file in Directory.GetFiles("Content/Patch/"))
             {
                 //delete any stray patch files. Don't delete user or subfolders (eg. translations) because they might be important

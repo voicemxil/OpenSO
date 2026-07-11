@@ -22,11 +22,12 @@ services:
       timeout: 5s
       retries: 10
 
-  freeso-server:
-    # Prebuilt image from CI. The box tracks `:release` — a stamped image cut ONLY on a dev-#/alpha-#/beta-#
-    # release (release.yml), so prod never runs unreviewed main code (those are `:edge`). The nightly
+  openso-server:
+    # Prebuilt image from CI. The box tracks `:release` — a stamped image cut ONLY when a release tag
+    # (semver `vX.Y.Z`, the current scheme, or a legacy dev-#/alpha-#/beta-# tag) is pushed (release.yml),
+    # so prod never runs unreviewed main code (those are `:edge`). The nightly
     # auto-update timer (openso-update.sh + docker/systemd/) pulls `:release` and restarts if it changed.
-    # Pin a specific version instead (e.g. :dev-1) to freeze; local-source build: `docker build -f docker/Dockerfile ..`.
+    # Pin a specific version instead (e.g. :v0.2.1) to freeze; local-source build: `docker build -f docker/Dockerfile ..`.
     image: ghcr.io/voicemxil/openso-server:release
     # Bring the server back after the nightly graceful RESTART (the in-server `shutdown` task warns
     # players, saves lots, then exits 3) and after any crash or host reboot.
@@ -56,16 +57,19 @@ services:
       # latest :release image. See docker/DEPLOY.md "Admin-driven deploy".
       - ./deploy-trigger:/deploy-trigger:rw
 
-  # HTTPS reverse proxy for the public API: https://api.openso.org -> Caddy:443 -> freeso-server:9000,
+  # HTTPS reverse proxy for the public API: https://api.openso.org -> Caddy:443 -> openso-server:9000,
   # with automatic Let's Encrypt certs. api.openso.org must be a DNS-only (grey-cloud) record pointing at
-  # this box so Caddy's ACME challenge reaches it. Set API_DOMAIN to your API hostname.
+  # this box so Caddy's ACME challenge reaches it. To point at a different hostname/cert email WITHOUT
+  # editing the tracked Caddyfile, set OPENSO_API_DOMAIN / OPENSO_ACME_EMAIL in the gitignored docker/.env
+  # (or a docker-compose.override.yml) — the Caddyfile reads them as {$VAR:default} placeholders.
   caddy:
     image: caddy:2
     restart: unless-stopped
     depends_on:
-      - freeso-server
+      - openso-server
     environment:
-      API_DOMAIN: ${API_DOMAIN:-api.openso.org}
+      OPENSO_API_DOMAIN: ${OPENSO_API_DOMAIN:-api.openso.org}
+      OPENSO_ACME_EMAIL: ${OPENSO_ACME_EMAIL:-admin@openso.org}
     ports:
       - "80:80"
       - "443:443"
