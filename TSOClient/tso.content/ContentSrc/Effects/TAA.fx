@@ -910,6 +910,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // faster than native). Ghost-safety unchanged: a monotonic ghost emits flip=0 STREAMS, which
         // still decay to zero (just at native speed), and the evidence wipe / off-screen reset bypass
         // the EMA entirely on any real invalidation.
+        // KEPT after the 2026-07-11 sub-0.5x-gate audit (reference-justified): FSR2/TSR run their
+        // instability detectors at RENDER resolution, where every pixel is witnessed every frame;
+        // this detector runs at OUTPUT resolution, where a pixel is witnessed ~1 frame in 1/scale^2.
+        // Scaling the per-witness rate with the ratio reproduces the references' wall-clock
+        // convergence — removing it is what would deviate from them at 0.33x.
         float oscRateUp = 0.15 * lerp(1.0, 2.2, saturate(upscaleRatio - 2.0)); // 0.15 <=0.5x -> 0.33 at 0.33x
         float oscRate = lerp(0.15, oscRateUp, flip); // build boosted, decay base
         osc = lerp(prevOsc, flip, oscRate * testify); // ~6-7 frame EMA on witnessing frames (faster build at >2x)
@@ -1112,10 +1117,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float oscLock = smoothstep(lerp(0.24, 0.32, floorScale), 0.7, osc) * stillGate
                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
                   * (1.0 - featReject) * (1.0 - noVel);
-    // Locked widening scales with upscale INTENSITY past 2x (0.33x: up to ~3.9 sigma; <= 0.5x unchanged):
-    // at ratio 3 the box spans ~3 output pixels, a converged thin line is so diluted in its own statistics
-    // that even 3 sigma clips it on some jitter phases — the residual position-wobble at the lowest scale.
-    float gammaEff = GAMMA * (1.0 + oscLock * lerp(1.0, 1.6, saturate(upscaleRatio - 2.0)));
+    // Locked widening. SUB-0.5x ESCALATION REMOVED (2026-07-11 gate audit, no reference support:
+    // FSR2.2's rest widening saturates at its 20-sigma cap by ~0.6x scale so 0.5x and 0.33x get the
+    // SAME value, FSR3 uses a flat 3.0 sigma, TSR rejects rather than widens — no shipping upscaler
+    // escalates clamp width specifically below 0.5x; the references answer locked-thin-feature
+    // clipping with a lock ESCAPE toward unclamped history instead. The past-2x term here widened
+    // locked pixels an extra x1.6 at 0.33x, added because at ratio 3 the box spans ~3 output pixels
+    // and a converged thin line is so diluted in its own statistics that even 3 sigma clips it on
+    // some jitter phases). Revert signature: converged thin lines wobbling in place at 0.33x —
+    // restore: gammaEff = GAMMA * (1.0 + oscLock * lerp(1.0, 1.6, saturate(upscaleRatio - 2.0)));
+    float gammaEff = GAMMA * (1.0 + oscLock);
     // RECTIFY, DON'T REJECT (mid-evidence resolution — the escape from the ghost-vs-aliasing trade):
     // blend-side rejection only chooses between keeping history (ghosts) and injecting raw (aliased
     // edges). TIGHTENING THE CLAMP on reject evidence is the third option: the stale color is forcibly
@@ -1367,6 +1378,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // on zero-coverage frames the floor previously injected the blurry bilinear fallback anyway, a
         // steady drip that was BOTH a blur and a flicker source (the fallback varies with jitter phase).
         // Pure history hold there; motion (moveGate) and the covering frames carry all responsiveness.
+        // KEPT after the 2026-07-11 sub-0.5x-gate audit (reference-justified): FSR2 weights each
+        // frame's contribution by nearest-sample kernel proximity, CONTINUOUSLY approaching zero on
+        // information-free phases at heavy ratios — this floor is our own anti-starvation invention
+        // with no reference analogue, so letting it decay toward 0.08 past 2x moves it TOWARD the
+        // references' asymptotic zero; holding it flat would over-inject off-phase noise at 0.33x.
         float confFloor = lerp(TuneConfFloor, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
         // LINEAR confidence curve (a squared curve was tried and REVERTED with the 192 deepening — the
         // combination starved converged pixels of correction and read as ghosting at 0.33x).
