@@ -143,7 +143,10 @@ namespace FSO.Client.Rendering.City
 
             PixelShader.CurrentTechnique = PixelShader.Techniques[1];
             PixelShader.Parameters["ObjTex"].SetValue(content.TreeTex);
-            PixelShader.CurrentTechnique.Passes[useVel ? 5 : passIndex].Apply();
+            // passIndex 4 = caller wants the shadowed pass (city view, CityShadows on): use PS pass 6
+            // (CityObjPSFogShadV, shadow+fog+velocity) so tree shadows survive the velocity path. The
+            // velocity VS (TreeVSv, pass 6) already outputs shadPos, so it serves both PS variants.
+            PixelShader.CurrentTechnique.Passes[useVel ? (passIndex == 4 ? 6 : 5) : passIndex].Apply();
 
             gd.SamplerStates[1] = SamplerState.AnisotropicClamp;
             gd.BlendState = BlendState.NonPremultiplied;

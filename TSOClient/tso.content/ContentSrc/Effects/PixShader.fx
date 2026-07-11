@@ -354,6 +354,25 @@ CityPSOutV CityObjPSFogV(ObjVertexOutV Input)
 	return o;
 }
 
+// Shadow + fog + velocity combined pass (pass 6). Without this, enabling the velocity buffer (TAA /
+// motion blur) forced the shadow-less CityObjPSFogV and city shadows vanished on facades/trees.
+// Colour matches CityObjPSFogShad exactly; velocity/normal MRT outputs match CityObjPSFogV.
+CityPSOutV CityObjPSFogShadV(ObjVertexOutV Input)
+{
+	CityPSOutV o;
+	float4 BCol = tex2D(ObjSampler, Input.texCoord);
+	if (BCol.a < 0.01) discard;
+	float depth = Input.shadPos.z;
+	float diffuse = 1;
+	float4 c = float4(gammaMul(float4(BCol.xyz, 1), float4(LightCol.xyz * lerp(ShadowMult, 1, min(diffuse, shadowLerp(ShadSampler, ShadSize, Input.shadPos.xy, depth + 0.003*(2048.0 / ShadSize.x)))), 1)).rgb, BCol.a);
+	float fogDistance = min(1, length(Input.vPos) / FogMaxDist);
+	c.xyz = lerp(c.xyz, FogColor.xyz, fogDistance);
+	o.color = c;
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	o.normal = float4(normalize(Input.normal), 1);
+	return o;
+}
+
 technique RenderCityObj
 {
 	pass Final
@@ -407,6 +426,15 @@ technique RenderCityObj
 		PixelShader = compile ps_4_0_level_9_3 CityObjPSFogV();
 #else
 		PixelShader = compile ps_3_0 CityObjPSFogV();
+#endif;
+	}
+
+	pass FinalFogShadowVelocity
+	{
+#if SM4
+		PixelShader = compile ps_4_0_level_9_3 CityObjPSFogShadV();
+#else
+		PixelShader = compile ps_3_0 CityObjPSFogShadV();
 #endif;
 	}
 	//
@@ -500,6 +528,18 @@ CityPSOutV NCityPSFogV(CityVertexOutV Input)
 	return o;
 }
 
+// Shadow + fog + velocity combined pass (pass 6) — see CityObjPSFogShadV. Colour = NCityPSFogShad.
+CityPSOutV NCityPSFogShadV(CityVertexOutV Input)
+{
+	CityPSOutV o;
+	CityVertexOut b = ToBaseV(Input);
+	float4 BCol = GetNCityColor(b);
+	o.color = Fog(ShadLight(BCol, b), b);
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	o.normal = float4(normalize(Input.NormalTrans.xyz), 1);
+	return o;
+}
+
 float4 NCityPS(CityVertexOut Input) : COLOR0
 {
 	float4 BCol = GetNCityColor(Input);
@@ -583,6 +623,15 @@ pass FinalFogVelocity
 	PixelShader = compile ps_4_0_level_9_3 NCityPSFogV();
 #else
 	PixelShader = compile ps_3_0 NCityPSFogV();
+#endif;
+}
+
+pass FinalFogShadowVelocity
+{
+#if SM4
+	PixelShader = compile ps_4_0_level_9_3 NCityPSFogShadV();
+#else
+	PixelShader = compile ps_3_0 NCityPSFogShadV();
 #endif;
 }
 //
@@ -707,6 +756,18 @@ CityPSOutV WCityPSFogV(CityVertexOutV Input)
 	return o;
 }
 
+// Shadow + fog + velocity combined pass (pass 6) — see CityObjPSFogShadV. Colour = WCityPSFogShad.
+CityPSOutV WCityPSFogShadV(CityVertexOutV Input)
+{
+	CityPSOutV o;
+	CityVertexOut b = ToBaseV(Input);
+	float4 BCol = GetWCityColor(b);
+	o.color = Fog(ShadLight(BCol, b), b);
+	o.velocity = float4(CityComputeVel(Input.currClip, Input.prevClip), saturate(Input.currClip.w / 800.0), 1);
+	o.normal = float4(normalize(Input.NormalTrans.xyz), 1);
+	return o;
+}
+
 technique RenderWCity
 {
 	pass Final
@@ -760,6 +821,15 @@ technique RenderWCity
 		PixelShader = compile ps_4_0_level_9_3 WCityPSFogV();
 #else
 		PixelShader = compile ps_3_0 WCityPSFogV();
+#endif;
+	}
+
+	pass FinalFogShadowVelocity
+	{
+#if SM4
+		PixelShader = compile ps_4_0_level_9_3 WCityPSFogShadV();
+#else
+		PixelShader = compile ps_3_0 WCityPSFogShadV();
 #endif;
 	}
 	//

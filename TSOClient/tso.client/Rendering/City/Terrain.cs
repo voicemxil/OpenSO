@@ -1615,8 +1615,17 @@ namespace FSO.Client.Rendering.City
             var tempx = dir.X;
             dir.X = -dir.Z;
             dir.Z = tempx;
-            // AbstractSkyDome.Draw jitters internally - pass the un-jittered projection
+            // AbstractSkyDome.Draw jitters internally - pass the un-jittered projection.
+            // When the city renders straight to the screen (2D/Hybrid city, or any path without a PPX
+            // backbuffer) the sky dome must NOT take its velocity technique: that path rebinds the PPX
+            // Backbuffer as the sky's color target to write motion vectors, so with TAA on (velocity target
+            // allocated) the sky gradient was drawn OFF-SCREEN into the backbuffer the 2D path never resolves
+            // - leaving the city sky/background black. Suppress the velocity target so the sky draws to the
+            // current (screen) target. 3D city (usePPX) keeps velocity for the sky's motion vectors.
+            bool prevSuppressVel = FSO.Common.Utils.PPXDepthEngine.SuppressVelocityTarget;
+            if (!usePPX) FSO.Common.Utils.PPXDepthEngine.SuppressVelocityTarget = true;
             SkyDome.Draw(m_GraphicsDevice, m_TintColor, ViewMatrix, ProjectionUnjit, Time, Weather, Vector3.Normalize(dir), 1f);
+            FSO.Common.Utils.PPXDepthEngine.SuppressVelocityTarget = prevSuppressVel;
 
             //handle slices
             if (Camera.Zoomed == TerrainZoomMode.Far)
@@ -1638,12 +1647,15 @@ namespace FSO.Client.Rendering.City
                 }
             }
 
-            // City terrain velocity: when a velocity target is bound, draw the terrain via the pass-5
-            // velocity technique with the velocity MRT bound. Scoped to JUST the terrain draws -
+            // City terrain velocity: when a velocity target is bound (TAA / per-pixel motion blur / velocity
+            // debug), draw the static terrain via the velocity technique (camera-induced velocity) with the
+            // velocity MRT bound and the previous BaseMatrix set. Scoped to JUST the terrain draws -
             // Draw3DHouses/spotlights/particles aren't velocity-aware and would write garbage to MRT1.
             var cityVelRT = usePPX ? FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() : null;
             bool cityUseVel = cityVelRT != null;
-            int terrPass = cityUseVel ? 5 : (ShadowsEnabled ? ((fog) ? 4 : 0) : ((fog) ? 3 : 2));
+            // Velocity passes: 6 = shadow+fog+velocity (FinalFogShadowVelocity), 5 = fog+velocity. Without
+            // pass 6 the velocity path dropped the shadow-map sample and city shadows vanished under TAA.
+            int terrPass = cityUseVel ? (ShadowsEnabled ? 6 : 5) : (ShadowsEnabled ? ((fog) ? 4 : 0) : ((fog) ? 3 : 2));
             RenderTargetBinding[] savedCityRTs = null;
             if (cityUseVel)
             {
@@ -1682,11 +1694,13 @@ namespace FSO.Client.Rendering.City
                 if (Camera.Zoomed == TerrainZoomMode.Near)
                 {
                     m_2DVerts = new ArrayList(); //refresh list for tris under houses
-                    // tile-border grid is pixel-positioned in native space; scale the batch into the PPX target
-                    m_Batch.Begin(SpriteSortMode.Texture, null, null, null, null, null, Matrix.CreateScale(PPXSpriteScale));
-                    DrawTileBorders(0, m_Batch);
-                    m_Batch.End();
-                    m_GraphicsDevice.DepthStencilState = DepthStencilState.Default;
+                    // The hover grid is a UI overlay of thin white lines. When the city resolves through
+                    // TAA, drawing it into the pre-resolve target smears/ghosts those lines (they carry no
+                    // velocity, so TAA reprojects+clamps them as scene content) AND leaves them at render
+                    // resolution. Defer it to after DrawBackbuffer, rendered at native screen res (see the
+                    // usePPX block below). Without a resolve (no PPX target) there is no TAA, so draw it in
+                    // place as before, scaling the native-space batch into the target.
+                    if (!usePPX) DrawTileBorderOverlay(PPXSpriteScale);
                     Draw2DPoly(true);
                     CityVelDraw(cityUseVel, cityVelRT, () => DrawFacades(Camera.CalculateR(), pass, false, frustum));
                 }
@@ -1713,7 +1727,25 @@ namespace FSO.Client.Rendering.City
                 // resolve through the post chain to the real screen (mirrors World.Draw's DrawBackbuffer)
                 m_GraphicsDevice.SetRenderTarget(null);
                 FSO.Common.Utils.PPXDepthEngine.DrawBackbuffer(1f, 1f);
+
+                // Hover grid decoupled from TAA: DrawBackbuffer leaves the resolved scene bound to the
+                // native screen, so draw the grid here at native res (scale 1). This keeps the thin lines
+                // crisp and ghost-free regardless of render scale, since they never enter the temporal
+                // history. m_MovMatrix (set un-jittered above) still maps tiles to native screen space.
+                if (!is2D && Camera.Zoomed == TerrainZoomMode.Near)
+                    DrawTileBorderOverlay(1f);
             }
+        }
+
+        // Draws the near-view hover grid / lot-boundary overlay via SpriteBatch. transformSpr* map tiles to
+        // native screen pixels using the un-jittered m_MovMatrix; spriteScale is PPXSpriteScale when drawing
+        // into a supersampled PPX target, or 1 when drawing straight to the native screen (post-TAA-resolve).
+        private void DrawTileBorderOverlay(float spriteScale)
+        {
+            m_Batch.Begin(SpriteSortMode.Texture, null, null, null, null, null, Matrix.CreateScale(spriteScale));
+            DrawTileBorders(0, m_Batch);
+            m_Batch.End();
+            m_GraphicsDevice.DepthStencilState = DepthStencilState.Default;
         }
 
         // Run a velocity-aware city draw (foliage/facades self-select the velocity technique) with the
@@ -2027,10 +2059,12 @@ namespace FSO.Client.Rendering.City
             m_GraphicsDevice.BlendState = BlendState.NonPremultiplied;
 
             // Facade velocity: the MRT is bound once by DrawSurrounding (keeps depth continuous); here we
-            // only select the velocity passes (VS pass 7, PS pass 5).
+            // only select the velocity passes (VS pass 7). If the caller wanted the shadowed pass (passIndex
+            // 4, city view with CityShadows on) pick PS pass 6 (CityObjPSFogShadV, shadow+fog+velocity) so
+            // shadows survive the velocity path; VS pass 7 already carries shadPos - otherwise PS pass 5.
             bool useVel = FSO.Common.Utils.PPXDepthEngine.GetVelocityTarget() != null;
             int fVsPass = useVel ? 7 : passIndex;
-            int fPsPass = useVel ? 5 : passIndex;
+            int fPsPass = useVel ? (passIndex == 4 ? 6 : 5) : passIndex;
 
             PixelShader.CurrentTechnique = PixelShader.Techniques[1];
             PixelShader.CurrentTechnique.Passes[fPsPass].Apply();

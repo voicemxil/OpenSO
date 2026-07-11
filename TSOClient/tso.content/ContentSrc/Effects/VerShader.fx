@@ -534,6 +534,18 @@ technique RenderNCity
 		VertexShader = compile vs_3_0 NCityFogVSv();
 #endif;
 	}
+
+	// Pass 6 pairs with PixShader's FinalFogShadowVelocity (shadow+fog+velocity). NCityFogVSv already
+	// carries both the shadow-projection (shadPos) and velocity (currClip/prevClip) interpolants, so the
+	// same VS serves both velocity passes — this duplicate keeps VS/PS pass indices aligned.
+	pass FinalFogShadowVelocity
+	{
+#if SM4
+		VertexShader = compile vs_4_0_level_9_1 NCityFogVSv();
+#else
+		VertexShader = compile vs_3_0 NCityFogVSv();
+#endif;
+	}
 }
 
 float2 SpriteSize;

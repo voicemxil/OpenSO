@@ -66,6 +66,10 @@ PSOut SkyPS(VSOut input, float2 ditherPx : VPOS)
     float4 c = tex2D(SkyTexSampler, input.texCoord);
     c.rgb *= Exposure;
     c.a *= Alpha;
+    // Premultiply rgb by Alpha to match the BasicEffect fallback: BasicEffect bakes its Alpha property into
+    // the diffuse rgb (premultiplied output) and MRT0 blends with AlphaBlend (srcBlend=One). Without this
+    // the velocity path's rgb skipped the *Alpha and the sky BRIGHTENED whenever Alpha < 1 (weather fade).
+    c.rgb *= Alpha;
     // Triangular-PDF dither (~±1 LSB, two hashes) hides 8-bit banding in the smooth gradient.
     float dth = (DitherHash(ditherPx) + DitherHash(ditherPx + 41.13) - 1.0) / 255.0;
     c.rgb = saturate(c.rgb + dth);
