@@ -627,6 +627,20 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float storedMovePx = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1) * texSize) * VelGatePxScale;
     float storedMove = smoothstep(0.35, 1.5, storedMovePx);
     float ghostReject = max(moveGate, storedMove) * ghost * rejAuth;
+    // STATIC-REVEAL GHOST PATH (motion-exempt): cutaways, wall changes, and build-mode edits swap
+    // geometry with ZERO velocity, so the motion gates stay closed while the ghost-side depth evidence
+    // is real — the history depth sits nearer than the ENTIRE current valid range. Admit that evidence
+    // at rest, shielded exactly where the churn explanation lives instead of by motion: RANGE test only
+    // (a static silhouette's range contains its history depth by construction), alternation-evidenced
+    // pixels stay gated (resting foliage flips which fragments exist per jitter phase — prevOsc is the
+    // shield), an unwritten center is barred (overlay/alpha-fringe false fires), and rejAuth keeps
+    // color-silent depth changes gentle. Consumers (diff, counter reset, evidence wipe, clamp tighten,
+    // honest-disocclusion knee) all inherit through ghostReject.
+    float staticGhost = (dmax < dmin) ? 0.0 :
+        saturate(nearer / max(historyDepth, DepthRejectParams.w) * 10.0 - 0.25)
+        * (1.0 - smoothstep(0.12, 0.35, prevOsc))
+        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * rejAuth;
+    ghostReject = max(ghostReject, staticGhost);
 
     // FEATURE-LEVEL HISTORY COMPARISON (structure, not value): a ghost carries its own edges at positions
     // the current frame does not confirm; value-diff misses contamination that preserves average
