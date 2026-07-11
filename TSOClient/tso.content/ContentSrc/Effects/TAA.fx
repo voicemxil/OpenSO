@@ -32,6 +32,12 @@ float  MaxAccum;      // cap on the accumulation counter N. Matches TAAResolve.M
 // Per-frame jitter delta (UV). Velocity is computed from the jittered projection; adding this back when
 // reprojecting history gives an exact (jitter-free) reproject.
 float2 JitterDelta;
+// Uniform camera-zoom jacobian (per-axis 1 - prevScale/currScale at the camera target, from
+// WorldState.PrepareCulling; 0 when the camera isn't zooming). The reprojection velocity is fetched from
+// the texel fracd away from the output pixel center; under zoom the velocity field has that constant
+// gradient, so histUV += fracd * InvColorSize * ZoomJacobian recovers the pixel center's own previous
+// position — exact for uniform screen zoom, the C#-side first step of TSR's reprojection field.
+float2 ZoomJacobian;
 // Depth-disocclusion tuning, set from C# by the ACTUALLY-ALLOCATED history format (fp16 vs RGBA8 fallback):
 //   x = ghost dead-zone epsilon (storage quantization must never fire the ghost test by itself)
 //   y = depthReject slope   z = depthReject offset   w = relative-compare denominator floor
@@ -502,7 +508,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // parallax) -> dilated. The 1.5..3.0 native-px knee sits above foreign's arm point. Invalid centers
     // (unwritten velocity) keep dilated.
     float2 histVel = lerp((centerDepth >= 0.0) ? centerVel : velocity, velocity, smoothstep(1.5, 3.0, velFgnPx));
-    float2 histUV = uv - histVel + JitterDelta;
+    // Zoom-jacobian correction (see the ZoomJacobian uniform): the fetched velocity belongs to the texel
+    // fracd away from this output pixel's center; under camera zoom that offset is a systematic sub-texel
+    // reprojection error. Color reprojection only — the depth/structure tests are range-based.
+    float2 histUV = uv - histVel + JitterDelta + fracd * InvColorSize * ZoomJacobian;
     float2 ownVel = (centerDepth >= 0.0) ? centerVel : velocity;
     float2 histUVDepth = uv - ownVel + JitterDelta;
     bool reprojectable = (histUV.x >= 0) && (histUV.x <= 1) && (histUV.y >= 0) && (histUV.y <= 1);

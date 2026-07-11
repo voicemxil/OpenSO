@@ -38,6 +38,7 @@ namespace FSO.Common.Utils
 
         public Vector2 JitterDeltaUV;    // per-frame jitter delta; cancels the jitter baked into velocity
         public Vector2 SampleJitterUV;   // un-jittered offset for the variance-box taps
+        public Vector2 ZoomJacobian;     // per-axis screen-scale change at the camera target (1 - prev/curr)
         public float VelGatePxScale;     // render-px -> native-px scale for the motion gates
         public float BlendFactor;
         public float MaxAccum;           // must match the shader's meta.R decode

@@ -39,6 +39,13 @@ namespace FSO.LotView.Utils
         // per-frame jitter delta (UV), set by World.PreDraw; cancels the jitter baked into the velocity buffer
         public static Vector2 JitterDeltaUV;
 
+        // uniform camera-zoom jacobian (per-axis 1 - prevScale/currScale), set by WorldState.PrepareCulling
+        // on its once-per-frame prev-VP capture; the city jitter driver zeroes it (no city TAAU yet). The
+        // shader applies it as histUV += fracd * InvColorSize * ZoomJacobian — the velocity texel the
+        // resolve reprojects with sits fracd away from the output pixel center, and under zoom that offset
+        // is a systematic sub-texel reprojection error.
+        public static Vector2 ZoomJacobianUV;
+
         // debug: blit the meta target instead (R = history trust, G = reject strength, B = non-reprojectable)
         public static bool DebugAccum;
         // User-selected "Cosmic TAA Lite" resolve tier (cfg.TAALite): run the lighter TAALite technique
@@ -97,6 +104,7 @@ namespace FSO.LotView.Utils
                 RenderScale = ss,
 
                 JitterDeltaUV = JitterDeltaUV,
+                ZoomJacobian = ZoomJacobianUV,
                 // un-jittered offset for the variance-box taps: content shifts by +jitter in NDC and UV y
                 // is inverted, so SampleJitterUV = (-j.X*0.5, +j.Y*0.5). Zero when TAA jitter is off.
                 SampleJitterUV = new Vector2(-jNdc.X * 0.5f, jNdc.Y * 0.5f),
@@ -167,6 +175,7 @@ namespace FSO.LotView.Utils
             effect.Parameters["BlendFactor"]?.SetValue(c.BlendFactor);
             effect.Parameters["MaxAccum"]?.SetValue(c.MaxAccum);
             effect.Parameters["JitterDelta"]?.SetValue(c.JitterDeltaUV);
+            effect.Parameters["ZoomJacobian"]?.SetValue(c.ZoomJacobian);
             effect.Parameters["DepthRejectParams"]?.SetValue(c.DepthRejectParams);
             effect.Parameters["SampleJitterUV"]?.SetValue(c.SampleJitterUV);
             effect.Parameters["VelGatePxScale"]?.SetValue(c.VelGatePxScale);

@@ -1541,6 +1541,8 @@ namespace FSO.Client.Rendering.City
             // written even when zero, or the sky dome applies stale lot jitter and TAAU renders black.
             FSO.Common.Utils.PPXDepthEngine.TAAJitterNDC = ndcJitter;
             FSO.LotView.Utils.TAAResolve.JitterDeltaUV = Vector2.Zero;
+            // No zoom-jacobian source on the city camera yet - zero it so a stale lot value can't leak in.
+            FSO.LotView.Utils.TAAResolve.ZoomJacobianUV = Vector2.Zero;
 
             Matrix ViewMatrix = Camera.View;
             Matrix WorldMatrix = Matrix.Identity;

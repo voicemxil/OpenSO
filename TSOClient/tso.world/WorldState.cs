@@ -174,9 +174,53 @@ namespace FSO.LotView
                 _PrevVPUnjit = newVPUnjit;
                 _PrevVPValid = true;
                 _PrevVPCapturedThisFrame = true;
+                // Uniform camera-zoom jacobian for the TAA resolve (the C#-side first step of TSR's
+                // per-pixel reprojection field): the per-frame screen-scale change at the camera target,
+                // measured between the two unjittered VPs. Published on the first capture so resolve N
+                // sees the N-1 -> N delta (same-frame contract as the velocity buffer).
+                Utils.TAAResolve.ZoomJacobianUV = ComputeZoomJacobian(PreviousViewProjection, newVPUnjit);
             }
             ViewProjection = newVP;
             Frustum = new BoundingFrustum(ViewProjection);
+        }
+
+        /// <summary>
+        /// Per-axis screen-scale change per frame at the camera target: J = 1 - prevScale/currScale,
+        /// measured by projecting the target and unit offsets along the camera right/up axes through
+        /// both unjittered view-projections. Exact for projection-scale zoom; exact at the focus plane
+        /// for the 3D camera's dolly zoom; ~0 for pans/orbits. Clamped small — a real zoom moves a few
+        /// percent per frame, anything larger is a cut (history invalidation owns those).
+        /// </summary>
+        private Vector2 ComputeZoomJacobian(Matrix prevVP, Matrix currVP)
+        {
+            var t = Camera.Target;
+            var invView = Matrix.Invert(View);
+            var right = Vector3.Normalize(invView.Right);
+            var up = Vector3.Normalize(invView.Up);
+            var c0 = ProjectNDC(currVP, t);
+            var p0 = ProjectNDC(prevVP, t);
+            var j = new Vector2(
+                AxisJacobian(p0, ProjectNDC(prevVP, t + right), c0, ProjectNDC(currVP, t + right)),
+                AxisJacobian(p0, ProjectNDC(prevVP, t + up), c0, ProjectNDC(currVP, t + up)));
+            j.X = MathHelper.Clamp(j.X, -0.05f, 0.05f);
+            j.Y = MathHelper.Clamp(j.Y, -0.05f, 0.05f);
+            return j;
+        }
+
+        private static float AxisJacobian(Vector2 p0, Vector2 p1, Vector2 c0, Vector2 c1)
+        {
+            float dPrev = (p1 - p0).Length();
+            float dCurr = (c1 - c0).Length();
+            if (!(dCurr > 1e-6f) || float.IsNaN(dPrev) || float.IsInfinity(dPrev)) return 0f;
+            float jac = 1f - dPrev / dCurr;
+            return (float.IsNaN(jac) || float.IsInfinity(jac)) ? 0f : jac;
+        }
+
+        private static Vector2 ProjectNDC(Matrix vp, Vector3 p)
+        {
+            var v = Vector4.Transform(new Vector4(p, 1f), vp);
+            if (Math.Abs(v.W) < 1e-6f) return new Vector2(float.NaN, float.NaN);
+            return new Vector2(v.X / v.W, v.Y / v.W);
         }
 
         /// <summary>
