@@ -106,3 +106,6 @@ TSOClient/Mario
 
 # MonoGame content-build stats (generated)
 *.mgstats
+
+# Python bytecode caches (generated, e.g. from docker/create-archive.py)
+__pycache__/
