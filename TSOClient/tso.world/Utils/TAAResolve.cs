@@ -86,6 +86,15 @@ namespace FSO.LotView.Utils
                 return;
             }
 
+            // Frame contract (kept from the 2a4f33d4 plumbing while the resolve itself is main's):
+            // declare the layout this resolve is about to write; TemporalHistoryState clears history on
+            // any pending invalidation (blueprint init, lot<->city presenter switch via DeclareOwner) or
+            // layout mismatch (tier/debug/upscale switch). A reset reads as the ordinary warmup frame
+            // (meta N=0), so this can't affect steady-state output. Tier mirrors the technique pick below.
+            var tier = (DebugAccum && FSOEnvironment.DirectX && !LiteMode) ? TemporalHistoryState.ResolveTier.Debug
+                     : (LiteMode ? TemporalHistoryState.ResolveTier.Lite : TemporalHistoryState.ResolveTier.Full);
+            PPXDepthEngine.TAAHistory.BeginResolve(gd, tier, upscale);
+
             // blend into the current history (COLOR0) + meta (COLOR1)
             var finalTarget = gd.GetRenderTargets();
             gd.SetRenderTargets(historyCurr, metaCurr);

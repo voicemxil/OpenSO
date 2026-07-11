@@ -1225,16 +1225,11 @@ namespace FSO.LotView
                     ? gd.Viewport.Height
                     : (PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height);
                 // 0.25 at 1080p, ramping to 0.5 by 540p; floor 0.2 at high res
-                float resAmount = 0.25f * (1080f / System.Math.Max(bbH, 1f));
-                // UPSCALE-SCALED (2026-07-10): TAA history-resample low-pass grows with the upscale
-                // ratio, so the compensating sharpen must too. The old ramp keyed ONLY on output res
-                // and stayed ~0.25 across every render scale, leaving 0.5x/0.33x visibly softer than
-                // native (user report). ratio = 1/scale (1 native .. 3 at 0.33x); x1.0 native ->
-                // x1.8 at ratio 3. (This is a MODERATE render-scale term, not the old render-res-height
-                // keying that overdrove RCAS — the resolution ramp above still uses output height.)
-                float ratio = (scale > 0f && scale < 1f) ? 1f / scale : 1f;
-                float upAmount = MathHelper.Lerp(1f, 1.8f, MathHelper.Clamp((ratio - 1f) * 0.5f, 0f, 1f));
-                RCASSharpen.OverrideAmount = MathHelper.Clamp(resAmount * upAmount, 0.2f, 0.6f);
+                // A/B REVERT (2026-07-11): back to main's output-res-only ramp while the 07-10
+                // reference-alignment resolve is re-evaluated (user: softer + fizzle + ringing vs main).
+                // The upscale-ratio sharpen boost (x1.0 native -> x1.8 at 0.33x, ceiling 0.6) is the
+                // ringing suspect; recover it from 0a8e9901 if the resolve overhaul returns.
+                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, 0.5f);
             }
             else RCASSharpen.OverrideAmount = null;
             PPXDepthEngine.SharpenFunc = (sharpen || autoSharpen) ? RCASSharpen.Draw : null;
