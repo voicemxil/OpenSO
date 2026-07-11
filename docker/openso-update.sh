@@ -17,9 +17,9 @@ COMPOSE_DIR="${OPENSO_DIR:-/root/OpenSO/docker}"
 cd "$COMPOSE_DIR"
 
 echo "[openso-update] $(date -u +%FT%TZ) pulling ghcr.io/voicemxil/openso-server:release …"
-docker compose pull freeso-server
+docker compose pull openso-server
 
-# `up -d` recreates freeso-server only if the pulled image differs from the running one; mariadb and caddy
+# `up -d` recreates openso-server only if the pulled image differs from the running one; mariadb and caddy
 # are pinned images and are left untouched. So on a night with no new release this is a no-op (no restart).
 docker compose up -d
 

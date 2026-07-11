@@ -15,5 +15,5 @@
 	# launcher so the pack source can be repointed without redistributing the launcher.
 	redir /launcher/remesh https://github.com/voicemxil/FSO.Remeshes/releases/latest/download/freeso-remeshes-legacy.zip 302
 
-	reverse_proxy freeso-server:9000
+	reverse_proxy openso-server:9000
 }

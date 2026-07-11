@@ -22,7 +22,7 @@ services:
       timeout: 5s
       retries: 10
 
-  freeso-server:
+  openso-server:
     # Prebuilt image from CI. The box tracks `:release` — a stamped image cut ONLY when a release tag
     # (semver `vX.Y.Z`, the current scheme, or a legacy dev-#/alpha-#/beta-# tag) is pushed (release.yml),
     # so prod never runs unreviewed main code (those are `:edge`). The nightly
@@ -57,14 +57,14 @@ services:
       # latest :release image. See docker/DEPLOY.md "Admin-driven deploy".
       - ./deploy-trigger:/deploy-trigger:rw
 
-  # HTTPS reverse proxy for the public API: https://api.openso.org -> Caddy:443 -> freeso-server:9000,
+  # HTTPS reverse proxy for the public API: https://api.openso.org -> Caddy:443 -> openso-server:9000,
   # with automatic Let's Encrypt certs. api.openso.org must be a DNS-only (grey-cloud) record pointing at
   # this box so Caddy's ACME challenge reaches it. Set API_DOMAIN to your API hostname.
   caddy:
     image: caddy:2
     restart: unless-stopped
     depends_on:
-      - freeso-server
+      - openso-server
     environment:
       API_DOMAIN: ${API_DOMAIN:-api.openso.org}
     ports:

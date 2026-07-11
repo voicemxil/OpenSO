@@ -20,7 +20,7 @@ email-verification registration. Nothing here is live yet — this is the from-z
                                                           |  :443  Caddy (auto-TLS)
                                                           ▼  :9000  UserApi
    ┌──────────────────────────── the box (Docker) ───────────────────────────┐
-   │  caddy  ──►  freeso-server (UserApi 9000 + city 33100 + lots 34100 +     │
+   │  caddy  ──►  openso-server (UserApi 9000 + city 33100 + lots 34100 +     │
    │                              tasks 35100)  ◄──►  mariadb                 │
    └──────────────────────────────────────────────────────────────────────────┘
                        ▲
@@ -119,7 +119,7 @@ resolving), but new releases should be cut as `vMAJOR.MINOR.PATCH`. Main-branch 
 ```bash
 docker compose -f docker/docker-compose.yml pull        # download prebuilt server + mariadb + caddy
 docker compose -f docker/docker-compose.yml up -d
-docker compose -f docker/docker-compose.yml logs -f freeso-server   # watch startup
+docker compose -f docker/docker-compose.yml logs -f openso-server   # watch startup
 ```
 
 To ship new server code: cut a release (`git tag v0.2.2 && git push origin v0.2.2`) → release.yml builds the
@@ -141,7 +141,7 @@ curl -s https://api.openso.org/cityselector/app/InitialConnectServlet | head   #
 
 To re-run migrations after a server update that changes the schema:
 ```bash
-docker compose -f docker/docker-compose.yml exec freeso-server dotnet FSO.Server.Core.dll db-init
+docker compose -f docker/docker-compose.yml exec openso-server dotnet FSO.Server.Core.dll db-init
 ```
 
 ---
@@ -260,7 +260,7 @@ sudo systemctl enable --now openso-deploy.path
 systemctl status openso-deploy.path               # confirm it's watching
 ```
 
-Recreate the container once (`docker compose up -d freeso-server`) after pulling these changes so the new
+Recreate the container once (`docker compose up -d openso-server`) after pulling these changes so the new
 `./deploy-trigger` volume + `serverDeployTriggerDir` config take effect. Watch a deploy with
 `journalctl -u openso-deploy.service -f`.
 
@@ -302,6 +302,50 @@ That reconciled chain lives under an **update branch** named by `updateBranch` i
 the chain is stored under. Leave it as `dev` unless you specifically want to run more than one independent
 chain (e.g. to test a build against a subset of clients); renaming it starts a fresh chain from the next
 reconcile.
+
+### One-time: apply the `freeso-server` → `openso-server` service rename
+
+The compose game-server service was renamed from `freeso-server` to **`openso-server`**. The image, the
+database, and every volume are unchanged — only the service (and therefore its container/DNS) name moves.
+Apply it on the box **once**, in this exact order. It's safe to fold into a normal image update: the `pull`
+in step 2 also picks up any newer `:release`.
+
+```bash
+# 1. Pull the new compose file, Caddyfile, scripts, and unit onto the box.
+cd /root/OpenSO && git pull
+
+# 2. Recreate the game server under the new name and delete the now-orphaned `freeso-server` container.
+#    --remove-orphans removes the old container FIRST, freeing the game ports (33100-35101) so the new
+#    openso-server can bind them (without it the two would clash on those ports). mariadb and caddy keep
+#    running — their service definitions didn't change. Combine with an image update if you like:
+#    `docker compose pull && docker compose up -d --remove-orphans`.
+cd docker && docker compose up -d --remove-orphans
+
+# 3. Reload Caddy so it re-resolves the reverse-proxy upstream to the NEW service DNS name
+#    (openso-server:9000). Step 2 does NOT recreate caddy — its service definition is unchanged; only the
+#    bind-mounted Caddyfile *content* changed — so caddy still holds the dead `freeso-server` upstream and
+#    the API 502s until it reloads. The Caddyfile is bind-mounted at /etc/caddy/Caddyfile, so an in-place
+#    (zero-downtime) reload picks up the new file:
+docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+#    (equivalently `docker compose restart caddy` — a ~1s blip on 80/443, but just as correct.)
+
+# 4. Refresh the systemd unit whose text changed (openso-deploy.path — only a comment now says
+#    openso-server; the watched path is unchanged, so this is cosmetic but keeps /etc in sync with the repo).
+#    The .service/.timer units and the two .sh scripts run from the git checkout, so step 1 already updated
+#    them — nothing to re-copy there.
+sudo cp docker/systemd/openso-deploy.path /etc/systemd/system/ && sudo systemctl daemon-reload
+
+# 5. Verify.
+docker compose ps      # openso-server + mariadb + caddy all Up; NO freeso-server container remains
+curl -s https://api.openso.org/cityselector/app/InitialConnectServlet | head   # API answers through Caddy
+```
+
+**No data is lost by the rename.** The database lives in the named volume `openso_mariadb_data` (attached
+to the *mariadb* service, not the renamed one), and lots/objects live in the `./nfs` **bind mount** (a host
+path). Neither is keyed to the game server's name, so a service rename cannot touch them; the other named
+volumes (`openso_caddy_data`, `openso_caddy_config`) belong to caddy and are likewise untouched. The game
+server itself mounts only bind mounts (`./tso/TSOClient`, `./nfs`, `./config.json`, `./deploy-trigger`) —
+all host paths, all name-independent.
 
 ---
 

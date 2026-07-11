@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # OpenSO admin-triggered on-demand deploy.
 #
-# Fired by the openso-deploy.path systemd unit when the freeso-server container writes
+# Fired by the openso-deploy.path systemd unit when the openso-server container writes
 # deploy-trigger/deploy.request — which it does at the end of an admin "Update" shutdown (after the
 # in-server countdown has warned players and all lots have been saved, ToolRunServer.WriteDeployRequest).
 # This is the Docker replacement for FreeSO's dead watchdog/server-zip self-update: instead of swapping
@@ -21,12 +21,12 @@ FLAG="$COMPOSE_DIR/deploy-trigger/deploy.request"
 rm -f "$FLAG"
 
 echo "[openso-deploy] $(date -u +%FT%TZ) admin deploy requested; pulling ghcr.io/voicemxil/openso-server:release …"
-docker compose pull freeso-server
+docker compose pull openso-server
 
-# Plain `up -d` recreates freeso-server ONLY if the pulled image differs from the running one (mariadb and
+# Plain `up -d` recreates openso-server ONLY if the pulled image differs from the running one (mariadb and
 # caddy are untouched). So if :release actually moved we swap onto it; if it didn't, this is a no-op and the
 # restart:unless-stopped policy has already brought the drained server back on the same image.
-docker compose up -d freeso-server
+docker compose up -d openso-server
 
 # Reclaim space from the now-dangling previous image.
 docker image prune -f >/dev/null 2>&1 || true
