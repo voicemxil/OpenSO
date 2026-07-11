@@ -633,23 +633,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float storedMovePx = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1) * texSize) * VelGatePxScale;
     float storedMove = smoothstep(0.35, 1.5, storedMovePx);
     float ghostReject = max(moveGate, storedMove) * ghost * rejAuth;
-    // STATIC-REVEAL GHOST PATH (motion-exempt): cutaways, wall changes, and build-mode edits swap
-    // geometry with ZERO velocity, so the motion gates stay closed while the ghost-side depth evidence
-    // is real — the history depth sits nearer than the ENTIRE current valid range. Admit that evidence
-    // at rest, shielded exactly where the churn explanation lives instead of by motion: RANGE test only
-    // (a static silhouette's range contains its history depth by construction), alternation-evidenced
-    // pixels stay gated (resting foliage flips which fragments exist per jitter phase — prevOsc is the
-    // shield), an unwritten center is barred (overlay/alpha-fringe false fires), and rejAuth keeps
-    // color-silent depth changes gentle. Consumers (diff, counter reset, evidence wipe, clamp tighten,
-    // honest-disocclusion knee) all inherit through ghostReject. STEEP response on purpose: the
-    // evidence lives exactly ONE frame (this resolve rewrites the history depth alpha immediately,
-    // reveal or not), so a confirmed fire must clear the honest knee and reset the counter in that
-    // frame — a partial fire leaves residue with no evidence left to finish the job.
-    float staticGhost = (dmax < dmin) ? 0.0 :
-        smoothstep(0.02, 0.08, nearer / max(historyDepth, DepthRejectParams.w))
-        * (1.0 - smoothstep(0.12, 0.35, prevOsc))
-        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth;
-    ghostReject = max(ghostReject, staticGhost);
 
     // FEATURE-LEVEL HISTORY COMPARISON (structure, not value): a ghost carries its own edges at positions
     // the current frame does not confirm; value-diff misses contamination that preserves average
@@ -702,6 +685,29 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         shadingChange = min(pointDiffPre, filtReject);
     }
 #endif
+
+    // STATIC-CHANGE GHOST PATH (motion-exempt), BOTH range sides: cutaways, wall changes, and
+    // build-mode edits swap geometry with ZERO velocity, so the motion gates stay closed while the
+    // depth evidence is real — a REVEAL leaves the history depth NEARER than the entire current valid
+    // range, an APPEARING object leaves it FARTHER; either way the surface that wrote this history is
+    // gone from the pixel. Shields target the churn explanation instead of motion: a static
+    // silhouette's range contains its history depth by construction; alternation-evidenced pixels
+    // (resting foliage flips which fragments exist per jitter phase) keep the prevOsc shield — but the
+    // shield FADES ON CONFIRMED SHADING CHANGE (shadingChange, blur-domain + point-gated; 0 on SM3):
+    // alternation explains churn-sized phase differences, not a large one-sided blurred delta, so a
+    // visibly-changed edge fires despite its legitimately-earned oscillation evidence. An unwritten
+    // center is barred (overlay/alpha-fringe false fires) and staticAuth keeps color-silent depth
+    // changes gentle. STEEP response on purpose: the evidence lives exactly ONE frame (this resolve
+    // rewrites the history depth alpha immediately, reveal or not), so a confirmed fire must clear the
+    // honest knee and reset the counter in that frame. Consumers (diff, counter reset, evidence wipe,
+    // clamp tighten, honest-disocclusion knee) all inherit through ghostReject.
+    float farther = max(historyDepth - dmax - DepthRejectParams.x, 0.0);
+    float oscShield = smoothstep(0.12, 0.35, prevOsc) * (1.0 - smoothstep(0.25, 0.6, shadingChange));
+    float staticGhost = (dmax < dmin) ? 0.0 :
+        smoothstep(0.02, 0.08, max(nearer, farther) / max(historyDepth, DepthRejectParams.w))
+        * (1.0 - oscShield)
+        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth;
+    ghostReject = max(ghostReject, staticGhost);
 
     // VELOCITY-DISPARITY REACTIVE (FSR2 lock-break analogue): a mismatch between this frame's dilated
     // velocity and the velocity stored alongside the history means the history was written by content
