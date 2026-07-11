@@ -34,6 +34,7 @@ namespace FSO.Common.Utils
                                          // it, BeginResolve requires history to be exactly one frame older
         public int ResolveVersion;       // TAAResolve.RESOLVE_VERSION; part of the history signature so a
                                          // shader/meta layout change can never decode old-layout bytes
+        public float RenderScale;        // PPXDepthEngine.SSAA; sets the velocity-grid expectation in Ready
 
         public Vector2 JitterDeltaUV;    // per-frame jitter delta; cancels the jitter baked into velocity
         public Vector2 SampleJitterUV;   // un-jittered offset for the variance-box taps
@@ -55,7 +56,12 @@ namespace FSO.Common.Utils
                 var prev = History?.Prev;
                 if (Color == null || Velocity == null || prev == null
                     || History.Curr == null || History.MetaPrev == null || History.MetaCurr == null) return false;
-                if (Velocity.Width != Color.Width || Velocity.Height != Color.Height) return false;
+                // Velocity lives on the RENDER grid. That equals the color grid in every mode EXCEPT
+                // supersampling (RenderScale > 1), where the color reaching the resolve has been
+                // box-downsampled to native while velocity stays render-res — a designed mismatch (the
+                // shader samples velocity by UV, which is grid-independent).
+                if (RenderScale <= 1.001f
+                    && (Velocity.Width != Color.Width || Velocity.Height != Color.Height)) return false;
                 return Upscale
                     ? (prev.Width == OutputWidth && prev.Height == OutputHeight)
                     : (prev.Width == Color.Width && prev.Height == Color.Height);

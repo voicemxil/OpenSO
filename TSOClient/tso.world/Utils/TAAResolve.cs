@@ -94,6 +94,7 @@ namespace FSO.LotView.Utils
                 OutputHeight = gd.Viewport.Height,
                 FrameId = PPXDepthEngine.FrameId,
                 ResolveVersion = RESOLVE_VERSION,
+                RenderScale = ss,
 
                 JitterDeltaUV = JitterDeltaUV,
                 // un-jittered offset for the variance-box taps: content shifts by +jitter in NDC and UV y
