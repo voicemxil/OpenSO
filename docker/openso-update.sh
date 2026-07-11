@@ -14,12 +14,15 @@ set -euo pipefail
 
 # Where docker-compose.yml lives. Override with OPENSO_DIR if you cloned elsewhere.
 COMPOSE_DIR="${OPENSO_DIR:-/root/OpenSO/docker}"
+# Compose service name of the game server. Override with OPENSO_SERVICE only if you renamed it in an
+# override; the tracked docker-compose.yml calls it openso-server.
+SERVICE="${OPENSO_SERVICE:-openso-server}"
 cd "$COMPOSE_DIR"
 
 echo "[openso-update] $(date -u +%FT%TZ) pulling ghcr.io/voicemxil/openso-server:release …"
-docker compose pull openso-server
+docker compose pull "$SERVICE"
 
-# `up -d` recreates openso-server only if the pulled image differs from the running one; mariadb and caddy
+# `up -d` recreates the server only if the pulled image differs from the running one; mariadb and caddy
 # are pinned images and are left untouched. So on a night with no new release this is a no-op (no restart).
 docker compose up -d
 

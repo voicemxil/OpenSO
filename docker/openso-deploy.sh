@@ -13,6 +13,9 @@ set -euo pipefail
 
 # Where docker-compose.yml lives. Override with OPENSO_DIR if you cloned elsewhere.
 COMPOSE_DIR="${OPENSO_DIR:-/root/OpenSO/docker}"
+# Compose service name of the game server. Override with OPENSO_SERVICE only if you renamed it in an
+# override; the tracked docker-compose.yml calls it openso-server.
+SERVICE="${OPENSO_SERVICE:-openso-server}"
 cd "$COMPOSE_DIR"
 
 FLAG="$COMPOSE_DIR/deploy-trigger/deploy.request"
@@ -21,12 +24,12 @@ FLAG="$COMPOSE_DIR/deploy-trigger/deploy.request"
 rm -f "$FLAG"
 
 echo "[openso-deploy] $(date -u +%FT%TZ) admin deploy requested; pulling ghcr.io/voicemxil/openso-server:release …"
-docker compose pull openso-server
+docker compose pull "$SERVICE"
 
-# Plain `up -d` recreates openso-server ONLY if the pulled image differs from the running one (mariadb and
+# Plain `up -d` recreates the server ONLY if the pulled image differs from the running one (mariadb and
 # caddy are untouched). So if :release actually moved we swap onto it; if it didn't, this is a no-op and the
 # restart:unless-stopped policy has already brought the drained server back on the same image.
-docker compose up -d openso-server
+docker compose up -d "$SERVICE"
 
 # Reclaim space from the now-dangling previous image.
 docker image prune -f >/dev/null 2>&1 || true

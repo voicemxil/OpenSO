@@ -92,7 +92,20 @@ TSOClient/.vs/config/applicationhost.config
 docker/nfs/
 docker/archives/
 
+# Box-local deployment config — copied/derived from the tracked examples, never committed, so a
+# `git pull` on the production box never collides with box-specific secrets/tweaks. See docker/DEPLOY.md.
+# (.gitignore has no inline comments — a trailing '#' is treated as part of the pattern — so keep these bare.)
+# docker/config.json: real server config + secrets, copied once from docker/config.example.json
+docker/config.json
+# docker/.env: compose env overrides (DB passwords, OPENSO_API_DOMAIN, OPENSO_ACME_EMAIL, TSO_GAME_PATH)
+docker/.env
+# docker/docker-compose.override.yml: box-specific compose tweaks (port remaps, resource limits, extra mounts)
+docker/docker-compose.override.yml
+
 TSOClient/Mario
 
 # MonoGame content-build stats (generated)
 *.mgstats
+
+# Python bytecode caches (generated, e.g. from docker/create-archive.py)
+__pycache__/
