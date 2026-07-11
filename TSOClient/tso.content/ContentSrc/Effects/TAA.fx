@@ -635,9 +635,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // pixels stay gated (resting foliage flips which fragments exist per jitter phase — prevOsc is the
     // shield), an unwritten center is barred (overlay/alpha-fringe false fires), and rejAuth keeps
     // color-silent depth changes gentle. Consumers (diff, counter reset, evidence wipe, clamp tighten,
-    // honest-disocclusion knee) all inherit through ghostReject.
+    // honest-disocclusion knee) all inherit through ghostReject. STEEP response on purpose: the
+    // evidence lives exactly ONE frame (this resolve rewrites the history depth alpha immediately,
+    // reveal or not), so a confirmed fire must clear the honest knee and reset the counter in that
+    // frame — a partial fire leaves residue with no evidence left to finish the job.
     float staticGhost = (dmax < dmin) ? 0.0 :
-        saturate(nearer / max(historyDepth, DepthRejectParams.w) * 10.0 - 0.25)
+        smoothstep(0.02, 0.08, nearer / max(historyDepth, DepthRejectParams.w))
         * (1.0 - smoothstep(0.12, 0.35, prevOsc))
         * ((centerDepth >= 0.0) ? 1.0 : 0.0) * rejAuth;
     ghostReject = max(ghostReject, staticGhost);
