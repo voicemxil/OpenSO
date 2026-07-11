@@ -1102,7 +1102,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // render res and the floor would re-churn it forever under intense TAAU — ghost-safe by the lock's
     // own argument (ghost residue is monotonic, cannot earn the lock; the lock also dies on motion,
     // rejects, and foreign velocity).
-    blend = max(blend, texDetail * TuneTexDetailFloor * (1.0 - oscLock));
+    // EVIDENCE-ARMED: permanent raw injection has no reference analogue and reads as stipple on
+    // converged flat surfaces at rest. Full floor wherever there is CURRENT or REMEMBERED motion — a
+    // mover always deposits storedMove on the pixels it leaves, so the trail-scrub window keeps the
+    // whole backstop — fading out only once the pixel is motion-silent AND evidence-deep (a ghost
+    // cannot be hiding there: it needed motion to arrive, which re-arms the floor).
+    float texFloorArm = max(gammaMotion, 1.0 - saturate(minN * (1.0 / 24.0)));
+    blend = max(blend, texDetail * TuneTexDetailFloor * (1.0 - oscLock) * texFloorArm);
 
     // RAW-STATE SPATIAL SOFTENING (upscale only; current-frame data only — zero ghost risk): when the
     // floors/rejects legitimately force a pixel mostly-raw, display the smooth reconstruction instead of
