@@ -458,11 +458,12 @@ namespace FSO.Common.Utils
         public static Action<GraphicsDevice, RenderTarget2D> SSAAFunc;
         // velocity debug visualizer: when non-null, DrawBackbuffer bypasses the post chain and draws raw MRT1
         public static Action<GraphicsDevice, RenderTarget2D> VelocityDebugFunc;
-        // per-pixel motion blur (3D); runs before post-AA so FXAA/SMAA smooth the blurred edges. null = off
+        // per-pixel motion blur (3D); runs AFTER the temporal resolve (history must accumulate
+        // unblurred color) and before post-AA so FXAA/SMAA smooth the blurred edges. null = off
         public static Action<GraphicsDevice, RenderTarget2D> MotionBlurFunc;
         // post-process resolve (FXAA/SMAA/FSR); runs even when SSAA==1. null = plain blit (no behaviour change)
         public static Action<GraphicsDevice, RenderTarget2D> PostProcessFunc;
-        // temporal AA; its own stage AFTER spatial post-AA, not in place of it. null = off
+        // temporal AA; its own stage, before motion blur in every mode. null = off
         public static Action<GraphicsDevice, RenderTarget2D> TAAFunc;
         // TAA pre-upscale (FSR1: TAA -> EASU -> RCAS). EASU needs anti-aliased input, so at scale < 1
         // DrawBackbuffer sets TAASkipFinalBlit; the resolve skips its stretch blit and publishes the
@@ -522,7 +523,10 @@ namespace FSO.Common.Utils
 
             if (nonNative || doMotionBlur || doPost || doTAA || doAO || doBloom || doSharpen)
             {
-                // resolve chain: scale-resolve -> motion blur -> post-AA -> TAA -> AO -> bloom -> sharpen.
+                // resolve chain: scale-resolve -> TAA -> motion blur -> post-AA -> AO -> bloom -> sharpen.
+                // Temporal resolve BEFORE motion blur in every mode (TAAU already was, by occupying the
+                // nonNative slot): history must accumulate unblurred color — blurred frames extend trails
+                // through the accumulation and corrupt history rejection. Blur applies per-frame after.
                 // Intermediates ping-pong between the two ResolveTargets; the last active stage targets the screen.
                 RenderTarget2D src = Backbuffer;
 
@@ -584,22 +588,8 @@ namespace FSO.Common.Utils
                     }
                     else { SSAAFunc(GD, src); src = dst; }
                 }
-                if (doMotionBlur)
-                {
-                    remaining--;
-                    var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
-                    GD.SetRenderTarget(dst);
-                    MotionBlurFunc(GD, src);
-                    src = dst;
-                }
-                if (doPost && !postFirst)
-                {
-                    remaining--;
-                    var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
-                    GD.SetRenderTarget(dst);
-                    PostProcessFunc(GD, src);
-                    src = dst;
-                }
+                // native/supersample TAA slot: AFTER the downsample (history is native-sized, so at
+                // SSAA>1 the resolve consumes the resolved native grid), BEFORE motion blur (above)
                 if (doTAA && !taaFirst && !taau)
                 {
                     remaining--;
@@ -621,6 +611,22 @@ namespace FSO.Common.Utils
                         TAAFunc(GD, src);
                         src = null;
                     }
+                }
+                if (doMotionBlur)
+                {
+                    remaining--;
+                    var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
+                    GD.SetRenderTarget(dst);
+                    MotionBlurFunc(GD, src);
+                    src = dst;
+                }
+                if (doPost && !postFirst)
+                {
+                    remaining--;
+                    var dst = (remaining == 0) ? null : ((pong++ % 2 == 0) ? ResolveTarget : ResolveTarget2);
+                    GD.SetRenderTarget(dst);
+                    PostProcessFunc(GD, src);
+                    src = dst;
                 }
                 if (doAO)
                 {
