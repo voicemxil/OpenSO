@@ -57,6 +57,9 @@ namespace FSO.LotView.Utils
         public static float GrowOffPhase = 0.3f;
         // deepCap = lerp(DeepCapBase, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio)) — deep-end memory cap
         public static float DeepCapBase = 0.992f;
+        // thin-line depth-ridge test: ridge fires when both opposite plus-tap depths exceed the center by
+        // ThinLineEps * depth (TSR DetectThinGeometry ErrorMultiplier analogue)
+        public static float ThinLineEps = 0.02f;
 
         // ---- TAALite tunables (2026-07-07 promotion). Lite's "raw motion resolve" (the user's
         // Switch-2-DLSS-lite anchor) is the DESIGN CHARACTER — tune to taste, don't converge it toward

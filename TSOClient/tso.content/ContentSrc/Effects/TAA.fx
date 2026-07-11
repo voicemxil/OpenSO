@@ -75,6 +75,7 @@ float TuneGammaMotionDecay = 0.6;    // wide-box narrowing strength while in mot
 float TuneConfFadeN = 20.0;          // evidence depth (minN) at which the off-phase confidence throttle is fully armed
 float TuneGrowOffPhase = 0.3;        // off-phase growth discount floor for the evidence counter
 float TuneDeepCapBase = 0.992;       // Kalman deep-end cap at native/mild upscale
+float TuneThinLineEps = 0.02;        // thin-line depth-ridge relative step (TSR ErrorMultiplier analogue)
 
 // ---- TAALite tunables (only consumed by TAALite_PS; TAATuning.cs is the C# single source). ----
 float LiteGamma = 1.5;               // variance box base width (sigma) at native
@@ -353,6 +354,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float closestDepth = 1e9;
     float closestMask = 0.0;
     float dmin = 1e9, dmax = -1e9; // valid-tap depth RANGE for the disocclusion test below
+    float4 plusD = float4(2.0, 2.0, 2.0, 2.0); // W,E,N,S plus-tap depths (unwritten = far sentinel) — thin-line prior
     // Center velocity tap PRE-FETCHED (the loop re-reads it as its (0,0) plus tap — cached, ~free): the
     // pixel's OWN velocity feeds the foreign-velocity signal, and its depth anchors the depth-aware
     // reconstruction weights. Jitter-compensated (boxUV) like the loop's velocity taps.
@@ -374,6 +376,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
             float d = (v.a >= 0.5) ? v.b : 2.0;
             if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; closestMask = v.a; }
             if (v.a >= 0.5) { dmin = min(dmin, v.b); dmax = max(dmax, v.b); }
+            // Capture the four side depths for the thin-line test (compile-time folds under [unroll]).
+            if (dx == -1) plusD.x = d; else if (dx == 1) plusD.y = d;
+            else if (dy == -1) plusD.z = d; else if (dy == 1) plusD.w = d;
         }
         // Reconstruction tap: RAW texel center (bilinear at an exact center = point fetch) around the
         // nearest jittered sample, weighted by its true distance to the output pixel center. Weight =
@@ -413,6 +418,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         wsum += w;
         if (dx == 0 && dy == 0) { crawC = craw; wC = w; } // folds under [unroll]
     }
+    // DEPTH THIN-LINE PRIOR (TSR DetectThinGeometry's line test): a 1-px depth ridge — the center strictly
+    // NEARER than BOTH opposite neighbours by a relative epsilon — is same-frame STRUCTURAL proof of thin
+    // geometry, which a color ghost cannot fake. Uses the already-fetched plus-pattern depths (0 fetches,
+    // 0 state). Unwritten taps keep the far sentinel: a thin object over velocity-less backdrop still
+    // registers, while a solid region's edge fails the both-sides requirement. An unwritten CENTER decodes
+    // as the far sentinel too, so the test is structurally 0 there. Consumers: oscLock entry ease +
+    // biasPenalty exemption — acceleration only, every lock kill-gate stays in force.
+    float thinDC = (vCen.a >= 0.5) ? vCen.b : 2.0;
+    float thinEps = TuneThinLineEps * max(thinDC, DepthRejectParams.w); // relative step, floored denominator
+    float thinLine = max(step(thinEps, plusD.x - thinDC) * step(thinEps, plusD.y - thinDC),
+                         step(thinEps, plusD.z - thinDC) * step(thinEps, plusD.w - thinDC));
     // Thin-coverage fallback: with the output-sized kernel, some frames leave an output pixel with almost
     // no in-support sample (wsum ~ 0). Divide-guard + smooth fallback to the NEAREST RAW TEXEL (crawC,
     // point sample) — single-surface by construction. A bilinear fallback would mix the mover's color a
@@ -734,7 +750,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
                       * smoothstep(0.25, 0.7, inno) * (1.0 - smoothstep(1.0, 2.0, inno))
                       * (1.0 - smoothstep(0.05, 0.35, velPx))
                       * (1.0 - smoothstep(0.04, 0.12, sigma.x))
-                      * saturate(upscaleRatio - 1.0);
+                      * saturate(upscaleRatio - 1.0)
+                      * (1.0 - thinLine); // thin-line exemption: off-phase interpolation against a proven
+                                          // depth ridge is one-sided INNOCENTLY — a ghost has no ridge
     agreeK = min(agreeK, 1.0 - 0.55 * biasPenalty);
     float collapse = lerp(1.0, lerp(0.75, 1.0, agreeK), testify); // testify hoisted above the osc detector
     // GROWTH is witness-gated only once EVIDENCE exists: the witness rule protects converged history from
@@ -775,8 +793,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Lock entry eases with render scale (floorScale): under heavy TAAU an output pixel is witnessed only
     // ~1 frame in 1/scale^2, so lock evidence accumulates that much slower — entry edge 0.24 at <= 0.5x,
     // 0.32 native (TV-static-like content equilibrates at ~0.5 osc and gains a bit of partial trust as
-    // the cost; still clamp-bounded).
-    float oscLock = smoothstep(lerp(0.24, 0.32, floorScale), 0.7, osc) * stillGate
+    // the cost; still clamp-bounded). THIN-LINE EASE: a same-frame depth ridge is structural evidence
+    // standing in for the first witnessed flips, halving the entry edge — proven thin geometry reaches
+    // partial lock in roughly half the frames; the kill-gates below are unaffected.
+    float lockLo = lerp(0.24, 0.32, floorScale) * lerp(1.0, 0.5, thinLine);
+    float oscLock = smoothstep(lockLo, 0.7, osc) * stillGate
                   * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
                   * (1.0 - featReject) * (1.0 - noVel);
     // Locks do NOT widen the box (no reference does — FSR2's locks lerp toward unclamped history instead;
