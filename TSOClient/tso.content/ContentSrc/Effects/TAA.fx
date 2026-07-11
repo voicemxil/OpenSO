@@ -616,6 +616,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // FLAT. Motion-adjacent gated: at rest, converged fine geometry's history gradient legitimately
     // out-details the render-res current gradient. Cost: 4 point history taps.
     float featReject = 0.0;
+    // FILTERED REJECTION VERDICT (TSR MeasureRejection core): compare BLURRED operands so the aliasing
+    // difference between the render-res frame and the sharp converged history is suppressed and only a
+    // genuine SHADING difference remains; normalize the history's clamp energy by how different the
+    // frames actually are. filtReject = 1 means "shading changed" (SM3 keeps the min-neutral 1 so the
+    // diff composition below is bit-identical there); shadingChange is its point-diff-gated share for
+    // the clamp tighten (0 = neutral on SM3).
+    float filtReject = 1.0;
+    float shadingChange = 0.0;
 #if SM4 // ps_3_0 temp-register budget — SM3 relies on the depth/ghost/reactive rejects
     {
         float3 lw = float3(0.25, 0.5, 0.25); // YCoCg Y from RGB
@@ -633,6 +641,23 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // (b) history structure over a current flat — the ghost signature
         float structGhost = smoothstep(0.1, 0.25, gH) * (1.0 - smoothstep(0.03, 0.1, gC));
         featReject = max(moveGate, storedMove) * saturate(max(dirMismatch, structGhost)) * 0.6;
+        // Blurred operands from taps that already exist: bC = the 5-tap plus mean (m1), bH = plus-blur
+        // of the four history luma taps above + the point center (TSR Blur3x3 plus weights 1, 4x0.5).
+        float hC = dot(historyPoint.rgb, lw);
+        float bH = (hC + 0.5 * (hE + hW + hN + hS)) * (1.0 / 3.0);
+        // Clamp box = the box-tap luma min/max expanded by the 2/255 storage-quantization floor (TSR's
+        // MeasureBackbufferLDRQuantizationError analogue). The verdict: how much of the blurred history
+        // would clamping destroy, relative to max(frame difference, the neighborhood's own spread) —
+        // in-box history is indistinguishable from spatial variation and scores 0 rejection.
+        float bmin = min(min(cboxC.x, cboxW.x), min(min(cboxE.x, cboxN.x), cboxS.x)) - (2.0 / 255.0);
+        float bmax = max(max(cboxC.x, cboxW.x), max(max(cboxE.x, cboxN.x), cboxS.x)) + (2.0 / 255.0);
+        float clampE = abs(clamp(bH, bmin, bmax) - bH);
+        filtReject = saturate(clampE / max(abs(m1.x - bH), bmax - bmin));
+        // Point-diff gate (first-cycle conservatism): the filtered verdict acts only where the point
+        // comparison also sees change — it can suppress aliasing-as-rejection, never add rejection on
+        // its own. Pre-clamp resolution-matched history luma (hLow; = historyRaw at <= 1.5x ratio).
+        float pointDiffPre = saturate(abs(m1.x - hLow.x) / max(0.2, max(m1.x, hLow.x)));
+        shadingChange = min(pointDiffPre, filtReject);
     }
 #endif
 
@@ -808,7 +833,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // stale color snaps toward the current neighborhood statistics — a filtered, anti-aliased value — so
     // mid-strength rejects both scrub the ghost and stay smooth. Raw injection below is reserved for
     // near-certain rejection only.
-    float rejTighten = smoothstep(0.12, 0.6, max(depthReject, ghostReject));
+    // shadingChange joins the depth evidence here: a motion-silent content change (TV, lighting,
+    // cutaway) confirmed by BOTH the point diff and the filtered verdict rectifies via the tighten —
+    // scrubbed to current statistics — instead of waiting on the Kalman collapse. 0 on SM3.
+    float rejTighten = smoothstep(0.12, 0.6, max(max(depthReject, ghostReject), shadingChange));
     gammaEff *= lerp(1.0, 0.3, rejTighten);
     // MOTION-SCALED CLAMP TIGHTENING (upscale-only): rotating geometry reveals surface with valid
     // same-object depth, coherent velocity, and similar colors — every structural detector is silent, so
@@ -874,6 +902,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // on a real change. Only the confidence signal changes — the displayed blend still uses the sharp curr.
     float lumaH = history.x; // display-side luma (Karis weights); the DIFF uses the resolution-matched lumaHCmp
     float diff = saturate(abs(m1.x - lumaHCmp) / max(0.2, max(m1.x, lumaHCmp)));
+    // The filtered rejection verdict BOUNDS the point diff (min): where the blur-domain comparison says
+    // the difference is aliasing, not shading, the point diff may not erode trust. Real changes fire
+    // both and pass unchanged; SM3's filtReject stays 1 (bit-identical there). Structural rejects
+    // still enter at full strength below.
+    diff = min(diff, filtReject);
     diff = max(max(diff, depthReject), max(max(ghostReject, featReject), ringContam));
     // KALMAN DEEP END: the deep end follows the Kalman gain N/(N+1) once the EVIDENCE counter outgrows
     // the EMA baseline — reference upscalers converge fine detail because accumulation approaches an
