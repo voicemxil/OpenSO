@@ -47,8 +47,10 @@ namespace FSO.LotView.Utils
         // ---- structural constants (2026-07-07 promotion — the full-vs-lite haze/ghost hunt) ----
         // history = lerp(rectified, directCl, DirectClampMix * max(moveGate, storedMove)) — motion direct-clamp share
         public static float DirectClampMix = 0.75f;
-        // lumaFade = max(moveGate, storedMove) * KarisFade — scales the Karis anti-flicker motion fade
-        public static float KarisFade = 1.0f;
+        // lumaFade = max(moveGate, storedMove) * KarisFade — scales the Karis anti-flicker motion fade.
+        // 0 = weighting always on (TAALite/TSR/FSR behavior); raise toward 1 if dark->light changes
+        // WITHOUT depth evidence lag under motion (the structural rejects own the depth-evidenced reveals).
+        public static float KarisFade = 0.0f;
         // GAMMA widening *= (1 - GammaMotionDecay * gammaMotion) — wide-box narrowing strength in motion
         public static float GammaMotionDecay = 0.6f;
         // blend *= lerp(1, confMul, saturate(minN / ConfFadeN)) — evidence depth arming the off-phase throttle

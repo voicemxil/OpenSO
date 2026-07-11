@@ -76,7 +76,7 @@ float TuneConfFloor = 0.14;          // TAAU sample-confidence floor (the <=2x-r
 float TuneRingLo = 0.03;             // ringContam own-vs-dilated color knee, lower edge
 float TuneRingHi = 0.10;             // ringContam own-vs-dilated color knee, upper edge
 float TuneDirectClampMix = 0.75;     // motion direct-clamp share vs phase-coherent rectification
-float TuneKarisFade = 1.0;           // scales the Karis anti-flicker motion fade (1 = full fade to plain lerp under motion)
+float TuneKarisFade = 0.0;           // Karis motion fade share (0 = weighting always on, the reference behavior)
 float TuneGammaMotionDecay = 0.6;    // wide-box narrowing strength while in motion
 float TuneConfFadeN = 20.0;          // evidence depth (minN) at which the off-phase confidence throttle is fully armed
 float TuneGrowOffPhase = 0.3;        // off-phase growth discount floor for the evidence counter
@@ -1122,10 +1122,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #endif
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
-    // MOTION-FADED: the weighting is structurally dark-biased (history weight scales by 1/(1+lumaH)), so
-    // on dark->light reveals during motion dark stale history gets boosted exactly where the current
-    // content is bright. The sparkle it suppresses is a rest-state artifact; under motion fade to a plain
-    // energy-honest lerp.
+    // ALWAYS ON by default (TuneKarisFade 0 — the TAALite/TSR/FSR behavior): sparkle suppression matters
+    // most during pans, and depth-evidenced reveals are owned by the structural rejects. The weighting is
+    // structurally dark-biased (history weight scales by 1/(1+lumaH)), so TuneKarisFade remains the
+    // escape hatch: raising it fades toward a plain energy-honest lerp under motion if dark->light
+    // changes WITHOUT depth evidence ever lag.
     float lumaFade = max(moveGate, storedMove) * TuneKarisFade;
     float wc = blend * lerp(1.0 / (1.0 + max(lumaC, 0.0)), 1.0, lumaFade);
     float wh = (1.0 - blend) * lerp(1.0 / (1.0 + max(lumaH, 0.0)), 1.0, lumaFade);
