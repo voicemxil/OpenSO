@@ -41,7 +41,7 @@ TSO_GAME_PATH=/path/to/your/TSOClient
 
 ## What's Running
 
-- **OpenSO server** (compose service `freeso-server`) - Game server on ports 9000 (API), 33100-33101 (city), 34100-34101 (lots), 35100-35101 (tasks)
+- **OpenSO server** (compose service `openso-server`) - Game server on ports 9000 (API), 33100-33101 (city), 34100-34101 (lots), 35100-35101 (tasks)
 - **MariaDB 11** - Database with persistent storage in a Docker volume
 - **Caddy** - HTTPS reverse proxy in front of the API (see `docker/Caddyfile`)
 
