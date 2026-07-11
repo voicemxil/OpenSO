@@ -574,6 +574,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // average fetched here is reused by the input-resolution rectification below. 1:1 keeps full authority.
     float3 hLow = historyRaw;
     float rejAuth = 1.0;
+    // Static-reveal authority: same floor, slightly steeper color curve (full authority by 0.06
+    // instead of 0.08) — a static reveal's depth evidence lives one frame (see staticGhost), so
+    // modest-but-visible color differences must earn their scrub in that frame.
+    float staticAuth = 1.0;
 #if SM4 // ps_3_0 temp-register budget — SM3 keeps full rejection authority, direct clamp
     if (upscaleRatio > 1.5)
     {
@@ -592,7 +596,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         float relFgnPxE = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale;
         float relMotionE = smoothstep(0.75, 2.5, max(velFgnPx, relFgnPxE));
         float authFloor = max(lerp(0.3, 0.05, smoothstep(0.25, 0.6, prevOsc)), relMotionE * 0.65);
-        rejAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.08, length(m1 - hLow)));
+        float colorEvidence = length(m1 - hLow);
+        rejAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.08, colorEvidence));
+        staticAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.06, colorEvidence));
     }
 #endif
 
@@ -642,7 +648,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float staticGhost = (dmax < dmin) ? 0.0 :
         smoothstep(0.02, 0.08, nearer / max(historyDepth, DepthRejectParams.w))
         * (1.0 - smoothstep(0.12, 0.35, prevOsc))
-        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * rejAuth;
+        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth;
     ghostReject = max(ghostReject, staticGhost);
 
     // FEATURE-LEVEL HISTORY COMPARISON (structure, not value): a ghost carries its own edges at positions
