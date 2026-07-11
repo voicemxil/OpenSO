@@ -118,8 +118,11 @@ namespace FSO.LotView.Utils
                 JitterPhases = R2Jitter.HaltonCycle(ss),
                 // depth-reject curve keyed to the history format: sharp for fp16, blunted for the RGBA8
                 // fallback (hides 1/255 quantization). Dead-zone covers fp16 quantization on both compare sides.
+                // fp16 offset 0.15 puts a small dead band under the motion-gated range test: grazing
+                // partial rejects along moving silhouettes stay quiet (the static-reveal path owns the
+                // motion-silent class, so the range test no longer needs a hair trigger).
                 DepthRejectParams = PPXDepthEngine.HistoryIsFP16
-                    ? new Vector4(0.0015f, 12f, 0f, 0.02f)
+                    ? new Vector4(0.0015f, 12f, 0.15f, 0.02f)
                     : new Vector4(2f / 255f, 6f, 0.25f, 0.05f),
             };
         }
