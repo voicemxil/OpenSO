@@ -543,8 +543,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // META.A DECODE — byte-exact layout sign(1) + osc(4) + amp(3): bit 7 = the last real luma delta's
     // sign, bits 3-6 = oscillation EMA (16 levels), bits 0-2 = witnessed alternating amplitude
     // (8 levels spanning 0.35 luma). Mirrors the pack at the bottom of the resolve; RESOLVE_VERSION
-    // guards the layout. debugMeta repurposes meta bytes and must decode as zero state.
-    float metaByte = debugMeta ? 0.0 : floor(pm.a * 255.0 + 0.5);
+    // guards the layout. BOTH techniques keep A as real oscillation state (debug repurposes only GB) —
+    // the debug view must show the shipping shield/lock behavior, not a shield-less exaggeration.
+    float metaByte = floor(pm.a * 255.0 + 0.5);
     float prevSgn = step(128.0, metaByte);
     float metaRem = metaByte - prevSgn * 128.0;
     float prevOscQ = floor(metaRem * (1.0 / 8.0));
@@ -579,6 +580,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // instead of 0.08) — a static reveal's depth evidence lives one frame (see staticGhost), so
     // modest-but-visible color differences must earn their scrub in that frame.
     float staticAuth = 1.0;
+    // Resolution-matched pre-clamp point diff (m1 vs the history's render-texel average): ~0 on
+    // CONVERGED fine geometry by construction, high on a genuinely visible change. THE key for
+    // fading every osc-based protection (the authFloor discount here, the agreeK credit, the
+    // static-path shield): alternation evidence explains churn-sized differences, and this is the
+    // churn-sized test. 0 below 1.5x ratio / on SM3 = protections fully intact there.
+    float pointDiffPre = 0.0;
 #if SM4 // ps_3_0 temp-register budget — SM3 keeps full rejection authority, direct clamp
     if (upscaleRatio > 1.5)
     {
@@ -596,10 +603,20 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // still scrub).
         float relFgnPxE = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale;
         float relMotionE = smoothstep(0.75, 2.5, max(velFgnPx, relFgnPxE));
-        float authFloor = max(lerp(0.3, 0.05, smoothstep(0.25, 0.6, prevOsc)), relMotionE * 0.65);
+        pointDiffPre = saturate(abs(m1.x - hLow.x) / max(0.2, max(m1.x, hLow.x)));
+        // The osc discount FADES on a visible resolution-matched difference: deeply-accumulated fine
+        // detail must not out-stubborn a real reveal behind it (parallax reveals share the camera's
+        // motion, so the relative-motion override alone cannot restore authority there).
+        float authFloor = max(lerp(0.3, 0.05,
+                                   smoothstep(0.25, 0.6, prevOsc) * (1.0 - smoothstep(0.25, 0.6, pointDiffPre))),
+                              relMotionE * 0.65);
         float colorEvidence = length(m1 - hLow);
         rejAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.08, colorEvidence));
-        staticAuth = lerp(authFloor, 1.0, smoothstep(0.02, 0.06, colorEvidence));
+        // Static path gets a LOWER color-silent floor (x0.35): its false-fire venue is hairline-edge
+        // margins whose DILATED stored depth remembers the line while the pixel itself was always
+        // background — color-silent by definition, so the floor is what shows. Visible changes keep
+        // the steeper full-authority curve.
+        staticAuth = lerp(authFloor * 0.35, 1.0, smoothstep(0.02, 0.06, colorEvidence));
     }
 #endif
 
@@ -681,8 +698,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         filtReject = saturate(clampE / max(abs(m1.x - bH), bmax - bmin));
         // Point-diff gate (first-cycle conservatism): the filtered verdict acts only where the point
         // comparison also sees change — it can suppress aliasing-as-rejection, never add rejection on
-        // its own. Pre-clamp resolution-matched history luma (hLow; = historyRaw at <= 1.5x ratio).
-        float pointDiffPre = saturate(abs(m1.x - hLow.x) / max(0.2, max(m1.x, hLow.x)));
+        // its own. pointDiffPre computed with the rejection-authority block (0 at <= 1.5x ratio,
+        // where hLow has no resolution-matched form).
         shadingChange = min(pointDiffPre, filtReject);
     }
 #endif
@@ -702,11 +719,25 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // rewrites the history depth alpha immediately, reveal or not), so a confirmed fire must clear the
     // honest knee and reset the counter in that frame. Consumers (diff, counter reset, evidence wipe,
     // clamp tighten, honest-disocclusion knee) all inherit through ghostReject.
+    // Pre-static ghost strength, kept for the oscillation EVIDENCE WIPE below: the wipe exists for
+    // contaminated (motion-borne) history, and a static-path fire must never wipe the very osc
+    // evidence that shields against its own false fires — that feedback loop (fire -> wipe shield ->
+    // fire) permanently re-zeroed fine-edge pixels. A TRUE static fire replaces the history with raw
+    // current the same frame, so there is nothing contaminated left for a lock to protect.
+    float ghostMoving = ghostReject;
     float farther = max(historyDepth - dmax - DepthRejectParams.x, 0.0);
-    float oscShield = smoothstep(0.12, 0.35, prevOsc) * (1.0 - smoothstep(0.25, 0.6, shadingChange));
+    // Shield fade keyed on pointDiffPre DIRECTLY (not the min()'d shadingChange): the filtered
+    // verdict reads "in-box" inside high-variance edge neighborhoods — a blind spot exactly where
+    // the stencil lives. Protection fades are the cheap-risk direction; the min() conservatism
+    // stays on the fire side (rejTighten/diff).
+    float oscShield = smoothstep(0.12, 0.35, prevOsc) * (1.0 - smoothstep(0.25, 0.6, pointDiffPre));
+    // MOTION CROSSFADE: this path owns the motion-SILENT class only — as the motion gates arm (current
+    // or remembered), the classic motion-gated tests take over and the static path stands down, so
+    // jitter/slight-drift phases at hairline-edge margins cannot double-fire through both.
     float staticGhost = (dmax < dmin) ? 0.0 :
         smoothstep(0.02, 0.08, max(nearer, farther) / max(historyDepth, DepthRejectParams.w))
         * (1.0 - oscShield)
+        * (1.0 - max(moveGate, storedMove))
         * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth;
     ghostReject = max(ghostReject, staticGhost);
 
@@ -755,7 +786,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float osc = 0.0;
     float oscAmp = 0.0;
     float packedA = 0.0;
-    if (!debugMeta)
+    // Runs in BOTH techniques (debug fidelity — see the meta.A decode note); only GB-decoding
+    // consumers are debug-gated.
     {
         float dl   = curr.x - historyRaw.x; // signed, pre-clamp history
         // Amplitude gate 0.03 keeps low-contrast texture shimmer out of trust-deepening: in the
@@ -798,7 +830,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // after any invalidation event. Curved (knee 0.25): only meaningful invalidation wipes — grazing
         // partial rejects are noisy and constant near any motion and would nuke locks screen-adjacent to
         // movers every frame.
-        float wipe = 1.0 - smoothstep(0.4, 0.85, max(max(depthReject, ghostReject), max(reactive, featReject)));
+        // MOTION-GATED rejects only (ghostMoving, not ghostReject): the static path is excluded so its
+        // fires cannot destroy the osc shield that gates them — see the ghostMoving comment.
+        float wipe = 1.0 - smoothstep(0.4, 0.85, max(max(depthReject, ghostMoving), max(reactive, featReject)));
         osc *= wipe;
         oscAmp *= wipe; // amplitude slack must not survive invalidation either
         // Hold the sign bit through quiet/blind frames. BINARY select: a fractional sign bit under TAAU
@@ -830,13 +864,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // higher edge starves fine geometry's protection under TAAU. Collapse 0.75: a verdict should need a
     // few consistent frames. RELATIVE-MOTION CARVE-OUT on the osc branch (matching rejAuth/ghostReject):
     // without it, a slow trail over oscillation-proven ground (sand, canopy) holds deep N under the very
-    // lock the osc signal granted; with it, the innovation branch alone governs there. SHADING-CHANGE
-    // FADE (matching the static-ghost osc shield): alternation evidence explains churn-sized phase
-    // differences, not a confirmed large one-sided blurred delta — when the content visibly changes, an
-    // edge pixel's stale osc credit must not hold its counter deep while the innovation votes collapse.
-    // Converged thin geometry keeps the credit (resolution-matched shadingChange ~0 there; 0 on SM3).
+    // lock the osc signal granted; with it, the innovation branch alone governs there. VISIBLE-CHANGE
+    // FADE (pointDiffPre, matching the static-ghost osc shield): alternation evidence explains
+    // churn-sized phase differences — when the content visibly changes, an edge pixel's stale osc
+    // credit must not hold its counter deep while the innovation votes collapse. Converged thin
+    // geometry keeps the credit (resolution-matched pointDiffPre ~0 there; 0 on SM3).
     float agreeK = max(1.0 - smoothstep(1.0, 2.5, inno),
-                       smoothstep(0.12, 0.35, osc) * (1.0 - relMotion) * (1.0 - smoothstep(0.25, 0.6, shadingChange)));
+                       smoothstep(0.12, 0.35, osc) * (1.0 - relMotion) * (1.0 - smoothstep(0.25, 0.6, pointDiffPre)));
     // SLIGHT-BIAS PENALTY (persistent-tail discriminator): a faint monotonic ghost has a small ONE-SIDED
     // innovation the agreement branch reads as ~full agreement, so N maxes and deep history holds the
     // residue. Dock agreeK only in the discriminating band: low osc (non-textured surfaces — high-osc
@@ -1175,9 +1209,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // Diagnostic encode. R MUST stay the ACCUMULATION COUNTER even in debug — the next frame's
         // resolve decodes meta.R as prevN in BOTH techniques, so any other value corrupts the feedback
         // loop while debugging. Layout: R = counter, G = reject strength (depth or ghost), B = effective
-        // history trust this frame (1 - blend), A = 0 (no stale oscillation trust on toggle-off).
-        // Instrument law: a diagnostic must MASK missing data, never substitute a fabricated fallback.
-        o.meta = float4(newN / MaxAccum, max(depthReject, ghostReject), 1.0 - blend, 0.0);
+        // history trust this frame (1 - blend), A = REAL oscillation state (same pack as shipping, so
+        // the on-screen shield/lock behavior matches shipping; tier invalidation still clears on
+        // debug toggle). Instrument law: a diagnostic must MASK missing data, never substitute a
+        // fabricated fallback.
+        o.meta = float4(newN / MaxAccum, max(depthReject, ghostReject), 1.0 - blend, packedA);
     }
     else
     {
