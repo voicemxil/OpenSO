@@ -9,15 +9,19 @@ using FSO.Common.Rendering.Framework.IO;
 namespace FSO.Client.UI.Screens
 {
     /// <summary>
-    /// Modern Create-A-Sim, behind the GlobalSettings.ModernCAS flag: full-window perspective sim,
-    /// frosted glass panel with Head/Body/Bio tabs. The legacy sprite UI is hidden; only the inherited
+    /// Modern Create-A-Sim, behind the GlobalSettings.ModernCAS flag: perspective sim in the region
+    /// left of a right-anchored translucent panel with Head/Body/Bio tabs. The legacy sprite UI is hidden; only the inherited
     /// data controls are reused (head/body collection viewers, name/description edits read by
     /// PersonSelectionEditController), so the avatar-create save path / server PDU is untouched.
     /// </summary>
     public class CASScreenV2 : PersonSelectionEdit
     {
-        // Panel geometry in the 1024x768 design space.
-        private const float PX = 470, PY = 70, PW = 545, PH = 662;
+        // Panel size; position is computed per window size (anchored to the right edge, vertically
+        // centred) in LayoutGeometry, since the 1024x768 design space is centred in the real window.
+        private const float PW = 545, PH = 662, PMargin = 24;
+        private float _PX, _PY;
+        private UIImage _Backdrop;
+        private UIImage _Panel;
         private const int IconSize = 42;                 // gender/skin glyph button size
         private const int HeadCellW = 72, HeadCellH = 72;  // head thumbs are native ~square (33x33)
         private const int BodyCellW = 72, BodyCellH = 139; // body thumbs are native tall (33x70)
@@ -36,12 +40,11 @@ namespace FSO.Client.UI.Screens
             var gh = GlobalSettings.Default.GraphicsHeight;
             var gd = GameFacade.GraphicsDevice;
 
-            // full-window perspective sim (shifted left), layered behind the UI
+            // perspective sim viewport, sized in LayoutGeometry to the region left of the panel with
+            // the avatar centred in it (PanFraction 0 = no off-centre truck)
             SimBox.AutoRotate = true;
             SimBox.Interactive = true;
-            SimBox.Size = new Vector2(gw, gh);
-            SimBox.SetPerspective(true, gw, gh);
-            SimBox.Position = new Vector2((gw - 1024) / -2f, (gh - 768) / -2f);
+            SimBox.PanFraction = 0f;
             this.AddAt(1, SimBox);
             if (DialogBackground != null) this.Remove(DialogBackground);
 
@@ -56,14 +59,11 @@ namespace FSO.Client.UI.Screens
             }
 
             if (Background != null) Background.Visible = false;
-            var backdrop = new UIImage(RadialGradient(gd, 480, 300, new Vector2(0.30f, 0.40f),
-                new Color(48, 56, 72), new Color(7, 9, 14), 0.98f));
-            backdrop.SetSize(gw, gh);
-            backdrop.Position = new Vector2((gw - 1024) / -2f, (gh - 768) / -2f);
-            this.AddAt(1, backdrop); // behind the sim (sim shifts to index 2)
+            _Backdrop = new UIImage(BrandBackdrop(gd, 512, 320));
+            this.AddAt(1, _Backdrop); // behind the sim (sim shifts to index 2)
 
-            var panel = new UIImage(RoundedRect(gd, (int)PW, (int)PH, 18, new Color(19, 23, 30, 222))) { X = PX, Y = PY };
-            this.AddAt(3, panel);
+            _Panel = new UIImage(RoundedRect(gd, (int)PW, (int)PH, 18, new Color(19, 23, 30, 222)));
+            this.AddAt(3, _Panel);
 
             // keep AmbientLight neutral so it doesn't rescale/clip UISim's studio directional result
             if (SimBox.Avatar != null) SimBox.Avatar.AmbientLight = Vector4.One;
@@ -75,22 +75,15 @@ namespace FSO.Client.UI.Screens
             string[] tabs = { "Head", "Body", "Bio" };
             for (int i = 0; i < tabs.Length; i++)
             {
-                float tx = PX + 18 + i * 162, ty = PY + 16;
-                var bg = new UIImage(_TabInactive) { X = tx, Y = ty };
+                var bg = new UIImage(_TabInactive);
                 this.Add(bg);
                 _TabBg.Add(bg);
-                var lbl = new UILabel { Caption = tabs[i], X = tx + 56, Y = ty + 11, CaptionStyle = _LightText };
+                var lbl = new UILabel { Caption = tabs[i], CaptionStyle = _LightText };
                 this.Add(lbl);
                 _TabLabel.Add(lbl);
                 int idx = i;
                 bg.ListenForMouse((type, state) => { if (type == UIMouseEventType.MouseUp) SetTab(idx); });
             }
-
-            Place(FemaleButton,        PX + 26,  PY + 78);
-            Place(MaleButton,          PX + 74,  PY + 78);
-            Place(SkinLightButton,     PX + 160, PY + 78);
-            Place(SkinMediumButton,    PX + 208, PY + 78);
-            Place(SkinDarkButton,      PX + 256, PY + 78);
 
             ReskinButton(FemaleButton,     GenderIcon(gd, IconSize, IconSize, false));
             ReskinButton(MaleButton,       GenderIcon(gd, IconSize, IconSize, true));
@@ -113,19 +106,76 @@ namespace FSO.Client.UI.Screens
             m_BodySkinBrowser.ThumbButtonImage = GlassStrip(gd, BodyCellW, BodyCellH, CellR);
             m_BodySkinBrowser.Relayout();
 
-            Place(m_HeadSkinBrowser,   PX + 22,  PY + 150);
-            Place(m_BodySkinBrowser,   PX + 22,  PY + 150);
-
-            Place(NameTextEdit,        PX + 40,  PY + 90);
-            Place(DescriptionTextEdit, PX + 40,  PY + 170);
-            Place(DescriptionSlider,   PX + 480, PY + 170);
-            Place(DescriptionScrollUpButton,   PX + 478, PY + 164);
-            Place(DescriptionScrollDownButton, PX + 478, PY + 430);
-
-            Place(AcceptButton,        PX + 330, PY + 600);
-            Place(CancelButton,        PX + 170, PY + 600);
-
+            LayoutGeometry();
             SetTab(0);
+        }
+
+        /// <summary>
+        /// Size/position everything that depends on the real window size. The screen root is the
+        /// centred 1024x768 design space, so the window's top-left corner in local coordinates is
+        /// ((1024-gw)/2, (768-gh)/2). Runs at construction and again on every GameResized.
+        /// </summary>
+        private void LayoutGeometry()
+        {
+            var gw = GlobalSettings.Default.GraphicsWidth;
+            var gh = GlobalSettings.Default.GraphicsHeight;
+            var winTopLeft = new Vector2((1024 - gw) / 2f, (768 - gh) / 2f);
+
+            _Backdrop.SetSize(gw, gh);
+            _Backdrop.Position = winTopLeft;
+
+            // panel hugs the right edge of the window, vertically centred
+            _PX = winTopLeft.X + gw - PW - PMargin;
+            _PY = winTopLeft.Y + System.Math.Max(12f, (gh - PH) / 2f);
+            _Panel.X = _PX; _Panel.Y = _PY;
+
+            // sim viewport = the region between the left screen edge and the panel's left edge, full
+            // height; the avatar centres within it (PanFraction 0). SetPerspective enters the mode
+            // once; later resizes go through SetPerspectiveSize so orbit/focus state survives.
+            int regionW = System.Math.Max(64, (int)(_PX - winTopLeft.X));
+            SimBox.Position = winTopLeft;
+            SimBox.Size = new Vector2(regionW, gh);
+            if (!SimBox.Perspective)
+            {
+                SimBox.SetPerspective(true, regionW, gh);
+                if (SimBox.Avatar != null) SimBox.Avatar.AmbientLight = Vector4.One;
+            }
+            else SimBox.SetPerspectiveSize(regionW, gh);
+
+            // tab row, centred within the panel width
+            float tabRowW = 2 * 162 + 150;
+            float tabX0 = _PX + (PW - tabRowW) / 2f;
+            for (int i = 0; i < _TabBg.Count; i++)
+            {
+                float tx = tabX0 + i * 162, ty = _PY + 16;
+                _TabBg[i].Position = new Vector2(tx, ty);
+                _TabLabel[i].Position = new Vector2(tx + 56, ty + 11);
+            }
+
+            Place(FemaleButton,        _PX + 26,  _PY + 78);
+            Place(MaleButton,          _PX + 74,  _PY + 78);
+            Place(SkinLightButton,     _PX + 160, _PY + 78);
+            Place(SkinMediumButton,    _PX + 208, _PY + 78);
+            Place(SkinDarkButton,      _PX + 256, _PY + 78);
+
+            Place(m_HeadSkinBrowser,   _PX + 22,  _PY + 150);
+            Place(m_BodySkinBrowser,   _PX + 22,  _PY + 150);
+
+            Place(NameTextEdit,        _PX + 40,  _PY + 90);
+            Place(DescriptionTextEdit, _PX + 40,  _PY + 170);
+            Place(DescriptionSlider,   _PX + 480, _PY + 170);
+            Place(DescriptionScrollUpButton,   _PX + 478, _PY + 164);
+            Place(DescriptionScrollDownButton, _PX + 478, _PY + 430);
+
+            Place(AcceptButton,        _PX + 330, _PY + 600);
+            Place(CancelButton,        _PX + 170, _PY + 600);
+        }
+
+        public override void GameResized()
+        {
+            base.GameResized(); // recentres the design space + legacy background
+            LayoutGeometry();
+            SetTab(_Tab); // Place() marks everything visible; restore tab visibility
         }
 
         private void Place(UIElement e, float x, float y)
@@ -184,20 +234,44 @@ namespace FSO.Client.UI.Screens
             return tex;
         }
 
-        // Radial gradient: inner colour at centerFrac fading to outer at radiusFrac of width.
-        private static Texture2D RadialGradient(GraphicsDevice gd, int w, int h, Vector2 centerFrac, Color inner, Color outer, float radiusFrac)
+        // Brand backdrop: the website hero gradient (navy-0 → navy-1 → navy-2 on a ~140° diagonal)
+        // with a soft teal accent glow behind the avatar. Ordered-dithered ~1 LSB so the shallow
+        // navy gradient reconstructs band-free when the low-res texture is bilinearly stretched to
+        // fill the window (the interpolation between dithered texels effectively lifts bit depth).
+        private static readonly Vector3 Navy0 = new Vector3(0x16, 0x31, 0x4F) / 255f;
+        private static readonly Vector3 Navy1 = new Vector3(0x0E, 0x21, 0x38) / 255f;
+        private static readonly Vector3 Navy2 = new Vector3(0x0A, 0x16, 0x26) / 255f;
+        private static readonly Vector3 TealGlow = new Vector3(0x3F, 0xD9, 0xD0) / 255f;
+        private static readonly int[] Bayer4 = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
+
+        private static Texture2D BrandBackdrop(GraphicsDevice gd, int w, int h)
         {
-            var tex = new Texture2D(gd, w, h);
             var data = new Color[w * h];
-            float cx = centerFrac.X * w, cy = centerFrac.Y * h, maxR = radiusFrac * w;
+            var dir = Vector2.Normalize(new Vector2(0.66f, 0.75f)); // top-left → bottom-right (~140°)
+            float dirNorm = Vector2.Dot(Vector2.One, dir);
+            var glowC = new Vector2(0.30f, 0.34f); // teal glow centre in uv (behind the avatar)
+            float glowR = 0.62f;
+            float aspect = w / (float)h;
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
                 {
-                    float dx = x - cx, dy = y - cy;
-                    float d = MathHelper.Clamp((float)System.Math.Sqrt(dx * dx + dy * dy) / maxR, 0f, 1f);
-                    d = d * d * (3f - 2f * d); // smoothstep
-                    data[y * w + x] = Color.Lerp(inner, outer, d);
+                    var uv = new Vector2((x + 0.5f) / w, (y + 0.5f) / h);
+                    // navy diagonal gradient: two-stop lerp (navy-1 at 55%), projected onto dir
+                    float t = MathHelper.Clamp(Vector2.Dot(uv, dir) / dirNorm, 0f, 1f);
+                    Vector3 col = (t < 0.55f)
+                        ? Vector3.Lerp(Navy0, Navy1, t / 0.55f)
+                        : Vector3.Lerp(Navy1, Navy2, (t - 0.55f) / 0.45f);
+                    // soft teal glow (aspect-corrected so it stays roughly circular)
+                    float gdist = new Vector2((uv.X - glowC.X) * aspect, uv.Y - glowC.Y).Length() / glowR;
+                    float glow = MathHelper.Clamp(1f - gdist, 0f, 1f);
+                    glow = glow * glow * (3f - 2f * glow); // smoothstep
+                    col += TealGlow * (glow * 0.16f);
+                    // ordered dither ~1 LSB
+                    float dth = (Bayer4[(y & 3) * 4 + (x & 3)] / 16f - 0.46875f) * (2.2f / 255f);
+                    col += new Vector3(dth);
+                    data[y * w + x] = new Color(col);
                 }
+            var tex = new Texture2D(gd, w, h);
             tex.SetData(data);
             return tex;
         }

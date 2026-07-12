@@ -91,14 +91,30 @@ namespace FSO.Client.UI.Controls
         private Point TargetSize()
         {
             var scale = FSOEnvironment.DPIScaleFactor;
-            var w = (int)(_TargetW * scale);
-            var h = (int)(_TargetH * scale);
+            var w = _TargetW * scale;
+            var h = _TargetH * scale;
             if (Perspective)
             {
-                w = Math.Min(w, MaxPerspectiveDim);
-                h = Math.Min(h, MaxPerspectiveDim);
+                // Clamp BOTH axes by the same factor so the render-target aspect ratio matches the
+                // viewport — clamping each axis independently would squash/stretch the avatar.
+                var f = Math.Min(1f, MaxPerspectiveDim / Math.Max(w, h));
+                w *= f; h *= f;
             }
-            return new Point(w, h);
+            return new Point(Math.Max(1, (int)w), Math.Max(1, (int)h));
+        }
+
+        /// <summary>
+        /// Resize the perspective viewport target without rebuilding the scene/camera, so orbit and
+        /// focus state survive a window resize. The camera's projection aspect is recomputed lazily
+        /// from the (freshly resized) target viewport.
+        /// </summary>
+        public void SetPerspectiveSize(int w, int h)
+        {
+            if (!Perspective || (w == _TargetW && h == _TargetH)) return;
+            _TargetW = w;
+            _TargetH = h;
+            Scene.SetSize(TargetSize());
+            PCamera?.ProjectionDirty();
         }
 
         /// <summary>
