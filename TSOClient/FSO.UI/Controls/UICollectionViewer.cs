@@ -149,6 +149,9 @@ namespace FSO.Client.UI.Controls
 
             if (m_PaginationStyle == UIPaginationStyle.PAGINATION_BAR){
                 m_PaginationBar.TotalPages = numPages;
+                // paging can come from outside the bar (arrow buttons, keyboard); keep the
+                // highlighted number in sync
+                m_PaginationBar.SelectedPage = SelectedPage;
             }else if (m_PaginationStyle == UIPaginationStyle.LEFT_RIGHT_ARROWS){
                 LeftArrow.Disabled = SelectedPage == 0;
                 RightArrow.Disabled = SelectedPage == (numPages-1);

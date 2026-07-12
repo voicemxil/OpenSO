@@ -62,9 +62,11 @@ namespace FSO.Client.UI.Controls
                 m_SelectedPage = Math.Min(m_SelectedPage, m_TotalPages-1);
                 m_SelectedPage = Math.Max(0, m_SelectedPage);
 
-
-                myTextButtons[m_SelectedPage].CaptionStyle = SelectedTextStyle;
-                m_SelectedButton = myTextButtons[m_SelectedPage];
+                // more pages can exist than number buttons fit in the bar; don't index past the shown set
+                var shown = Math.Min(m_SelectedPage, myTextButtons.Length - 1);
+                if (shown < 0) { m_SelectedButton = null; return; }
+                myTextButtons[shown].CaptionStyle = SelectedTextStyle;
+                m_SelectedButton = myTextButtons[shown];
             }
         }
 

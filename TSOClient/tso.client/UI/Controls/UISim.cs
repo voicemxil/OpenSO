@@ -241,6 +241,8 @@ namespace FSO.Client.UI.Controls
             {
                 _Size = value;
                 _SimScale = new Vector2(1, 1) * (value.Y / 200f);
+                // the interactive hit region must track the control (the CAS viewport resizes with the window)
+                if (_MouseEvt != null) _MouseEvt.Region = new Rectangle(0, 0, (int)value.X, (int)value.Y);
             }
         }
 
