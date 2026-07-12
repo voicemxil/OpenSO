@@ -5,6 +5,7 @@ using FSO.Client.UI.Framework;
 using FSO.Client.UI.Controls;
 using FSO.Common.Utils;
 using FSO.Common.Rendering.Framework.IO;
+using FSO.Common.Rendering.Framework.Model;
 
 namespace FSO.Client.UI.Screens
 {
@@ -26,6 +27,11 @@ namespace FSO.Client.UI.Screens
         private const int HeadCellW = 72, HeadCellH = 72;  // head thumbs are native ~square (33x33)
         private const int BodyCellW = 72, BodyCellH = 139; // body thumbs are native tall (33x70)
         private const int CellOff = 6, CellR = 12;         // image inset + corner radius
+        // Both grids share cell width + margins, and the browser width exactly fits GridCols columns,
+        // so the grids centre in the panel and everything else aligns to their first-cell left edge.
+        private const int GridMargin = 8, GridCols = 6;
+        private const float GridFitW = GridCols * (HeadCellW + GridMargin) + GridMargin;
+        private const int ArrowSize = 36;                  // page prev/next chevron buttons
         private static readonly Color Accent = new Color(46, 196, 150); // teal (dark-studio accent)
 
         private int _Tab;
@@ -33,6 +39,9 @@ namespace FSO.Client.UI.Screens
         private readonly List<UILabel> _TabLabel = new List<UILabel>();
         private Texture2D _TabActive, _TabInactive;
         private TextStyle _LightText, _DarkText;
+        private UIButton _PgLeft, _PgRight;
+        private UIImage _NameBox, _BioBox;
+        private UILabel _NameLabel, _BioLabel;
 
         public CASScreenV2() : base()
         {
@@ -62,7 +71,8 @@ namespace FSO.Client.UI.Screens
             _Backdrop = new UIImage(BrandBackdrop(gd, 512, 320));
             this.AddAt(1, _Backdrop); // behind the sim (sim shifts to index 2)
 
-            _Panel = new UIImage(RoundedRect(gd, (int)PW, (int)PH, 18, new Color(19, 23, 30, 222)));
+            _Panel = new UIImage(RoundedRect(gd, (int)PW, (int)PH, 18, new Color(19, 23, 30, 222),
+                new Color(104, 118, 140, 120), 2));
             this.AddAt(3, _Panel);
 
             // keep AmbientLight neutral so it doesn't rescale/clip UISim's studio directional result
@@ -93,18 +103,58 @@ namespace FSO.Client.UI.Screens
 
             // Head and body thumbs have different native aspects (~1:1 vs ~33:70), so each grid gets its
             // own cell shape; the image area (ThumbSize - 2*offset) must match to avoid stretching.
-            m_HeadSkinBrowser.Size            = new Vector2(PW - 44, PH - 230);
+            m_HeadSkinBrowser.Size            = new Vector2(GridFitW, PH - 230);
             m_HeadSkinBrowser.ThumbSize       = new Vector2(HeadCellW, HeadCellH);
-            m_HeadSkinBrowser.ThumbMargins    = new Vector2(8, 8);
+            m_HeadSkinBrowser.ThumbMargins    = new Vector2(GridMargin, GridMargin);
             m_HeadSkinBrowser.ThumbImageOffsets = new Vector2(CellOff, CellOff);
             m_HeadSkinBrowser.ThumbButtonImage = GlassStrip(gd, HeadCellW, HeadCellH, CellR);
             m_HeadSkinBrowser.Relayout();
-            m_BodySkinBrowser.Size            = new Vector2(PW - 44, PH - 230);
+            m_BodySkinBrowser.Size            = new Vector2(GridFitW, PH - 230);
             m_BodySkinBrowser.ThumbSize       = new Vector2(BodyCellW, BodyCellH);
-            m_BodySkinBrowser.ThumbMargins    = new Vector2(6, 6);
+            m_BodySkinBrowser.ThumbMargins    = new Vector2(GridMargin, GridMargin);
             m_BodySkinBrowser.ThumbImageOffsets = new Vector2(CellOff, CellOff);
             m_BodySkinBrowser.ThumbButtonImage = GlassStrip(gd, BodyCellW, BodyCellH, CellR);
             m_BodySkinBrowser.Relayout();
+
+            // page chevrons flanking the numeric pagination bar; they act on the visible browser and
+            // their enabled state tracks it in Update
+            var leftTex = ArrowIcon(gd, ArrowSize, ArrowSize, true);
+            var rightTex = ArrowIcon(gd, ArrowSize, ArrowSize, false);
+            _PgLeft = new UIButton(leftTex);
+            ReskinButton(_PgLeft, leftTex, ArrowSize);
+            _PgLeft.OnButtonClick += b => ActiveBrowser.SelectedPage--;
+            this.Add(_PgLeft);
+            _PgRight = new UIButton(rightTex);
+            ReskinButton(_PgRight, rightTex, ArrowSize);
+            _PgRight.OnButtonClick += b => ActiveBrowser.SelectedPage++;
+            this.Add(_PgRight);
+
+            // Bio tab: field labels + darkened bordered boxes behind the uis-scripted text edits
+            // (textures baked at the edits' size here; positioned in LayoutGeometry), and the edit
+            // text restyled light — the TSO default yellow is unreadable on the dark panel
+            var editText = TextStyle.Create(new Color(224, 230, 238), 12);
+            var boxFill = new Color(11, 14, 20, 235);
+            var boxBorder = new Color(74, 86, 104, 150);
+            if (NameTextEdit != null)
+            {
+                NameTextEdit.TextStyle = editText;
+                _NameBox = new UIImage(RoundedRect(gd, (int)NameTextEdit.Size.X + 20,
+                    (int)NameTextEdit.Size.Y + 14, 10, boxFill, boxBorder, 2));
+                this.AddAt(4, _NameBox); // above the panel, below the legacy text controls
+                _NameLabel = new UILabel { Caption = "Name:", CaptionStyle = _LightText };
+                this.Add(_NameLabel);
+            }
+            if (DescriptionTextEdit != null)
+            {
+                DescriptionTextEdit.TextStyle = editText;
+                int colBottom = 260 + (int)(DescriptionScrollDownButton?.Size.Y ?? 24); // scroll column extent
+                int boxH = (int)System.Math.Max(DescriptionTextEdit.Size.Y, colBottom) + 14;
+                _BioBox = new UIImage(RoundedRect(gd, (int)DescriptionTextEdit.Size.X + 58, boxH, 10,
+                    boxFill, boxBorder, 2));
+                this.AddAt(4, _BioBox);
+                _BioLabel = new UILabel { Caption = "Bio:", CaptionStyle = _LightText };
+                this.Add(_BioLabel);
+            }
 
             LayoutGeometry();
             SetTab(0);
@@ -142,30 +192,49 @@ namespace FSO.Client.UI.Screens
             }
             else SimBox.SetPerspectiveSize(regionW, gh);
 
-            // tab row, centred within the panel width
-            float tabRowW = 2 * 162 + 150;
-            float tabX0 = _PX + (PW - tabRowW) / 2f;
+            // one shared left edge for all panel content: the grids centre in the panel, and the tab
+            // row, buttons and bio fields align to the grids' first-cell left edge
+            float gridX = _PX + (PW - GridFitW) / 2f;
+            float contentX = gridX + GridMargin;
+            float contentW = GridFitW - 2 * GridMargin;
+
+            float tabY = _PY + 16;
             for (int i = 0; i < _TabBg.Count; i++)
             {
-                float tx = tabX0 + i * 162, ty = _PY + 16;
-                _TabBg[i].Position = new Vector2(tx, ty);
-                _TabLabel[i].Position = new Vector2(tx + 56, ty + 11);
+                float tx = contentX + i * 162;
+                _TabBg[i].Position = new Vector2(tx, tabY);
+                _TabLabel[i].Position = new Vector2(tx + 56, tabY + 11);
             }
 
-            Place(FemaleButton,        _PX + 26,  _PY + 78);
-            Place(MaleButton,          _PX + 74,  _PY + 78);
-            Place(SkinLightButton,     _PX + 160, _PY + 78);
-            Place(SkinMediumButton,    _PX + 208, _PY + 78);
-            Place(SkinDarkButton,      _PX + 256, _PY + 78);
+            Place(FemaleButton,        contentX,       _PY + 78);
+            Place(MaleButton,          contentX + 48,  _PY + 78);
+            Place(SkinLightButton,     contentX + 134, _PY + 78);
+            Place(SkinMediumButton,    contentX + 182, _PY + 78);
+            Place(SkinDarkButton,      contentX + 230, _PY + 78);
 
-            Place(m_HeadSkinBrowser,   _PX + 22,  _PY + 150);
-            Place(m_BodySkinBrowser,   _PX + 22,  _PY + 150);
+            Place(m_HeadSkinBrowser,   gridX, _PY + 150);
+            Place(m_BodySkinBrowser,   gridX, _PY + 150);
 
-            Place(NameTextEdit,        _PX + 40,  _PY + 90);
-            Place(DescriptionTextEdit, _PX + 40,  _PY + 170);
-            Place(DescriptionSlider,   _PX + 480, _PY + 170);
-            Place(DescriptionScrollUpButton,   _PX + 478, _PY + 164);
-            Place(DescriptionScrollDownButton, _PX + 478, _PY + 430);
+            // page chevrons vertically centred on the pagination strip (bottom 45px of the browser)
+            float pgY = _PY + 150 + (PH - 230) - 45 + (45 - ArrowSize) / 2f;
+            Place(_PgLeft,  contentX, pgY);
+            Place(_PgRight, contentX + contentW - ArrowSize, pgY);
+
+            // Bio tab: labelled fields over darkened boxes, on the same content edge
+            float nameY = _PY + 116;
+            Place(_NameLabel,   contentX + 4, nameY - 26);
+            Place(_NameBox,     contentX,     nameY - 7);
+            Place(NameTextEdit, contentX + 10, nameY);
+
+            float descY = _PY + 196;
+            float descW = (DescriptionTextEdit != null) ? DescriptionTextEdit.Size.X : 0;
+            float sliderX = contentX + 10 + descW + 14;
+            Place(_BioLabel,           contentX + 4, descY - 26);
+            Place(_BioBox,             contentX,     descY - 7);
+            Place(DescriptionTextEdit, contentX + 10, descY);
+            Place(DescriptionSlider,   sliderX,     descY);
+            Place(DescriptionScrollUpButton,   sliderX - 2, descY - 6);
+            Place(DescriptionScrollDownButton, sliderX - 2, descY + 260);
 
             Place(AcceptButton,        _PX + 330, _PY + 600);
             Place(CancelButton,        _PX + 170, _PY + 600);
@@ -185,14 +254,14 @@ namespace FSO.Client.UI.Screens
             e.Position = new Vector2(x, y);
         }
 
-        // Swap a reused UIButton onto a generated 4-state glass icon. Frame width == IconSize so the
-        // 9-slice is a no-op; ImageStates re-syncs the click region.
-        private void ReskinButton(UIButton btn, Texture2D tex)
+        // Swap a UIButton onto a generated 4-state glass icon. Frame width == w so the 9-slice is a
+        // no-op; ImageStates re-syncs the click region.
+        private void ReskinButton(UIButton btn, Texture2D tex, int w = IconSize)
         {
             if (btn == null) return;
             btn.Texture = tex;
             btn.ImageStates = 4;
-            btn.Width = IconSize;
+            btn.Width = w;
         }
 
         private void SetTab(int tab)
@@ -207,18 +276,36 @@ namespace FSO.Client.UI.Screens
             bool head = tab == 0, body = tab == 1, bio = tab == 2;
             if (m_HeadSkinBrowser != null) m_HeadSkinBrowser.Visible = head;
             if (m_BodySkinBrowser != null) m_BodySkinBrowser.Visible = body;
-            foreach (var b in new[] { FemaleButton, MaleButton, SkinLightButton, SkinMediumButton, SkinDarkButton })
+            foreach (var b in new[] { FemaleButton, MaleButton, SkinLightButton, SkinMediumButton, SkinDarkButton,
+                                      _PgLeft, _PgRight })
                 if (b != null) b.Visible = !bio;
             foreach (UIElement b in new UIElement[] { NameTextEdit, DescriptionTextEdit, DescriptionSlider,
-                                                      DescriptionScrollUpButton, DescriptionScrollDownButton })
+                                                      DescriptionScrollUpButton, DescriptionScrollDownButton,
+                                                      _NameLabel, _NameBox, _BioLabel, _BioBox })
                 if (b != null) b.Visible = bio;
 
             if (head) SimBox.FocusHead();
             else if (body) SimBox.FocusBody();
         }
 
-        // Solid rounded-rectangle texture (transparent outside the radius). Color carries its own alpha.
-        private static Texture2D RoundedRect(GraphicsDevice gd, int w, int h, int r, Color color)
+        private UICollectionViewer ActiveBrowser => (_Tab == 1) ? m_BodySkinBrowser : m_HeadSkinBrowser;
+
+        // Keep the page chevrons' enabled state in sync with the visible browser. Page and data
+        // changes funnel through too many paths to hook individually; the Disabled setter no-ops
+        // on unchanged values, so polling here is free.
+        public override void Update(UpdateState state)
+        {
+            base.Update(state);
+            var b = ActiveBrowser;
+            int pages = (b?.DataProvider == null) ? 0 : b.NumPages;
+            if (_PgLeft != null) _PgLeft.Disabled = b == null || b.SelectedPage <= 0;
+            if (_PgRight != null) _PgRight.Disabled = b == null || b.SelectedPage >= pages - 1;
+        }
+
+        // Solid rounded-rectangle texture (transparent outside the radius, soft-AA edge), with an
+        // optional border ring of borderW just inside the boundary. Colors carry their own alpha.
+        private static Texture2D RoundedRect(GraphicsDevice gd, int w, int h, int r, Color color,
+                                             Color? border = null, int borderW = 0)
         {
             var tex = new Texture2D(gd, w, h);
             var data = new Color[w * h];
@@ -228,7 +315,11 @@ namespace FSO.Client.UI.Screens
                     int cx = (x < r) ? r : (x >= w - r ? w - r - 1 : x);
                     int cy = (y < r) ? r : (y >= h - r ? h - r - 1 : y);
                     float dx = x - cx, dy = y - cy;
-                    data[y * w + x] = (dx * dx + dy * dy > (float)r * r) ? Color.Transparent : color;
+                    float edge = r - (float)System.Math.Sqrt(dx * dx + dy * dy); // distance inside the boundary
+                    float cov = MathHelper.Clamp(edge + 0.5f, 0f, 1f);
+                    if (cov <= 0f) { data[y * w + x] = Color.Transparent; continue; }
+                    var col = (border != null && edge <= borderW) ? border.Value : color;
+                    data[y * w + x] = new Color(col.R, col.G, col.B, (int)(col.A * cov));
                 }
             tex.SetData(data);
             return tex;
@@ -388,8 +479,8 @@ namespace FSO.Client.UI.Screens
             var accents = new[]
             {
                 new Color(206, 216, 228, 235),
-                new Color(8, 26, 22, 255),     // dark glyph reads on the teal highlight
-                new Color(8, 26, 22, 255),
+                new Color(140, 236, 210, 255), // fills stay dark (shared with grid cells), so the
+                new Color(110, 210, 186, 255), // selected/down glyph goes bright mint, not dark
                 new Color(120, 130, 144, 160),
             };
             var tex = new Texture2D(gd, w * 4, h);
@@ -427,6 +518,19 @@ namespace FSO.Client.UI.Screens
                     float my = (sy + ey) / 2f;
                     Seg(data, stride, cx - w * 0.09f, my, cx + w * 0.09f, my, 1.6f, accent);
                 }
+            });
+        }
+
+        // Page-arrow chevron centred in a frame.
+        private Texture2D ArrowIcon(GraphicsDevice gd, int w, int h, bool left)
+        {
+            return GlassStrip(gd, w, h, 10, (data, stride, ox, oy, accent) =>
+            {
+                float cx = ox + w * 0.5f, cy = oy + h * 0.5f, ext = w * 0.16f;
+                float px = cx + (left ? -ext : ext);        // chevron point
+                float bx = cx + (left ? ext : -ext) * 0.5f; // arm base
+                Seg(data, stride, bx, cy - ext * 1.5f, px, cy, 1.8f, accent);
+                Seg(data, stride, bx, cy + ext * 1.5f, px, cy, 1.8f, accent);
             });
         }
 
