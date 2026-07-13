@@ -54,7 +54,7 @@ namespace FSO.Server.Api.Core.Controllers
 
         private string GetOauthLoginUrl()
         {
-            var rngCsp = new RNGCryptoServiceProvider();
+            var rngCsp = RandomNumberGenerator.Create();
             string csrf = "";
             var random = new byte[24];
             rngCsp.GetBytes(random);

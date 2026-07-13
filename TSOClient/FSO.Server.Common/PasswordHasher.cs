@@ -62,8 +62,9 @@ namespace FSO.Server.Common
 
         private byte[] Hash(byte[] salt_input, string password)
         {
-            var hasher = new Rfc2898DeriveBytes(System.Text.Encoding.UTF8.GetBytes(password), salt_input, 1000);
-            var hash = hasher.GetBytes(64);
+            // SHA1 was the old Rfc2898DeriveBytes ctor's implicit default — it must stay SHA1 or
+            // every stored password hash stops verifying.
+            var hash = Rfc2898DeriveBytes.Pbkdf2(System.Text.Encoding.UTF8.GetBytes(password), salt_input, 1000, HashAlgorithmName.SHA1, 64);
 
             //Encode the salt + hash together
             var result = new byte[1 + 16 + hash.Length];
@@ -86,12 +87,7 @@ namespace FSO.Server.Common
 
         private byte[] GetStrongRandomBytes(int numBytes)
         {
-            var random_bytes = new byte[numBytes];
-            using (RNGCryptoServiceProvider rngCsp = new RNGCryptoServiceProvider())
-            {
-                rngCsp.GetBytes(random_bytes);
-            }
-            return random_bytes;
+            return RandomNumberGenerator.GetBytes(numBytes);
         }
     }
 

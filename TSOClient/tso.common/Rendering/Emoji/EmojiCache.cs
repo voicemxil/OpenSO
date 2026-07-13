@@ -1,12 +1,13 @@
 ﻿using FSO.Common.Utils;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using System.Net;
+using System.Net.Http;
 
 namespace FSO.Common.Rendering.Emoji
 {
     public class EmojiCache
     {
+        private static readonly HttpClient Http = new HttpClient();
         public string Source = "https://cdnjs.cloudflare.com/ajax/libs/twemoji/14.0.2/72x72/";
         public int DefaultRes = 24;
         public int Width = 32;
@@ -49,10 +50,10 @@ namespace FSO.Common.Rendering.Emoji
                 index = NextIndex++;
                 ExpandIfNeeded();
                 lock (IncompleteSpaces) IncompleteSpaces.Add(index);
-                var client = new WebClient();
-                client.DownloadDataCompleted += (object sender, DownloadDataCompletedEventArgs e) =>
+                var url = (emojiID[0] == '!') ? (emojiID.Substring(1)) : (Source + emojiID + ".png");
+                Http.GetByteArrayAsync(url).ContinueWith(t =>
                 {
-                    if (e.Cancelled || e.Error != null || e.Result == null)
+                    if (t.IsFaulted || t.IsCanceled || t.Result == null)
                     {
                         lock (ErrorSpaces) ErrorSpaces.Add(index);
                     }
@@ -62,7 +63,7 @@ namespace FSO.Common.Rendering.Emoji
                         {
                             try
                             {
-                                using (var mem = new MemoryStream(e.Result))
+                                using (var mem = new MemoryStream(t.Result))
                                 {
                                     var tex = Texture2D.FromStream(GD, mem);
 
@@ -87,8 +88,7 @@ namespace FSO.Common.Rendering.Emoji
                         });
                     }
                     lock (IncompleteSpaces) IncompleteSpaces.Remove(index);
-                };
-                client.DownloadDataAsync(new Uri((emojiID[0] == '!') ? (emojiID.Substring(1)) : (Source + emojiID + ".png")));
+                });
                 Emojis.Add(emojiID);
                 EmojiToIndex[emojiID] = index;
                 return RectForIndex(index);

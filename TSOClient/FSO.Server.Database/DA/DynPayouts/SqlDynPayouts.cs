@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using FSO.Server.Database.DA.Tuning;
 using FSO.Server.Database.DA.Utils;
-using System.Data.SqlClient;
+using System.Data.Common;
 
 namespace FSO.Server.Database.DA.DynPayouts
 {
@@ -32,7 +32,7 @@ namespace FSO.Server.Database.DA.DynPayouts
                     "INSERT INTO fso_dyn_payouts (day, skilltype, multiplier, flags) VALUES (@day, @skilltype, @multiplier, @flags) ON DUPLICATE KEY UPDATE multiplier = @multiplier",
                     "`day`,`skilltype`"), dynPayout, 100);
             }
-            catch (SqlException)
+            catch (DbException)
             {
                 return false;
             }
@@ -51,7 +51,7 @@ namespace FSO.Server.Database.DA.DynPayouts
             {
                 var deleted = Context.Connection.Execute("DELETE FROM fso_tuning WHERE owner_type = 'DYNAMIC' AND owner_id = 1");
                 Context.Connection.ExecuteBufferedInsert("INSERT INTO fso_tuning (tuning_type, tuning_table, tuning_index, value, owner_type, owner_id) VALUES (@tuning_type, @tuning_table, @tuning_index, @value, @owner_type, @owner_id)", dynTuning, 100);
-            } catch (SqlException)
+            } catch (DbException)
             {
                 return false;
             }

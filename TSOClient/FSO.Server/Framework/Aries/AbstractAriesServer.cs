@@ -100,7 +100,8 @@ namespace FSO.Server.Framework.Aries
 
                 if (Config.Certificate != null)
                 {
-                    var cert = new X509Certificate2(Config.Certificate);
+                    // The game TLS cert is a PKCS#12 bundle (certs/game.pfx, no password) — see docker/DEPLOY.md.
+                    var cert = X509CertificateLoader.LoadPkcs12FromFile(Config.Certificate, null);
                     if (Debugger != null)
                     {
                         Debugger.AddSocketServer(this);

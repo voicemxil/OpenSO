@@ -404,8 +404,7 @@ namespace FSO.IDE.ResourceBrowser
                 retrievedData = Clipboard.GetDataObject() as DataObject;
                 if (retrievedData == null || !retrievedData.GetDataPresent("rawbinary"))
                     return;
-                MemoryStream memStream = retrievedData.GetData("rawbinary") as MemoryStream;
-                if (memStream == null)
+                if (!retrievedData.TryGetData<MemoryStream>("rawbinary", out var memStream) || memStream == null)
                     return;
 
                 memStream.Seek(0, SeekOrigin.Begin);

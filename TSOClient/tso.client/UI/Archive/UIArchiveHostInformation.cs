@@ -331,12 +331,11 @@ namespace FSO.Client.UI.Archive
         {
             return Task.Run(() =>
             {
-                WebClient webClient = new WebClient();
-
                 string result;
                 try
                 {
-                    result = webClient.DownloadString("https://api.ipify.org");
+                    using (var webClient = new System.Net.Http.HttpClient())
+                        result = webClient.GetStringAsync("https://api.ipify.org").GetAwaiter().GetResult();
                 }
                 catch
                 {

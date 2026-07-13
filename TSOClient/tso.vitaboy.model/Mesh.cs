@@ -134,7 +134,7 @@ namespace FSO.Vitaboy
             if (GPUMode){
                 gd.Indices = GPUIndexBuffer;
                 gd.SetVertexBuffer(GPUVertexBuffer);
-                gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, VertexBuffer.Length, 0, NumPrimitives);
+                gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, NumPrimitives);
             }else{
                 //legacy path, shouldn't get here
                 gd.DrawUserIndexedPrimitives(PrimitiveType.TriangleList, VertexBuffer, 0, VertexBuffer.Length, IndexBuffer, 0, NumPrimitives);

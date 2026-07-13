@@ -94,8 +94,8 @@ namespace FSO.Server.Watchdog
             if (url != null)
             {
                 string contents;
-                using (var wc = new System.Net.WebClient())
-                    contents = wc.DownloadString(url);
+                using (var wc = new System.Net.Http.HttpClient())
+                    contents = wc.GetStringAsync(url).GetAwaiter().GetResult();
                 var doc = new XmlDocument();
                 doc.LoadXml(contents);
                 var builds = doc.GetElementsByTagName("build");
@@ -114,39 +114,35 @@ namespace FSO.Server.Watchdog
         {
             foreach (var url in urls)
             {
-                var wait = new AutoResetEvent(false);
                 if (Directory.Exists("selfUpdate/")) Directory.Delete("selfUpdate/", true);
                 Directory.CreateDirectory("selfUpdate/");
                 Console.WriteLine("Downloading artifacts...");
-                var client = new WebClient();
-                client.DownloadFileCompleted += (sender, evt) =>
-                {
-                    var file = "selfUpdate/artifact.zip";
-                    Console.WriteLine("Extracting " + file + "...");
-                    var archive = ZipFile.OpenRead(file);
-                    var entries = archive.Entries;
-                    foreach (var entry in entries)
-                    {
-                        var targPath = Path.Combine("./", entry.FullName);
-                        if (File.Exists(targPath) && IgnoreFiles.Contains(entry.FullName)) continue;
-                        Directory.CreateDirectory(Path.GetDirectoryName(targPath));
-                        try
-                        {
-                            entry.ExtractToFile(targPath, true);
-                        }
-                        catch (Exception)
-                        {
-                            Console.WriteLine("Could not replace " + targPath + "!");
-                        }
-                    }
-                    archive.Dispose();
-                    Directory.Delete("selfUpdate/", true);
-                    Console.WriteLine("Update Complete!");
-                    wait.Set();
-                };
+                var file = "selfUpdate/artifact.zip";
+                using (var client = new System.Net.Http.HttpClient())
+                using (var src = client.GetStreamAsync(url).GetAwaiter().GetResult())
+                using (var dest = File.Create(file))
+                    src.CopyTo(dest);
 
-                client.DownloadFileAsync(new Uri(url), "selfUpdate/artifact.zip");
-                wait.WaitOne();
+                Console.WriteLine("Extracting " + file + "...");
+                var archive = ZipFile.OpenRead(file);
+                var entries = archive.Entries;
+                foreach (var entry in entries)
+                {
+                    var targPath = Path.Combine("./", entry.FullName);
+                    if (File.Exists(targPath) && IgnoreFiles.Contains(entry.FullName)) continue;
+                    Directory.CreateDirectory(Path.GetDirectoryName(targPath));
+                    try
+                    {
+                        entry.ExtractToFile(targPath, true);
+                    }
+                    catch (Exception)
+                    {
+                        Console.WriteLine("Could not replace " + targPath + "!");
+                    }
+                }
+                archive.Dispose();
+                Directory.Delete("selfUpdate/", true);
+                Console.WriteLine("Update Complete!");
             }
         }
 

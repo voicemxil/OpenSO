@@ -397,8 +397,8 @@ namespace FSO.IDE
                     DataObject obj = (DataObject)Clipboard.GetDataObject();
                     if (obj == null || !obj.GetDataPresent("rawbinary"))
                         return;
-                    placeID = obj.GetData("primid") as ushort?;
-                    var stream = obj.GetData("rawbinary") as MemoryStream;
+                    placeID = obj.TryGetData<ushort>("primid", out var primid) ? primid : null;
+                    if (!obj.TryGetData<MemoryStream>("rawbinary", out var stream)) return;
                     operand = new byte[stream.Length];
                     stream.Seek(0, SeekOrigin.Begin);
                     stream.Read(operand, 0, operand.Length);

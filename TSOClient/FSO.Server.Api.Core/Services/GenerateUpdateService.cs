@@ -86,7 +86,7 @@ namespace FSO.Server.Api.Core.Services
             return directories[0];
         }
 
-        private async Task CopyOrDownload(WebClient client, string srcPath, string destPath)
+        private async Task CopyOrDownload(System.Net.Http.HttpClient client, string srcPath, string destPath)
         {
             if (srcPath.StartsWith("file:///"))
             {
@@ -95,7 +95,9 @@ namespace FSO.Server.Api.Core.Services
             }
             else
             {
-                await client.DownloadFileTaskAsync(new Uri(srcPath), destPath);
+                using (var src = await client.GetStreamAsync(srcPath))
+                using (var dest = File.Create(destPath))
+                    await src.CopyToAsync(dest);
             }
         }
 
@@ -135,7 +137,7 @@ namespace FSO.Server.Api.Core.Services
 
                     versionName = versionName.Replace('/', '-');
 
-                    var client = new WebClient();
+                    var client = new System.Net.Http.HttpClient();
                     //fetch artifacts
                     //http://servo.freeso.org/guestAuth/repository/download/FreeSO_TsoClient/.lastSuccessful/client-<>.zip
                     //http://servo.freeso.org/guestAuth/repository/download/FreeSO_TsoClient/.lastSuccessful/server-<>.zip

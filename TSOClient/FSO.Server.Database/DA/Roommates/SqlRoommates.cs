@@ -1,6 +1,6 @@
 ﻿using Dapper;
 using System.Collections.Generic;
-using System.Data.SqlClient;
+using System.Data.Common;
 using System.Linq;
 
 namespace FSO.Server.Database.DA.Roommates
@@ -17,7 +17,7 @@ namespace FSO.Server.Database.DA.Roommates
             {
                 return (uint)Context.Connection.Execute("INSERT INTO fso_roommates (avatar_id, lot_id, permissions_level, is_pending) " +
                                 " VALUES (@avatar_id, @lot_id, @permissions_level, @is_pending);", roomie) > 0;
-            } catch (SqlException)
+            } catch (DbException)
             {
                 return false;
             }
@@ -31,7 +31,7 @@ namespace FSO.Server.Database.DA.Roommates
                                 "VALUES (@avatar_id, @lot_id, @permissions_level, @is_pending) " +
                                 "ON DUPLICATE KEY UPDATE permissions_level = @permissions_level, is_pending = 0", "`avatar_id`,`lot_id`"), roomie) > 0;
             }
-            catch (SqlException)
+            catch (DbException)
             {
                 return false;
             }

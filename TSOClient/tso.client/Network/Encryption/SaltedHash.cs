@@ -34,7 +34,7 @@ namespace TSOClient.Network.Encryption
         /// </summary>
 
         public SaltedHash()
-            : this(new SHA256Managed(), 4)
+            : this(SHA256.Create(), 4)
         {
         }
 
@@ -96,9 +96,8 @@ namespace TSOClient.Network.Encryption
             // Allocate memory for the salt
             Salt = new byte[SalthLength];
 
-            // Strong runtime pseudo-random number generator, on Windows uses CryptAPI
-            // on Unix /dev/urandom
-            RNGCryptoServiceProvider random = new RNGCryptoServiceProvider();
+            // Strong runtime pseudo-random number generator
+            var random = RandomNumberGenerator.Create();
 
             // Create a random salt
             random.GetNonZeroBytes(Salt);

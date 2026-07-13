@@ -235,7 +235,7 @@ namespace FSO.Patcher
         {
             Console.WriteLine("Downloading archives:");
             //download the file then set it as our path
-            var client = new WebClient();
+            var client = new System.Net.Http.HttpClient();
             Directory.CreateDirectory("PatchFiles/");
 
             int i = 0;
@@ -243,7 +243,9 @@ namespace FSO.Patcher
                 try
                 {
                     Console.WriteLine($"Downloading {file}...");
-                    await client.DownloadFileTaskAsync(new Uri(file), $"PatchFiles/extra{i}.zip");
+                    using (var src = await client.GetStreamAsync(file))
+                    using (var dest = File.Create($"PatchFiles/extra{i}.zip"))
+                        await src.CopyToAsync(dest);
                     Path.Add($"PatchFiles/extra{i}.zip");
                 }
                 catch (Exception e)

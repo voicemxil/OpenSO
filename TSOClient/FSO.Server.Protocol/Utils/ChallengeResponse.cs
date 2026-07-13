@@ -9,7 +9,7 @@ namespace FSO.Server.Protocol.Utils
     {
         private static int _salt_byte_length = 320;
         private static int _nonce_byte_length = 32;
-        private static RNGCryptoServiceProvider _random_crypt_prov = new RNGCryptoServiceProvider();
+        private static RandomNumberGenerator _random_crypt_prov = RandomNumberGenerator.Create();
         private static Random _random_gen = new Random();
         private static int _min_iteration_count = 4000;
         private static int _max_iteration_count = 5000;
@@ -17,7 +17,7 @@ namespace FSO.Server.Protocol.Utils
 
         private static byte[] ComputeHMACHash(byte[] data, string secret)
         {
-            using (var _hmac_sha_1 = new HMACSHA1(data, true))
+            using (var _hmac_sha_1 = new HMACSHA1(data))
             {
                 byte[] _hash_bytes = _hmac_sha_1.ComputeHash(Encoding.UTF8.GetBytes(secret));
                 return _hash_bytes;
@@ -48,8 +48,8 @@ namespace FSO.Server.Protocol.Utils
 
         private static byte[] Hi(string password, byte[] salt, int iteration_count)
         {
-            Rfc2898DeriveBytes _pdb = new Rfc2898DeriveBytes(password, salt, iteration_count);
-            return _pdb.GetBytes(_sha_output_length);
+            // SHA1 matches the old ctor's implicit default — both ends of the challenge must agree.
+            return Rfc2898DeriveBytes.Pbkdf2(password, salt, iteration_count, HashAlgorithmName.SHA1, _sha_output_length);
         }
 
         private static int GetRandomInteger()

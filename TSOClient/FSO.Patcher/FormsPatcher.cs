@@ -292,26 +292,39 @@ namespace FSO.Patcher
             if (result == DialogResult.Yes)
             {
                 //download the file then set it as our path
-                var client = new WebClient();
                 Directory.CreateDirectory("PatchFiles/");
-                client.DownloadProgressChanged += (obj, evt) =>
+                Task.Run(async () =>
                 {
-                    Invoke(new Action(() =>
+                    using (var client = new System.Net.Http.HttpClient())
+                    using (var response = await client.GetAsync("https://github.com/voicemxil/OpenSO/releases/latest/download/OpenSO-client-win-x64.zip",
+                        System.Net.Http.HttpCompletionOption.ResponseHeadersRead))
                     {
-                        OverallProgress.Value = evt.ProgressPercentage;
-                        OverallNum.Text = "1/1";
-                        OverallStatus.Text = "Downloading patch.zip";
-                    }));
-                };
-
-                client.DownloadFileCompleted += (obj, evt) =>
-                {
+                        response.EnsureSuccessStatusCode();
+                        var totalBytes = response.Content.Headers.ContentLength ?? -1;
+                        using (var src = await response.Content.ReadAsStreamAsync())
+                        using (var dest = File.Create("PatchFiles/patch.zip"))
+                        {
+                            var buffer = new byte[81920];
+                            long received = 0;
+                            int read;
+                            while ((read = await src.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                            {
+                                dest.Write(buffer, 0, read);
+                                received += read;
+                                var percent = (totalBytes > 0) ? (int)(received * 100 / totalBytes) : 0;
+                                Invoke(new Action(() =>
+                                {
+                                    OverallProgress.Value = percent;
+                                    OverallNum.Text = "1/1";
+                                    OverallStatus.Text = "Downloading patch.zip";
+                                }));
+                            }
+                        }
+                    }
                     Path.Add("PatchFiles/patch.zip");
                     CleanPatch = true;
-                    Task.Run(() => AdvanceExtract());
-                };
-
-                client.DownloadFileAsync(new Uri("https://github.com/voicemxil/OpenSO/releases/latest/download/OpenSO-client-win-x64.zip"), "PatchFiles/patch.zip");
+                    await AdvanceExtract();
+                });
             }
             else
             {

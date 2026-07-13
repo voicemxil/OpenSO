@@ -1,13 +1,14 @@
-﻿using FSO.Common.Utils;
+using FSO.Common.Utils;
 using System;
 using System.IO;
-using System.Net;
+using System.Net.Http;
+using System.Threading.Tasks;
 
 namespace FSO.Client.UI.Panels
 {
     public class UIWebDownloaderDialog : UILoginProgress
     {
-        private WebClient DownloadClient;
+        private static readonly HttpClient DownloadClient = new HttpClient();
         private DownloadItem[] Items;
         private int CurrentItem;
         private DownloadItem ItemMeta;
@@ -21,21 +22,19 @@ namespace FSO.Client.UI.Panels
             ProgressCaption = "";
             Items = items;
 
-            DownloadClient = new WebClient();
-            DownloadClient.DownloadProgressChanged += DownloadClient_DownloadProgressChanged;
-            DownloadClient.DownloadFileCompleted += DownloadClient_DownloadFileCompleted;
             AdvanceDownloader();
         }
 
-        private void DownloadClient_DownloadProgressChanged(object sender, DownloadProgressChangedEventArgs e)
+        private void ReportProgress(long bytesReceived, long totalBytes)
         {
+            var percentage = (totalBytes > 0) ? (int)(bytesReceived * 100 / totalBytes) : 0;
             GameThread.NextUpdate(x =>
             {
-                Progress = (100 * (CurrentItem-1) + e.ProgressPercentage) / Items.Length;
+                Progress = (100 * (CurrentItem - 1) + percentage) / Items.Length;
                 ProgressCaption = GameFacade.Strings.GetString("f101", "2", new string[] {
                     ItemMeta.Name,
-                    (e.BytesReceived/1000000f).ToString("0.00"),
-                    (e.TotalBytesToReceive/1000000f).ToString("0.00")+"MB",
+                    (bytesReceived/1000000f).ToString("0.00"),
+                    (totalBytes/1000000f).ToString("0.00")+"MB",
                     CurrentItem.ToString(),
                     Items.Length.ToString()
                 });
@@ -53,18 +52,6 @@ namespace FSO.Client.UI.Panels
             }
         }
 
-        private void DownloadClient_DownloadFileCompleted(object sender, System.ComponentModel.AsyncCompletedEventArgs e)
-        {
-            if (e.Error != null || e.Cancelled)
-            {
-                DeleteFiles();
-
-                GameThread.NextUpdate(x => OnComplete?.Invoke(false));
-                return;
-            }
-            AdvanceDownloader();
-        }
-
         public void AdvanceDownloader()
         {
             if (CurrentItem >= Items.Length)
@@ -75,7 +62,36 @@ namespace FSO.Client.UI.Panels
             var item = Items[CurrentItem++];
             ItemMeta = item;
             Directory.CreateDirectory(Path.GetDirectoryName(item.DestPath));
-            DownloadClient.DownloadFileAsync(new Uri(item.Url), item.DestPath);
+            Task.Run(async () =>
+            {
+                try
+                {
+                    using (var response = await DownloadClient.GetAsync(item.Url, HttpCompletionOption.ResponseHeadersRead))
+                    {
+                        response.EnsureSuccessStatusCode();
+                        var totalBytes = response.Content.Headers.ContentLength ?? -1;
+                        using (var source = await response.Content.ReadAsStreamAsync())
+                        using (var dest = File.Create(item.DestPath))
+                        {
+                            var buffer = new byte[81920];
+                            long received = 0;
+                            int read;
+                            while ((read = await source.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                            {
+                                dest.Write(buffer, 0, read);
+                                received += read;
+                                ReportProgress(received, totalBytes);
+                            }
+                        }
+                    }
+                    AdvanceDownloader();
+                }
+                catch (Exception)
+                {
+                    DeleteFiles();
+                    GameThread.NextUpdate(x => OnComplete?.Invoke(false));
+                }
+            });
         }
     }
 
