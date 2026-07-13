@@ -64,7 +64,7 @@ CREATE INDEX fso_archive_recents_user_idx ON fso_archive_recents (user_id);
             }
             catch (Exception e)
             {
-                throw e;
+                throw;
             }
         }
 

@@ -177,7 +177,7 @@ namespace FSO.SimAntics.Engine
             }
             catch (Exception e)
             {
-                if (e is ThreadAbortException) throw e;
+                if (e is ThreadAbortException) throw;
                 //we need to catch these so that the parent can be restored.
             }
 
@@ -376,7 +376,7 @@ namespace FSO.SimAntics.Engine
                 }
 #endif
 
-                if (e is ThreadAbortException) throw e;
+                if (e is ThreadAbortException) throw;
                 if (Stack.Count == 0) return;
                 var context = Stack[Stack.Count - 1];
                 bool Delete = ((Entity is VMGameObject) && (DialogCooldown > 30 * 20 - 10));

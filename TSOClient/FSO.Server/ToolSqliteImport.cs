@@ -686,7 +686,7 @@ namespace FSO.Server
             }
             catch (Exception e)
             {
-                throw e;
+                throw;
             }
         }
 

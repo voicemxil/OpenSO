@@ -506,7 +506,7 @@ namespace Paloma
                     {
                         // clear all 
                         this.ClearAll();
-                        throw ex;
+                        throw;
                     }
                 }
                 else
@@ -579,7 +579,7 @@ namespace Paloma
                 catch (Exception ex)
                 {
                     this.ClearAll();
-                    throw ex;
+                    throw;
                 }
 
 
@@ -640,7 +640,7 @@ namespace Paloma
                             catch (Exception ex)
                             {
                                 this.ClearAll();
-                                throw ex;
+                                throw;
                             }
 
                             
@@ -781,7 +781,7 @@ namespace Paloma
                     catch (Exception ex)
                     {
                         this.ClearAll();
-                        throw ex;
+                        throw;
                     }
                 }
             }

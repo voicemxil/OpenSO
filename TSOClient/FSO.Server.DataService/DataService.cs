@@ -565,7 +565,7 @@ namespace FSO.Common.DataService
             catch (Exception ex)
             {
                 LOG.Error(ex);
-                throw ex;
+                throw;
             }
         }
 

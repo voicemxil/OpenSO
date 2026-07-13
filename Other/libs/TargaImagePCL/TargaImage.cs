@@ -453,7 +453,7 @@ namespace TargaImagePCL
                 {
                     // clear all 
                     this.ClearAll();
-                    throw ex;
+                    throw;
                 }
             }
             else
@@ -526,7 +526,7 @@ namespace TargaImagePCL
                 catch (Exception ex)
                 {
                     this.ClearAll();
-                    throw ex;
+                    throw;
                 }
 
 
@@ -587,7 +587,7 @@ namespace TargaImagePCL
                             catch (Exception ex)
                             {
                                 this.ClearAll();
-                                throw ex;
+                                throw;
                             }
 
 
@@ -728,7 +728,7 @@ namespace TargaImagePCL
                     catch (Exception ex)
                     {
                         this.ClearAll();
-                        throw ex;
+                        throw;
                     }
                 }
             }

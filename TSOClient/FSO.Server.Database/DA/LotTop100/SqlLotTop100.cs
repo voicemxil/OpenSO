@@ -82,7 +82,7 @@ namespace FSO.Server.Database.DA.LotTop100
             catch (Exception e)
             {
                 transaction.Rollback();
-                throw e;
+                throw;
             }
         }
 
