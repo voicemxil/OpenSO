@@ -1,20 +1,24 @@
-﻿using Mina.Core.Service;
 using System;
-using Mina.Core.Session;
-using System.Net;
 using System.Globalization;
-using Mina.Transport.Socket;
-using Mina.Core.Future;
-using Mina.Filter.Codec;
+using System.Net;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
 using FSO.SimAntics.NetPlay.Model;
 using FSO.Common.Utils;
 
 namespace FSO.Client.Network.Sandbox
 {
-    public class FSOSandboxClient : IoHandler
+    /// <summary>
+    /// Client end of a sandbox-mode connection. Matches the old Mina connector's observable
+    /// behavior: OnConnectComplete fires (on the game thread) only when the connection succeeds;
+    /// a failed or timed-out connect fires nothing.
+    /// </summary>
+    public class FSOSandboxClient
     {
-        private IoConnector Connector;
-        private IoSession Session;
+        private const int ConnectTimeoutMs = 10000;
+
+        private SandboxSession Session;
 
         public event Action<VMNetMessage> OnMessage;
         public event Action OnConnectComplete;
@@ -26,46 +30,47 @@ namespace FSO.Client.Network.Sandbox
 
         public void Disconnect()
         {
-            if (Session != null)
-            {
-                Session.Close(false);
-            }
+            Session?.Close(false);
         }
 
         public void Connect(IPEndPoint target)
         {
-            var socketConnector = new AsyncSocketConnector();
-            socketConnector.SessionConfig.NoDelay = true;
-            Connector = socketConnector;
-            Connector.ConnectTimeoutInMillis = 10000;
-
-            Connector.Handler = this;
-            Connector.FilterChain.AddLast("protocol", new ProtocolCodecFilter(new FSOSandboxProtocol()));
-            Connector.Connect(target, new Action<IoSession, IConnectFuture>(OnConnect));
-        }
-
-        private void OnConnect(IoSession session, IConnectFuture future)
-        {
-            this.Session = session;
-            GameThread.NextUpdate(x =>
+            Task.Run(async () =>
             {
-                OnConnectComplete();
+                try
+                {
+                    var tcp = new TcpClient(target.AddressFamily);
+                    tcp.NoDelay = true;
+                    using (var timeout = new CancellationTokenSource(ConnectTimeoutMs))
+                    {
+                        await tcp.ConnectAsync(target.Address, target.Port, timeout.Token);
+                    }
+                    var session = new SandboxSession(tcp, (s, msg) => OnMessage?.Invoke(msg), s => { });
+                    Session = session;
+                    session.Start();
+                    GameThread.NextUpdate(x =>
+                    {
+                        OnConnectComplete();
+                    });
+                }
+                catch
+                {
+                    // failed connect: no event, as before
+                }
             });
         }
 
         public void Write(params object[] packets)
         {
-            if (this.Session != null)
-            {
-                this.Session.Write(packets);
-            }
+            Session?.Write(packets);
         }
 
         public bool IsConnected
         {
             get
             {
-                return Session != null && Session.Connected;
+                var session = Session;
+                return session != null && session.Connected;
             }
         }
 
@@ -90,43 +95,6 @@ namespace FSO.Client.Network.Sandbox
                 throw new FormatException("Invalid port");
             }
             return new IPEndPoint(ip, port);
-        }
-
-        public void ExceptionCaught(IoSession session, Exception cause)
-        {
-        }
-
-        public void InputClosed(IoSession session)
-        {
-        }
-
-        public void MessageReceived(IoSession session, object message)
-        {
-            if (message is VMNetMessage)
-            {
-                var nmsg = (VMNetMessage)message;
-                OnMessage(nmsg);
-            }
-        }
-
-        public void MessageSent(IoSession session, object message)
-        {
-        }
-
-        public void SessionClosed(IoSession session)
-        {
-        }
-
-        public void SessionCreated(IoSession session)
-        {
-        }
-
-        public void SessionIdle(IoSession session, IdleStatus status)
-        {
-        }
-
-        public void SessionOpened(IoSession session)
-        {
         }
     }
 }
