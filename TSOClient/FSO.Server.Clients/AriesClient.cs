@@ -1,15 +1,16 @@
-﻿using FSO.Server.Common;
+using FSO.Common.Serialization;
+using FSO.Server.Common;
 using FSO.Server.Protocol.Aries;
 using FSO.Server.Protocol.Voltron.Packets;
-using Mina.Core.Future;
-using Mina.Core.Service;
-using Mina.Core.Session;
-using Mina.Filter.Codec;
-using Mina.Transport.Socket;
 using Ninject;
 using System;
+using System.Buffers.Binary;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
+using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace FSO.Server.Clients
@@ -18,7 +19,7 @@ namespace FSO.Server.Clients
     {
         void MessageReceived(AriesClient client, object message);
     }
-    
+
     public interface IAriesEventSubscriber
     {
         void SessionCreated(AriesClient client);
@@ -28,55 +29,46 @@ namespace FSO.Server.Clients
         void InputClosed(AriesClient session);
     }
 
-    public class NullIOHandler : IoHandler
+    /// <summary>
+    /// Client end of an Aries connection (the game's city/lot connections, and lot->city links
+    /// between servers). A plain TcpClient with one async read loop (frames are length-prefixed,
+    /// so reads are exact) and one ordered write loop, speaking the wire format via AriesFraming.
+    ///
+    /// Behavior contract, matching the Mina.NET connector this replaces: SessionCreated then
+    /// SessionOpened fire on successful connect (subscribers may Write from inside them); a
+    /// connect failure or timeout fires SessionClosed; a remote half-close fires InputClosed then
+    /// SessionClosed; SessionClosed fires exactly once per connection; a connection superseded by
+    /// a newer Connect dies silently; Write is non-blocking, callable from any thread, and each
+    /// call's packets go out contiguously in order; subscriber exceptions don't kill the
+    /// connection. SessionIdle is never fired (the old client never configured an idle timer).
+    /// </summary>
+    public class AriesClient
     {
-        public void ExceptionCaught(IoSession session, Exception cause)
-        {
-        }
+        private const int ConnectTimeoutMs = 10000;
+        private const uint MaxFrameSize = 128 * 1024 * 1024; // sanity cap; largest legit frames (lot states) are a few MB
 
-        public void InputClosed(IoSession session)
-        {
-        }
-
-        public void MessageReceived(IoSession session, object message)
-        {
-        }
-
-        public void MessageSent(IoSession session, object message)
-        {
-        }
-
-        public void SessionClosed(IoSession session)
-        {
-        }
-
-        public void SessionCreated(IoSession session)
-        {
-        }
-
-        public void SessionIdle(IoSession session, IdleStatus status)
-        {
-        }
-
-        public void SessionOpened(IoSession session)
-        {
-        }
-    }
-
-    public class AriesClient : IoHandler
-    {
-        //private static Logger LOG = LogManager.GetCurrentClassLogger();
-
-        private IoConnector Connector;
-        private IoSession Session;
         private IKernel Kernel;
+        private volatile Session Current;
 
         private List<IAriesMessageSubscriber> MessageSubscribers = new List<IAriesMessageSubscriber>();
         private List<IAriesEventSubscriber> EventSubscribers = new List<IAriesEventSubscriber>();
-        
+
         public AriesClient(IKernel kernel)
         {
             this.Kernel = kernel;
+        }
+
+        /// <summary>Per-connection state; a newer Connect abandons the old instance.</summary>
+        private class Session
+        {
+            public TcpClient Tcp;
+            public NetworkStream Stream;
+            public readonly Channel<object> WriteQueue = Channel.CreateUnbounded<object>(
+                new UnboundedChannelOptions { SingleReader = true });
+            public readonly DateTime CreationTime = DateTime.Now;
+            public volatile bool Abandoned; // superseded by a newer Connect: fire no events
+            public volatile bool Opened;
+            public int Closed;              // interlocked once-guard for teardown + SessionClosed
         }
 
         public void AddSubscriber(object sub)
@@ -109,70 +101,51 @@ namespace FSO.Server.Clients
             }
         }
 
-        public void Connect(string address){
+        public void Connect(string address)
+        {
             Connect(IPEndPointUtils.CreateIPEndPoint(address));
-        }
-
-        public void Disconnect(){
-            if (Session != null)
-            {
-                Session.Close(false);
-            }
         }
 
         public void Connect(IPEndPoint target)
         {
-            if (Connector != null)
+            Session old;
+            lock (this)
             {
-                //old connector might still be establishing connection...
-                //we need to stop that
-                Connector.Handler = new NullIOHandler(); //don't hmu
-                //we can't cancel a mina.net connector, but we can sure as hell ~~avenge it~~ stop it from firing events.
-                //if we tried to dispose it, we'd get random disposed object exceptions because mina doesn't expect you to cancel that early.
-                Disconnect(); //if we have already established a connection, make sure it is closed.
+                old = Current;
+                Current = null;
             }
-            var socketConnector = new AsyncSocketConnector();
-            socketConnector.SessionConfig.NoDelay = true;
-            Connector = socketConnector;
-            var connector = Connector;
-            Connector.ConnectTimeoutInMillis = 10000;
-            //Connector.FilterChain.AddLast("logging", new LoggingFilter());
-            
-            Connector.Handler = this;
-            //var ssl = new CustomSslFilter((X509Certificate)null);
-            //ssl.SslProtocol = System.Security.Authentication.SslProtocols.Tls;
-            //Connector.FilterChain.AddFirst("ssl", ssl);
-
-            Connector.FilterChain.AddLast("protocol", new ProtocolCodecFilter(new AriesProtocol(Kernel)));
-            var future = Connector.Connect(target, (IoSession session, IConnectFuture future2) =>
+            if (old != null)
             {
-                if (future2.Canceled || future2.Exception != null)
-                {
-                   if (connector.Handler != null) SessionClosed(session);
-                }
-                
-                if (connector.Handler is NullIOHandler) session.Close(true);
-                else this.Session = session;
-            });
+                // a superseded connection (pending or established) dies without firing events
+                old.Abandoned = true;
+                Close(old);
+            }
 
-            Task.Run(() =>
-            {
-                if (!future.Await(10000)) SessionClosed(null);
-                if (future.Canceled || future.Exception != null) SessionClosed(null);
-            });
+            var session = new Session();
+            lock (this) Current = session;
+            Task.Run(() => Run(session, target));
         }
 
-        private void OnConnect(IoSession session, IConnectFuture future)
+        /// <summary>Graceful disconnect: queued writes flush, then the socket closes.</summary>
+        public void Disconnect()
         {
-            if (future.Canceled || future.Exception != null) SessionClosed(session);
-            this.Session = session;
+            var session = Current;
+            if (session != null && session.Opened)
+            {
+                session.WriteQueue.Writer.TryComplete();
+            }
         }
 
+        /// <summary>
+        /// Queue packets for sending. Non-blocking; the batch is written contiguously in order.
+        /// Silently dropped when not connected (as before).
+        /// </summary>
         public void Write(params object[] packets)
         {
-            if (this.Session != null && this.Session.Connected)
+            var session = Current;
+            if (session != null && session.Opened && session.Closed == 0)
             {
-                this.Session.Write(packets);
+                session.WriteQueue.Writer.TryWrite(packets);
             }
         }
 
@@ -180,7 +153,8 @@ namespace FSO.Server.Clients
         {
             get
             {
-                return Session != null && Session.Connected;
+                var session = Current;
+                return session != null && session.Opened && session.Closed == 0;
             }
         }
 
@@ -188,68 +162,144 @@ namespace FSO.Server.Clients
         {
             get
             {
-                return Session?.RemoteEndPoint as IPEndPoint;
+                try { return Current?.Tcp?.Client?.RemoteEndPoint as IPEndPoint; }
+                catch { return null; } // socket already disposed
             }
         }
 
-        public void SessionCreated(IoSession session)
+        private async Task Run(Session session, IPEndPoint target)
         {
-            List<IAriesEventSubscriber> _subs;
+            try
+            {
+                session.Tcp = new TcpClient(target.AddressFamily);
+                session.Tcp.NoDelay = true;
+                using (var timeout = new CancellationTokenSource(ConnectTimeoutMs))
+                {
+                    await session.Tcp.ConnectAsync(target.Address, target.Port, timeout.Token);
+                }
+                if (session.Abandoned || session.Closed != 0)
+                {
+                    Close(session);
+                    return;
+                }
+
+                session.Stream = session.Tcp.GetStream();
+                session.Opened = true;
+                FireEvent(session, s => s.SessionCreated(this));
+                FireEvent(session, s => s.SessionOpened(this));
+
+                var context = Kernel.Get<ISerializationContext>();
+                _ = Task.Run(() => WriteLoop(session, context));
+                await ReadLoop(session, context);
+            }
+            catch (EndOfStreamException)
+            {
+                // remote half-closed cleanly at a frame boundary
+                FireEvent(session, s => s.InputClosed(this));
+                Close(session);
+            }
+            catch
+            {
+                Close(session);
+            }
+        }
+
+        private async Task ReadLoop(Session session, ISerializationContext context)
+        {
+            var header = new byte[AriesFraming.HeaderSize];
+            var messages = new List<object>();
+            while (true)
+            {
+                await session.Stream.ReadExactlyAsync(header, 0, header.Length);
+                uint packetType = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(0, 4));
+                // header[4..8] is the sender's timestamp; nothing consumes it
+                uint payloadSize = BinaryPrimitives.ReadUInt32LittleEndian(header.AsSpan(8, 4));
+                if (payloadSize > MaxFrameSize) throw new IOException("Aries frame too large: " + payloadSize);
+
+                var payload = new byte[payloadSize];
+                if (payloadSize > 0) await session.Stream.ReadExactlyAsync(payload, 0, (int)payloadSize);
+
+                messages.Clear();
+                AriesFraming.Decode(packetType, payload, context, messages);
+                foreach (var message in messages)
+                {
+                    // flush pending writes then close THIS session, as before (Mina Close(false));
+                    // the subscriber still receives the PDU below
+                    if (message is ServerByePDU) session.WriteQueue.Writer.TryComplete();
+                    DispatchMessage(message);
+                }
+            }
+        }
+
+        private async Task WriteLoop(Session session, ISerializationContext context)
+        {
+            try
+            {
+                while (await session.WriteQueue.Reader.WaitToReadAsync())
+                {
+                    while (session.WriteQueue.Reader.TryRead(out var item))
+                    {
+                        uint timestamp = (uint)(DateTime.Now - session.CreationTime).TotalMilliseconds;
+                        if (item is object[] batch)
+                        {
+                            foreach (var message in batch) await WriteMessage(session, message, context, timestamp);
+                        }
+                        else
+                        {
+                            await WriteMessage(session, item, context, timestamp);
+                        }
+                    }
+                }
+                // queue completed (graceful Disconnect) and fully flushed
+                Close(session);
+            }
+            catch
+            {
+                Close(session);
+            }
+        }
+
+        private async Task WriteMessage(Session session, object message, ISerializationContext context, uint timestamp)
+        {
+            var frame = AriesFraming.Encode(message, context, timestamp);
+            if (frame != null) await session.Stream.WriteAsync(frame, 0, frame.Length);
+        }
+
+        /// <summary>Tear down once: close the socket, and fire SessionClosed unless abandoned.</summary>
+        private void Close(Session session)
+        {
+            if (Interlocked.Exchange(ref session.Closed, 1) != 0) return;
+            session.WriteQueue.Writer.TryComplete();
+            try { session.Stream?.Close(); } catch { }
+            try { session.Tcp?.Close(); } catch { }
+            lock (this)
+            {
+                if (Current == session) Current = null;
+            }
+            FireEvent(session, s => s.SessionClosed(this));
+        }
+
+        private void FireEvent(Session session, Action<IAriesEventSubscriber> evt)
+        {
+            if (session.Abandoned) return;
+            List<IAriesEventSubscriber> subs;
             lock (EventSubscribers)
-                _subs = new List<IAriesEventSubscriber>(EventSubscribers);
-            _subs.ForEach(x => x.SessionCreated(this));
+                subs = new List<IAriesEventSubscriber>(EventSubscribers);
+            foreach (var sub in subs)
+            {
+                try { evt(sub); } catch { }
+            }
         }
 
-        public void SessionOpened(IoSession session)
+        private void DispatchMessage(object message)
         {
-            List<IAriesEventSubscriber> _subs;
+            List<IAriesMessageSubscriber> subs;
             lock (EventSubscribers)
-                _subs = new List<IAriesEventSubscriber>(EventSubscribers);
-            _subs.ForEach(x => x.SessionOpened(this));
-        }
-
-        public void SessionClosed(IoSession session)
-        {
-            List<IAriesEventSubscriber> _subs;
-            lock (EventSubscribers)
-                _subs = new List<IAriesEventSubscriber>(EventSubscribers);
-            _subs.ForEach(x => x.SessionClosed(this));
-        }
-
-        public void SessionIdle(IoSession session, IdleStatus status)
-        {
-            List<IAriesEventSubscriber> _subs;
-            lock (EventSubscribers)
-                _subs = new List<IAriesEventSubscriber>(EventSubscribers);
-            _subs.ForEach(x => x.SessionIdle(this));
-        }
-
-        public void ExceptionCaught(IoSession session, Exception cause)
-        {
-            if (cause is System.Net.Sockets.SocketException) session.Close(true);
-            //else LOG.Error(cause);
-        }
-
-        public void MessageReceived(IoSession session, object message)
-        {
-            if (message is ServerByePDU) session.Close(false);
-
-            List<IAriesMessageSubscriber> _subs;
-            lock (EventSubscribers)
-                _subs = new List<IAriesMessageSubscriber>(MessageSubscribers);
-            _subs.ForEach(x => x.MessageReceived(this, message));
-        }
-
-        public void MessageSent(IoSession session, object message)
-        {
-        }
-
-        public void InputClosed(IoSession session)
-        {
-            List<IAriesEventSubscriber> _subs;
-            lock (EventSubscribers)
-                _subs = new List<IAriesEventSubscriber>(EventSubscribers);
-            _subs.ForEach(x => x.InputClosed(this));
+                subs = new List<IAriesMessageSubscriber>(MessageSubscribers);
+            foreach (var sub in subs)
+            {
+                try { sub.MessageReceived(this, message); } catch { }
+            }
         }
     }
 }
