@@ -89,7 +89,8 @@ jobs:
           path: TSOClient/tso.content/Content/OGL/Effects/
 
   # Client: Windows = FSO.IDE (its output contains the full OpenSO.exe client); the other platforms =
-  # FSO.Unix. All four are the supported client targets.
+  # FSO.Unix. macOS builds BOTH its RIDs in one job below (build-client-macos) — macOS runners have
+  # the slowest queues and bill at 10x, so one runner cross-compiling both beats two queued runners.
   build-client:
     needs: [ compile-shaders ]
     strategy:
@@ -98,8 +99,6 @@ jobs:
         include:
           - { os: windows-latest, project: TSOClient/FSO.IDE,  rid: win-x64,   asset: OpenSO-client-win-x64 }
           - { os: ubuntu-latest,  project: TSOClient/FSO.Unix, rid: linux-x64, asset: OpenSO-client-linux-x64 }
-          - { os: macos-latest,   project: TSOClient/FSO.Unix, rid: osx-x64,   asset: OpenSO-client-osx-x64 }
-          - { os: macos-latest,   project: TSOClient/FSO.Unix, rid: osx-arm64, asset: OpenSO-client-osx-arm64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -147,6 +146,46 @@ jobs:
         with:
           name: ${{ matrix.asset }}
           path: dist/*
+
+  # Both macOS RIDs from ONE arm64 runner: osx-arm64 natively, osx-x64 cross-compiled (the SDK and
+  # crossgen2 both support cross-arch targeting). Checkout + SDK + restore are paid once instead of
+  # twice, and Intel Macs are on their way out anyway — arm64 is the primary target.
+  build-client-macos:
+    needs: [ compile-shaders ]
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "10.0.x"
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+      - name: Use freshly-compiled shaders
+        uses: actions/download-artifact@v4
+        with:
+          name: shaders-ogl
+          path: TSOClient/tso.content/Content/OGL/Effects
+      # See build-client: R2R off per-push (verification only); release.yml keeps it on.
+      - name: Publish client (osx-x64 + osx-arm64)
+        run: |
+          mkdir -p dist
+          for RID in osx-arm64 osx-x64; do
+            dotnet publish TSOClient/FSO.Unix -c Release -r "$RID" --self-contained -p:PublishReadyToRun=false -o "Artifacts/Client-$RID"
+            ( cd "Artifacts/Client-$RID" && zip -qr "../../dist/OpenSO-client-$RID.zip" . )
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSO-client-osx-arm64
+          path: dist/OpenSO-client-osx-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSO-client-osx-x64
+          path: dist/OpenSO-client-osx-x64.zip
 
   # Server: FSO.Server.Core supports win-x64 + linux-x64 (linux-x64 is the docker/Hetzner deploy target).
   build-server:
