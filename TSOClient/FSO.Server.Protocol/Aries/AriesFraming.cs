@@ -10,12 +10,11 @@ using System.Collections.Generic;
 namespace FSO.Server.Protocol.Aries
 {
     /// <summary>
-    /// The Aries wire format as plain encode/decode helpers, for transports that don't run a Mina
-    /// filter chain. Produces and consumes the exact same bytes as AriesProtocolEncoder/
-    /// AriesProtocolDecoder: a little-endian 12 byte frame header (type, timestamp, payload size)
-    /// whose payload is either one raw little-endian Aries packet or a run of big-endian
-    /// Voltron/Electron/Gluon sub-packets (uint16 type + uint32 size(+6) each). IoBuffer appears
-    /// only as the serialization surface the PDU classes are written against.
+    /// The Aries wire format as plain encode/decode helpers (byte-identical to the retired Mina
+    /// codec): a little-endian 12 byte frame header (type, timestamp, payload size) whose payload
+    /// is either one raw little-endian Aries packet or a run of big-endian Voltron/Electron/Gluon
+    /// sub-packets (uint16 type + uint32 size(+6) each). IoBuffer appears only as the
+    /// serialization surface the PDU classes are written against.
     /// </summary>
     public static class AriesFraming
     {

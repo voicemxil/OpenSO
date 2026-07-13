@@ -176,8 +176,6 @@ namespace FSO.Client
             var dbs = new Common.DatabaseService.DatabaseService(null);
             var cds = new Common.DataService.ClientDataService(null, null, null);
 
-            var arp = new Server.Protocol.Aries.AriesProtocolDecoder(null);
-            var are = new Server.Protocol.Aries.AriesProtocolEncoder(null);
             var serc = new Common.Serialization.SerializationContext(null, null);
 
             var ff = new FieldFont();
