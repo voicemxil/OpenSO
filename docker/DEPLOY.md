@@ -426,8 +426,52 @@ config.json/config.example.json).
 to the *mariadb* service, not the renamed one), and lots/objects live in the `./nfs` **bind mount** (a host
 path). Neither is keyed to the game server's name, so a service rename cannot touch them; the other named
 volumes (`openso_caddy_data`, `openso_caddy_config`) belong to caddy and are likewise untouched. The game
-server itself mounts only bind mounts (`./tso/TSOClient`, `./nfs`, `./config.json`, `./deploy-trigger`) —
-all host paths, all name-independent.
+server itself mounts only bind mounts (`./tso/TSOClient`, `./nfs`, `./config.json`,
+`./deploy-trigger`, `./certs`) — all host paths, all name-independent.
+
+---
+
+## 9c. TLS game networking (encrypted game traffic)
+
+Since v0.3.0 the game transport supports TLS 1.2/1.3 directly on the Aries ports. A host is opted
+in per-address: any `public_host` (config or `fso_shards` row) of the form `tls://host:port` makes
+clients connect encrypted; plain `host:port` values keep the legacy plaintext path. With a
+`certificate` configured the server dual-binds — TLS on the configured port (xx100) and plaintext
+on port+1 (xx101) — so older clients keep working while they update.
+
+The certificate is the same Let's Encrypt one Caddy already maintains: the Caddyfile serves a
+trivial site for `{$GAME_DOMAIN}` purely so Caddy obtains/renews the cert, and
+`openso-cert-sync.sh` exports it as the passwordless `certs/game.pfx` the game server loads
+(mounted read-only at `/app/certs`). The PFX carries the full chain — verify with
+`openssl s_client -connect game.openso.org:33100` (expect `Verify return code: 0 (ok)`).
+
+Enable it:
+
+1. Make sure `game.openso.org` (or your `GAME_DOMAIN`) is DNS-only → the box, and the box runs a
+   v0.3.0+ image (older clients are steered through the update flow before they ever read the
+   tls:// host, so no flag day is needed).
+2. `./openso-cert-sync.sh` once (exports the PFX; restarts the server if the cert changed).
+3. In `config.json`, set on each city/lot block: `"certificate": "certs/game.pfx"` and
+   `"public_host": "tls://game.openso.org:33100"` (34100 for lots). Leave `internal_host` plain —
+   the lot↔city link is loopback inside the box.
+4. `docker compose up -d openso-server`, confirm the log shows `Listening on 0.0.0.0:33100 with
+   TLS` plus the plain xx101 lines.
+5. Point the shard at TLS:
+   `UPDATE fso_shards SET public_host='tls://game.openso.org:33100' WHERE shard_id=1;`
+6. Keep the PFX fresh across LE renewals (~every 60 days) — install the daily sync timer:
+
+```bash
+# from the repo root on the box (adjust paths in the unit files if you cloned elsewhere than /root/OpenSO)
+chmod +x docker/openso-cert-sync.sh
+sudo cp docker/systemd/openso-cert-sync.service docker/systemd/openso-cert-sync.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now openso-cert-sync.timer
+systemctl list-timers openso-cert-sync.timer      # confirm next run (~04:30 UTC)
+```
+
+The sync is a no-op while the cert is unchanged; on renewal it re-exports the PFX and restarts the
+game server once (players get the standard reconnect flow). To back out of TLS entirely, revert the
+`public_host` values and shard row to plain `host:33101` form — the plaintext listeners never left.
 
 ---
 

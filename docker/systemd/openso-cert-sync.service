@@ -1,0 +1,8 @@
+[Unit]
+Description=Export the game-domain Let's Encrypt certificate as PFX for the OpenSO game server
+After=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/root/OpenSO/docker
+ExecStart=/root/OpenSO/docker/openso-cert-sync.sh

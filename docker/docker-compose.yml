@@ -52,6 +52,9 @@ services:
       - ${TSO_GAME_PATH:-./tso/TSOClient}:/game:ro
       - ./nfs:/nfs:rw
       - ./config.json:/app/config.json:cached
+      # Let's Encrypt cert for the TLS game listeners (certs/game.pfx), exported from Caddy's data
+      # by openso-cert-sync.sh. See docker/DEPLOY.md §9c "TLS game networking".
+      - ./certs:/app/certs:ro
       # On-demand deploy: an admin "Update" shutdown writes deploy-trigger/deploy.request here (after lots
       # save); the host's openso-deploy.path systemd unit watches ./deploy-trigger and pulls/recreates the
       # latest :release image. See docker/DEPLOY.md "Admin-driven deploy".
@@ -69,6 +72,7 @@ services:
       - openso-server
     environment:
       OPENSO_API_DOMAIN: ${OPENSO_API_DOMAIN:-api.openso.org}
+      OPENSO_GAME_DOMAIN: ${OPENSO_GAME_DOMAIN:-game.openso.org}
       OPENSO_ACME_EMAIL: ${OPENSO_ACME_EMAIL:-admin@openso.org}
     ports:
       - "80:80"

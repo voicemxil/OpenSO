@@ -95,8 +95,9 @@
         "call_sign": "ganymede",
         "id": 1,
         "binding": "0.0.0.0:33100",
+        "certificate": "certs/game.pfx",
         "internal_host": "127.0.0.1:33101",
-        "public_host": "game.openso.org:33101",
+        "public_host": "tls://game.openso.org:33100",
         "neighborhoods": {
           "mayor_elegibility_limit": 4,
           "mayor_elegibility_falloff": 4,
@@ -110,8 +111,9 @@
       {
         "call_sign": "europa",
         "binding": "0.0.0.0:34100",
+        "certificate": "certs/game.pfx",
         "internal_host": "127.0.0.1:34101",
-        "public_host": "game.openso.org:34101",
+        "public_host": "tls://game.openso.org:34100",
         "max_lots": 25,
         "cities": [
           {

@@ -6,6 +6,7 @@
 # for the canonical openso.org deployment AND a box can override WITHOUT editing this file — set the vars
 # in the gitignored docker/.env (docker-compose.yml passes them through to the caddy container):
 #   OPENSO_API_DOMAIN   the public API hostname            (default api.openso.org)
+#   OPENSO_GAME_DOMAIN  the game-traffic hostname          (default game.openso.org)
 #   OPENSO_ACME_EMAIL   Let's Encrypt account/expiry email (default admin@openso.org)
 #
 # Requirement: OPENSO_API_DOMAIN must resolve to this box and be DNS-only in Cloudflare (grey cloud),
@@ -26,4 +27,12 @@
 	redir /launcher/remesh https://github.com/voicemxil/FSO.Remeshes/releases/latest/download/freeso-remeshes-legacy.zip 302
 
 	reverse_proxy openso-server:9000
+}
+
+# Game-traffic domain. This HTTP block exists only so Caddy obtains and auto-renews the Let's
+# Encrypt certificate for the game host — the game server itself serves that cert on the raw-TCP
+# Aries ports (TLS game networking, DEPLOY.md §9c). openso-cert-sync.sh exports it as the PFX the
+# server loads after each renewal.
+{$OPENSO_GAME_DOMAIN:game.openso.org} {
+	respond 204
 }

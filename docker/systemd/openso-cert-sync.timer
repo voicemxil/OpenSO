@@ -1,0 +1,9 @@
+[Unit]
+Description=Daily check that the game TLS certificate PFX matches Caddy's (renews ~every 60 days)
+
+[Timer]
+OnCalendar=*-*-* 04:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -109,3 +109,4 @@ TSOClient/Mario
 
 # Python bytecode caches (generated, e.g. from docker/create-archive.py)
 __pycache__/
+docker/certs/
