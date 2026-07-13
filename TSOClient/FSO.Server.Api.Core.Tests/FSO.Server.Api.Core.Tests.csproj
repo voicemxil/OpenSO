@@ -24,6 +24,8 @@
     <PackageReference Include="xunit" Version="2.9.2" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.2" />
+    <!-- Same CVE-2025-6965 SQLitePCLRaw override as FSO.Server.Database — keep in sync. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
     <!-- Already used across the server DA layer; the DB test helpers issue raw SQL through it. -->
     <PackageReference Include="Dapper" Version="2.1.66" />
   </ItemGroup>

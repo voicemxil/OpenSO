@@ -36,6 +36,9 @@
     <PackageReference Include="Ninject" Version="3.3.6" />
     <PackageReference Include="System.Data.SqlClient" Version="4.9.0" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="10.0.2" />
+    <!-- Override the transitive SQLitePCLRaw 2.1.11 (its bundled SQLite has CVE-2025-6965 /
+         GHSA-2m69-gcr7-jv3q); bundle 3.0.3 carries SQLite 3.50.4, which has the fix. -->
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.3" />
   </ItemGroup>
 
   <ItemGroup>
