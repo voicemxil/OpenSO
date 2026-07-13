@@ -1,5 +1,4 @@
 ﻿using System.Text;
-using Mina.Core.Buffer;
 using FSO.Common.Serialization;
 
 namespace FSO.Server.Protocol.Aries.Packets

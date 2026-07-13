@@ -15,7 +15,6 @@ using FSO.Server.Protocol.Voltron.Packets;
 using FSO.Server.Servers.City.Domain;
 using FSO.Server.Servers.City.Handlers;
 using FSO.Server.Servers.Shared.Handlers;
-using Mina.Core.Session;
 using Ninject;
 using NLog;
 using System.Net;

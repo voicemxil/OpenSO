@@ -1,6 +1,5 @@
 ﻿using FSO.Common.Serialization;
 using FSO.Server.Common;
-using Mina.Core.Buffer;
 
 namespace FSO.Server.Protocol.Gluon.Packets
 {

@@ -1,7 +1,6 @@
 ﻿using FSO.Common.Serialization;
 using FSO.Server.Protocol.CitySelector;
 using FSO.Server.Protocol.Electron.Model;
-using Mina.Core.Buffer;
 
 namespace FSO.Server.Protocol.Electron.Packets
 {

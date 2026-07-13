@@ -1,5 +1,4 @@
 ﻿using FSO.Common.Serialization;
-using Mina.Core.Buffer;
 using System;
 
 namespace FSO.Server.Protocol.Voltron.Model

@@ -1,5 +1,4 @@
 ﻿using System;
-using Mina.Core.Buffer;
 
 namespace FSO.Common.Serialization.TypeSerializers
 {

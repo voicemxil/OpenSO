@@ -1,6 +1,5 @@
 ﻿using FSO.Common.Enum;
 using FSO.Common.Serialization;
-using Mina.Core.Buffer;
 using FSO.Common.DatabaseService.Framework;
 
 namespace FSO.Common.DatabaseService.Model

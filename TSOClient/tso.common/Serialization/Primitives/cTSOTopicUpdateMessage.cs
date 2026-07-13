@@ -1,4 +1,3 @@
-﻿using Mina.Core.Buffer;
 using FSO.Common.Serialization.TypeSerializers;
 
 namespace FSO.Common.Serialization.Primitives

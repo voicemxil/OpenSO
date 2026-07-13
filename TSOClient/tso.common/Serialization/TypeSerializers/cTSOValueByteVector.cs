@@ -1,6 +1,5 @@
 ﻿using System;
 using System.Collections.Generic;
-using Mina.Core.Buffer;
 using System.Collections.Immutable;
 
 namespace FSO.Common.Serialization.TypeSerializers

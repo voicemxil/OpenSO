@@ -1,6 +1,5 @@
 ﻿using FSO.Common.Serialization;
 using FSO.Files.Formats.tsodata;
-using Mina.Core.Buffer;
 using System.IO;
 
 namespace FSO.Server.Protocol.Electron.Packets

@@ -1,5 +1,4 @@
 ﻿using FSO.Common.Serialization;
-using Mina.Core.Buffer;
 using FSO.Common.Enum;
 
 namespace FSO.Server.Protocol.Electron.Packets
