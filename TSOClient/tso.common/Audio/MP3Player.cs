@@ -6,6 +6,8 @@ using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 
+#nullable enable
+
 namespace FSO.Common.Audio
 {
     /// <summary>

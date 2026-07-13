@@ -5,6 +5,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 
+#nullable enable
+
 namespace MSDFExtension
 {
     [ContentImporter(".ini", DisplayName = "Field Font Importer", DefaultProcessor = "FieldFontProcessor")]
