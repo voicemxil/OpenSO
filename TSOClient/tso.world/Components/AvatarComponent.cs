@@ -139,14 +139,17 @@ namespace FSO.LotView.Components
             var headpos = Avatar.Skeleton.GetBone("HEAD").AbsolutePosition;
             Vector4 projected;
 
+            // UN-JITTERED projection: this position anchors UI elements (chat balloons, pie menus) in
+            // screen space — the TAA jitter belongs to render sampling, and anchoring through the
+            // jittered getter shakes the crisp native-res UI by the jitter every frame.
             if (MyMario != null)
             {
                 var pos = MyMario.GetMarioPosition();
-                projected = Vector4.Transform(new Vector4(pos.X * 3, pos.Z * 3 + 1.5f, pos.Y * 3, 1), world.View * world.Projection);
+                projected = Vector4.Transform(new Vector4(pos.X * 3, pos.Z * 3 + 1.5f, pos.Y * 3, 1), world.View * world.ProjectionUnjittered);
             }
             else
             {
-                projected = Vector4.Transform(new Vector4(headpos, 1), Matrix.CreateRotationY((float)(Math.PI - RadianDirection)) * this.World * world.View * world.Projection);
+                projected = Vector4.Transform(new Vector4(headpos, 1), Matrix.CreateRotationY((float)(Math.PI - RadianDirection)) * this.World * world.View * world.ProjectionUnjittered);
             }
 
             if (world.CameraMode < CameraRenderMode._3D) projected.Z = 1;

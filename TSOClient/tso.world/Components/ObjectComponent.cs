@@ -481,7 +481,8 @@ namespace FSO.LotView.Components
 
         public override Vector2 GetScreenPos(WorldState world)
         {
-            var projected = Vector4.Transform(new Vector4(1.5f, 0, 1.5f, 1f), this.World * world.View * world.Projection);
+            // Un-jittered: screen-space UI anchor (see AvatarComponent.GetScreenPos).
+            var projected = Vector4.Transform(new Vector4(1.5f, 0, 1.5f, 1f), this.World * world.View * world.ProjectionUnjittered);
             if (world.CameraMode < CameraRenderMode._3D) projected.Z = 1;
             var res1 = new Vector2(projected.X / projected.Z, -projected.Y / projected.Z);
             var size = PPXDepthEngine.GetWidthHeight();
