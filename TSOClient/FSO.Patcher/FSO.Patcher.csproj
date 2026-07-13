@@ -19,7 +19,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="System.Resources.Extensions" Version="9.0.9" />
   </ItemGroup>
 
 </Project>
