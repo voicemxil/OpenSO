@@ -37,7 +37,7 @@ namespace FSO.Server.Servers.City
 
         private uint SessionUID;
 
-        protected override RequestClientSessionArchive ArchiveHandshake(IoSession session)
+        protected override RequestClientSessionArchive ArchiveHandshake(AriesTransportSession session)
         {
             if (Config.Archive == null) return null;
 

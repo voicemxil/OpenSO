@@ -1,5 +1,4 @@
 ﻿using FSO.Server.Framework.Aries;
-using Mina.Core.Session;
 using System.Collections.Generic;
 using FSO.Common.Security;
 
@@ -7,7 +6,7 @@ namespace FSO.Server.Framework.Gluon
 {
     public class GluonSession : AriesSession, IGluonSession
     {
-        public GluonSession(IoSession ioSession) : base(ioSession)
+        public GluonSession(AriesTransportSession ioSession) : base(ioSession)
         {
         }
 

@@ -1,7 +1,6 @@
 ﻿using FSO.Common.Security;
 using FSO.Server.Framework.Aries;
 using FSO.Server.Protocol.Voltron.Packets;
-using Mina.Core.Session;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -38,7 +37,7 @@ namespace FSO.Server.Framework.Voltron
             }
         }
 
-        public VoltronSession(IoSession ioSession) : base(ioSession){
+        public VoltronSession(AriesTransportSession ioSession) : base(ioSession){
         }
 
         public override void Close()

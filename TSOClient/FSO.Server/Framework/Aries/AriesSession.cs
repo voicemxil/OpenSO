@@ -1,5 +1,4 @@
-﻿using Mina.Core.Session;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 
@@ -9,12 +8,12 @@ namespace FSO.Server.Framework.Aries
     {
         public bool IsAuthenticated { get; set; }
         public uint LastRecv { get; set; }
-        public IoSession IoSession;
+        public AriesTransportSession IoSession;
         protected Dictionary<string, object> MigratableAttributes = new Dictionary<string, object>();
         public TaskCompletionSource<bool> DisconnectSource = new TaskCompletionSource<bool>();
         public TaskCompletionSource<bool> AuthSource = new TaskCompletionSource<bool>();
 
-        public AriesSession(IoSession ioSession)
+        public AriesSession(AriesTransportSession ioSession)
         {
             this.IoSession = ioSession;
             IsAuthenticated = false;
@@ -40,9 +39,9 @@ namespace FSO.Server.Framework.Aries
             AuthSource.SetResult(true);
         }
 
-        public virtual void Migrate(IoSession newSession)
+        public virtual void Migrate(AriesTransportSession newSession)
         {
-            //migrate this aries session and all attributes onto a new IoSession.
+            //migrate this aries session and all attributes onto a new transport session.
             lock (MigratableAttributes)
             {
                 foreach (var attr in MigratableAttributes)

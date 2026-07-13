@@ -1,27 +1,21 @@
 ﻿using FSO.Server.Protocol.Aries;
 using FSO.Server.Protocol.Voltron.Packets;
 using FSO.Server.Servers;
-using Mina.Core.Service;
-using Mina.Core.Session;
-using Mina.Filter.Codec;
-using Mina.Filter.Ssl;
-using Mina.Transport.Socket;
 using Ninject;
 using NLog;
 using System;
 using System.Collections.Generic;
-using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Threading.Tasks;
 using FSO.Server.Common;
 using FSO.Server.Protocol.Aries.Packets;
 using FSO.Server.Database.DA;
 using FSO.Common.Serialization;
 using FSO.Server.Database.DA.Hosts;
-using Mina.Core.Write;
 
 namespace FSO.Server.Framework.Aries
 {
-    public abstract class AbstractAriesServer : AbstractServer, IoHandler, ISocketServer
+    public abstract class AbstractAriesServer : AbstractServer, IAriesSocketHandler, ISocketServer
     {
         private static Logger LOG = LogManager.GetCurrentClassLogger();
         protected IKernel Kernel;
@@ -29,8 +23,8 @@ namespace FSO.Server.Framework.Aries
         private AbstractAriesServerConfig Config;
         protected IDAFactory DAFactory;
 
-        private IoAcceptor Acceptor;
-        private IoAcceptor PlainAcceptor;
+        private AriesSocketServer Acceptor;
+        private AriesSocketServer PlainAcceptor;
         private IServerDebugger Debugger;
 
         private AriesPacketRouter _Router = new AriesPacketRouter();
@@ -44,7 +38,7 @@ namespace FSO.Server.Framework.Aries
         public int UnexpectedDisconnectWaitSeconds = 0;
         public bool TimeoutIfNoAuth;
 
-        protected virtual RequestClientSessionArchive ArchiveHandshake(IoSession session) => null;
+        protected virtual RequestClientSessionArchive ArchiveHandshake(AriesTransportSession session) => null;
 
         public AbstractAriesServer(AbstractAriesServerConfig config, IKernel kernel)
         {
@@ -97,28 +91,24 @@ namespace FSO.Server.Framework.Aries
                 db.Hosts.CreateHost(CreateHost());
             }
 
-            Acceptor = new AsyncSocketAcceptor();
-
             try {
                 // "old mode" attempts to open an SSL acceptor on xx100 and plain on xx101
                 // The new mode is either one or the other, and makes no assumptions about the port shape
                 bool oldMode = Config.Use_SSL == null;
+                var context = Kernel.Get<ISerializationContext>();
+                var packetLogger = Debugger?.GetPacketLogger();
 
                 if (Config.Certificate != null)
                 {
-                    var ssl = new SslFilter(new System.Security.Cryptography.X509Certificates.X509Certificate2(Config.Certificate));
-                    ssl.SslProtocol = SslProtocols.Tls;
-                    Acceptor.FilterChain.AddLast("ssl", ssl);
+                    var cert = new X509Certificate2(Config.Certificate);
                     if (Debugger != null)
                     {
-                        Acceptor.FilterChain.AddLast("packetLogger", new AriesProtocolLogger(Debugger.GetPacketLogger(), Kernel.Get<ISerializationContext>()));
                         Debugger.AddSocketServer(this);
                     }
-                    Acceptor.FilterChain.AddLast("protocol", new ProtocolCodecFilter(Kernel.Get<AriesProtocol>()));
-                    Acceptor.Handler = this;
-
-                    Acceptor.Bind(IPEndPointUtils.CreateIPEndPoint(Config.Binding));
-                    LOG.Info("Listening on " + Acceptor.LocalEndPoint + " with TLS");
+                    var binding = IPEndPointUtils.CreateIPEndPoint(Config.Binding);
+                    Acceptor = new AriesSocketServer(binding, cert, this, context, packetLogger);
+                    Acceptor.Start();
+                    LOG.Info("Listening on " + binding + " with TLS");
                 }
 
                 if (!oldMode)
@@ -131,18 +121,11 @@ namespace FSO.Server.Framework.Aries
 
                 if (oldMode || !Config.Use_SSL.Value)
                 {
-                    //Bind in the plain too as a workaround until we can get Mina.NET to work nice for TLS in the AriesClient
-                    PlainAcceptor = new AsyncSocketAcceptor();
-                    if (Debugger != null)
-                    {
-                        PlainAcceptor.FilterChain.AddLast("packetLogger", new AriesProtocolLogger(Debugger.GetPacketLogger(), Kernel.Get<ISerializationContext>()));
-                    }
-
-                    PlainAcceptor.FilterChain.AddLast("protocol", new ProtocolCodecFilter(Kernel.Get<AriesProtocol>()));
-                    PlainAcceptor.Handler = this;
                     // TODO: mode where only one is available and it doesn't do the port replace
-                    PlainAcceptor.Bind(IPEndPointUtils.CreateIPEndPoint(oldMode ? Config.Binding.Replace("100", "101") : Config.Binding));
-                    LOG.Info("Listening on " + PlainAcceptor.LocalEndPoint + " in the plain");
+                    var binding = IPEndPointUtils.CreateIPEndPoint(oldMode ? Config.Binding.Replace("100", "101") : Config.Binding);
+                    PlainAcceptor = new AriesSocketServer(binding, null, this, context, packetLogger);
+                    PlainAcceptor.Start();
+                    LOG.Info("Listening on " + binding + " in the plain");
                 }
             }
             catch(Exception ex)
@@ -184,7 +167,7 @@ namespace FSO.Server.Framework.Aries
         }
         
 
-        public void SessionCreated(IoSession session)
+        public void SessionCreated(AriesTransportSession session)
         {
             LOG.Info("[SESSION-CREATE (" + Config.Call_Sign +")]");
 
@@ -223,7 +206,7 @@ namespace FSO.Server.Framework.Aries
         protected abstract void HandleVoltronSessionResponse(IAriesSession session, object message);
 
 
-        public void MessageReceived(IoSession session, object message)
+        public void MessageReceived(AriesTransportSession session, object message)
         {
             var ariesSession = session.GetAttribute<IAriesSession>("s");
 
@@ -246,7 +229,7 @@ namespace FSO.Server.Framework.Aries
             _Router.Handle(session, message);
         }
 
-        public void SessionOpened(IoSession session)
+        public void SessionOpened(AriesTransportSession session)
         {
             ConnectionCount++;
             TotalConnectionCount++;
@@ -314,7 +297,7 @@ namespace FSO.Server.Framework.Aries
             });
         }
 
-        public void SessionClosed(IoSession session)
+        public void SessionClosed(AriesTransportSession session)
         {
             ConnectionCount--;
             var ariesSession = session.GetAttribute<IAriesSession>("s");
@@ -379,40 +362,6 @@ namespace FSO.Server.Framework.Aries
             }
         }
 
-        public void SessionIdle(IoSession session, IdleStatus status)
-        {
-        }
-
-        public void ExceptionCaught(IoSession session, Exception cause)
-        {
-            //todo: handle individual error codes
-            if (cause is System.Net.Sockets.SocketException)
-            {
-                session.Close(true);
-            }
-            else if (cause is WriteToClosedSessionException || cause is WriteTimeoutException)
-            {
-                //don't do anything... mina should be able to deal with this
-            }
-            else if (cause is System.InvalidOperationException)
-            {
-                LOG.Error(cause, "CRITICAL (mina bug): " + cause.ToString());
-                session.Close(true);
-            }
-            else
-            {
-                LOG.Error(cause, "Unknown error: " + cause.ToString());
-            }
-        }
-
-        public void MessageSent(IoSession session, object message)
-        {
-        }
-
-        public void InputClosed(IoSession session)
-        {
-        }
-
         public override void Shutdown()
         {
             LOG.Info($"Health on {Config.Call_Sign} shutdown:");
@@ -423,8 +372,8 @@ namespace FSO.Server.Framework.Aries
 
             var sendBye = UnexpectedDisconnectWaitSeconds > 0;
             UnexpectedDisconnectWaitSeconds = 0;
-            Acceptor.Dispose();
-            PlainAcceptor.Dispose();
+            Acceptor?.Stop();
+            PlainAcceptor?.Stop();
 
             var sessionClone = _Sessions.Clone();
             foreach (var session in sessionClone)
