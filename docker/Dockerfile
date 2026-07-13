@@ -30,7 +30,9 @@ COPY TSOClient/tso.vitaboy.engine/FSO.Vitaboy.Engine.csproj TSOClient/tso.vitabo
 COPY TSOClient/tso.vitaboy.model/FSO.Vitaboy.csproj TSOClient/tso.vitaboy.model/
 COPY Other/libs/MSDFData/MSDFData.csproj Other/libs/MSDFData/
 COPY Other/libs/TargaImagePCL/TargaImagePCL.csproj Other/libs/TargaImagePCL/
-RUN dotnet restore TSOClient/FSO.Server.Core/FSO.Server.Core.csproj
+# RID-specific restore: the publish below passes -r linux-x64 (required for the ReadyToRun
+# precompile the csproj opts into), and --no-restore demands the restore RID matches.
+RUN dotnet restore TSOClient/FSO.Server.Core/FSO.Server.Core.csproj -r linux-x64
 
 # Now bring in the full source (bin/obj/.git are kept out by the repo-root .dockerignore, so stale local
 # build output can't bust these layers or leak into the image) and build against the cached restore.
@@ -38,7 +40,7 @@ COPY TSOClient/ TSOClient/
 COPY Other/libs/MSDFData/ Other/libs/MSDFData/
 COPY Other/libs/TargaImagePCL/ Other/libs/TargaImagePCL/
 RUN dotnet publish TSOClient/FSO.Server.Core/FSO.Server.Core.csproj \
-    -c Release --self-contained false --no-restore -o /app
+    -c Release -r linux-x64 --self-contained false --no-restore -o /app
 
 # Stage 2: Runtime
 FROM mcr.microsoft.com/dotnet/aspnet:10.0

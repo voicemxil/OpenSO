@@ -7,8 +7,9 @@
         <RootNamespace>FSO.Unix</RootNamespace>
         <AssemblyName>OpenSO</AssemblyName>
         <ApplicationIcon>fso.ico</ApplicationIcon>
-        <PublishReadyToRun>false</PublishReadyToRun>
-        <TieredPGO>true</TieredPGO>
+        <!-- R2R precompile for release publishes, matching the Windows client — linux/osx players
+             otherwise pay full JIT warmup at launch. Per-push CI overrides this off for speed. -->
+        <PublishReadyToRun>true</PublishReadyToRun>
         <_EnableMacOSCodeSign>false</_EnableMacOSCodeSign>
         <PublishAot>false</PublishAot>
         <PublishTrimmed>false</PublishTrimmed>

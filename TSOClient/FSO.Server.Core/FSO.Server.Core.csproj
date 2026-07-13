@@ -11,6 +11,14 @@
     <PublishAot>false</PublishAot>
     <IsAotCompatible>false</IsAotCompatible>
 	<SelfContained>False</SelfContained>
+    <!-- Server GC: a long-running multi-lot game server is throughput-bound; the default workstation
+         GC is tuned for desktop apps. DATAS (default with ServerGC on .NET 10) keeps heap growth
+         adaptive on small deploy boxes. GC-only — no effect on SimAntics lockstep determinism. -->
+    <ServerGarbageCollection>true</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <!-- R2R removes JIT warmup spikes when the first lots spin up after a deploy. Needs a RID at
+         publish time (CI and docker both pass one); per-push CI overrides this off for speed. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

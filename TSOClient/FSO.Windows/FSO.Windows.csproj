@@ -15,7 +15,6 @@
     <TrimMode>partial</TrimMode>
     <ApplicationIcon>openso.ico</ApplicationIcon>
     <PublishReadyToRun>true</PublishReadyToRun>
-    <TieredPGO>true</TieredPGO>
   </PropertyGroup>
 
   <ItemGroup>

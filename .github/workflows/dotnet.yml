@@ -170,8 +170,10 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
+      # PublishReadyToRun=false: same rationale as build-client — the csproj opts into R2R for
+      # shipped builds (release.yml/docker), per-push CI only verifies compilation.
       - name: Publish server
-        run: dotnet publish TSOClient/FSO.Server.Core -c Release -r ${{ matrix.rid }} --self-contained -o Artifacts/Server
+        run: dotnet publish TSOClient/FSO.Server.Core -c Release -r ${{ matrix.rid }} --self-contained -p:PublishReadyToRun=false -o Artifacts/Server
       # Zip before upload — same rationale as build-client (thousands of loose self-contained files).
       - name: Package (Unix)
         if: runner.os != 'Windows'
