@@ -8,6 +8,7 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Channels;
@@ -62,7 +63,9 @@ namespace FSO.Server.Clients
         private class Session
         {
             public TcpClient Tcp;
-            public NetworkStream Stream;
+            public Stream Stream;           // NetworkStream, or SslStream when UseTLS
+            public bool UseTLS;
+            public string TargetHost;       // hostname for TLS SNI/validation
             public readonly Channel<object> WriteQueue = Channel.CreateUnbounded<object>(
                 new UnboundedChannelOptions { SingleReader = true });
             public readonly DateTime CreationTime = DateTime.Now;
@@ -103,10 +106,19 @@ namespace FSO.Server.Clients
 
         public void Connect(string address)
         {
-            Connect(IPEndPointUtils.CreateIPEndPoint(address));
+            // "tls://host:port" opts this connection into TLS; a bare "host:port" stays plain
+            bool tls = address.StartsWith("tls://", StringComparison.OrdinalIgnoreCase);
+            if (tls) address = address.Substring("tls://".Length);
+            var host = address.Substring(0, Math.Max(0, address.LastIndexOf(':')));
+            Connect(IPEndPointUtils.CreateIPEndPoint(address), tls, host);
         }
 
         public void Connect(IPEndPoint target)
+        {
+            Connect(target, false, null);
+        }
+
+        private void Connect(IPEndPoint target, bool tls, string targetHost)
         {
             Session old;
             lock (this)
@@ -121,7 +133,11 @@ namespace FSO.Server.Clients
                 Close(old);
             }
 
-            var session = new Session();
+            var session = new Session
+            {
+                UseTLS = tls,
+                TargetHost = string.IsNullOrEmpty(targetHost) ? target.Address.ToString() : targetHost
+            };
             lock (this) Current = session;
             Task.Run(() => Run(session, target));
         }
@@ -183,7 +199,17 @@ namespace FSO.Server.Clients
                     return;
                 }
 
-                session.Stream = session.Tcp.GetStream();
+                Stream stream = session.Tcp.GetStream();
+                if (session.UseTLS)
+                {
+                    // standard chain validation, except loopback targets may use self-signed
+                    // certs (local test stacks)
+                    var ssl = new SslStream(stream, false, (sender, cert, chain, errors) =>
+                        errors == SslPolicyErrors.None || System.Net.IPAddress.IsLoopback(target.Address));
+                    await ssl.AuthenticateAsClientAsync(session.TargetHost);
+                    stream = ssl;
+                }
+                session.Stream = stream;
                 session.Opened = true;
                 FireEvent(session, s => s.SessionCreated(this));
                 FireEvent(session, s => s.SessionOpened(this));

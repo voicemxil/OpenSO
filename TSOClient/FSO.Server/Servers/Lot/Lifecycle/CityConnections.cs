@@ -187,10 +187,23 @@ namespace FSO.Server.Servers.Lot.Lifecycle
                 _Connecting = true;
             }
 
-            //TODO: Fix TLS support
-            var endpoint = CityConfig.Host.Replace("100", "101");
+            var endpoint = CityEndpoint;
             LOG.Info("Lot server connecting to city server: " + endpoint);
             Client.Connect(endpoint);
+        }
+
+        /// <summary>
+        /// The connectable city endpoint. A "tls://host:port" host is used verbatim (AriesClient
+        /// handles the handshake); legacy plain hosts keep the old xx100 -> xx101 port transform.
+        /// </summary>
+        private string CityEndpoint
+        {
+            get
+            {
+                return CityConfig.Host.StartsWith("tls://")
+                    ? CityConfig.Host
+                    : CityConfig.Host.Replace("100", "101");
+            }
         }
 
         public void AuthenticationEstablished()
@@ -198,8 +211,7 @@ namespace FSO.Server.Servers.Lot.Lifecycle
             Connected = true;
             _Connecting = false;
 
-            var endpoint = CityConfig.Host.Replace("100", "101");
-            LOG.Info("Lot server connected to city server: " + endpoint);
+            LOG.Info("Lot server connected to city server: " + CityEndpoint);
 
             if(OnConnected != null)
             {
