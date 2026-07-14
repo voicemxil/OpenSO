@@ -31,10 +31,6 @@ namespace FSO.LotView.Utils
         public static float MotionTrustCap = 0.75f; // re-raised 0.58->0.75 (final direction: edges TREATED during motion, not raw — safe now that motion history is direct-clamped ghost-free; the deep-ish trust is what smooths the edge)
         // gammaEff *= lerp(1, MotionClampTighten, moveGate * 0.8 * upscale fade)
         public static float MotionClampTighten = 0.72f;
-        // rawSoften = saturate((blend - Onset) * Slope) * (1 - moveGate * MotionSup)
-        public static float RawSoftenOnset = 0.12f;
-        public static float RawSoftenSlope = 0.0f; // A/B 2026-07-07: soften OFF — the haze on un-accumulated pixels WAS the filtSoft display swap (predates the Lanczos+hull reconstruction it compensated for; Lite displays reconstruction directly and reads crisp). If speckle returns on reveals, restore ~1.2 with Onset 0.3 (evidence-only band) instead of the old 2.2/0.12.
-        public static float RawSoftenMotionSup = 0.65f; // settled middle after the raw(0.85)<->hazy(0.45) oscillation: moving raw-state pixels ~35% softened
         // Variance clamp base width in sigma (TAA_Core's GAMMA; TAALite keeps its own 1.5 literal)
         public static float Gamma = 1.5f;
         // blend = max(blend, texDetail * TexDetailFloor * (1 - oscLock))

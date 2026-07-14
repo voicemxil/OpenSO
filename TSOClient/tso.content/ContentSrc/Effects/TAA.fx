@@ -67,9 +67,6 @@ float TuneMoveGateHi = 2.0;          // moveGate smoothstep upper edge (native p
 float TuneRespEnd = 0.60;            // responsive end of the diff-driven blend lerp (full-diff history weight)
 float TuneMotionTrustCap = 0.65;     // motion trust cap at upscale (interior-texture ghost lever)
 float TuneMotionClampTighten = 0.72; // motion-scaled variance-clamp tighten at upscale (self-reveal lever)
-float TuneRawSoftenOnset = 0.12;     // raw-state display soften: blend onset
-float TuneRawSoftenSlope = 2.2;      // raw-state display soften: slope past onset
-float TuneRawSoftenMotionSup = 0.85; // raw-state display soften: suppression under coherent motion
 float TuneGamma = 1.5;               // variance clamp base width (sigma) — TAA_Core's GAMMA
 float TuneTexDetailFloor = 0.28;     // texture-detail blend floor / low-variance anti-ghost backstop
 float TuneConfFloor = 0.14;          // TAAU sample-confidence floor (the <=2x-ratio endpoint)
@@ -340,14 +337,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #endif
     float3 kx3 = float3(RECONK(abs(fracd.x - 1.0) * kscaleEff), RECONK(abs(fracd.x) * kscaleEff), RECONK(abs(fracd.x + 1.0) * kscaleEff));
     float3 ky3 = float3(RECONK(abs(fracd.y - 1.0) * kscaleEff), RECONK(abs(fracd.y) * kscaleEff), RECONK(abs(fracd.y + 1.0) * kscaleEff));
-    // Render-texel-scale weights (kscale 1) for the SOFT display reconstruction (see loop).
-    // SM4-ONLY: the soft display path and several other register-heavy features below overflow ps_3_0's
-    // 32 temp registers (CI X4505 on OGL); SM3/OGL runs the lean resolve.
+    // SM4-ONLY (here and below): several register-heavy features overflow ps_3_0's 32 temp registers
+    // (CI X4505 on OGL); SM3/OGL runs the lean resolve.
 #if SM4
-    float3 kx1 = float3(MitchellK(abs(fracd.x - 1.0)), MitchellK(abs(fracd.x)), MitchellK(abs(fracd.x + 1.0)));
-    float3 ky1 = float3(MitchellK(abs(fracd.y - 1.0)), MitchellK(abs(fracd.y)), MitchellK(abs(fracd.y + 1.0)));
-    float3 filtSoft = 0;
-    float wsumSoft = 0;
     // 3x3 tap hull for the Lanczos dering clamp: the negative lobes may only sharpen WITHIN the local data
     // range, never overshoot past it. Taps are already fetched — ALU only.
     float3 reconHullMin = 1e9;
@@ -392,13 +384,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // separable kernel blended toward the edge-elongated radial kernel by edgeAniso.
         float2 tapUV = (baseTexel + float2(dx, dy) + 0.5) * InvColorSize;
         float3 craw = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(tapUV, 0, 0)).rgb);
-        // SOFT reconstruction (render-texel-scale Mitchell, no depth/aniso weighting): the display path
-        // for legitimately-rejected pixels — a proper smooth upscale of the current frame instead of
-        // near-raw. Same taps, ALU only.
 #if SM4
-        float wSoft = kx1[dx + 1] * ky1[dy + 1];
-        filtSoft += craw * wSoft;
-        wsumSoft += wSoft;
         reconHullMin = min(reconHullMin, craw);
         reconHullMax = max(reconHullMax, craw);
 #endif
@@ -1071,8 +1057,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // error each frame that no detector can see (innovation below the texture's own sigma, foreign 0 on
     // mover interiors) — with a deep window the residue rides for seconds as surface ghosting. Cap trust
     // while the pixel itself is moving: the surface continuously refreshes and the moving state reads as
-    // spatially-AA'd reconstruction (paired with the motion-suppressed soften at the display stage). At
-    // rest the cap releases and full convergence resumes. Ghost-safe by direction. Native untouched.
+    // spatially-AA'd reconstruction. At rest the cap releases and full convergence resumes. Ghost-safe
+    // by direction. Native untouched.
     historyWeight = min(historyWeight, lerp(1.0, TuneMotionTrustCap, moveGate * smoothstep(1.0, 1.5, upscaleRatio)));
 
     // OSCILLATION TRUST (anti-fizzle action). Every gate must pass: proven sign-alternation (a ghost
@@ -1166,23 +1152,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float texFloorArm = max(gammaMotion, 1.0 - saturate(minN * (1.0 / 24.0)));
     blend = max(blend, texDetail * TuneTexDetailFloor * (1.0 - oscLock) * texFloorArm);
 
-    // RAW-STATE SPATIAL SOFTENING (upscale only; current-frame data only — zero ghost risk): when the
-    // floors/rejects legitimately force a pixel mostly-raw, display the smooth reconstruction instead of
-    // the near-point one — honest content with smooth edges instead of sharply-upscaled jaggies.
-    // Converged pixels (low blend) keep the crisp reconstruction bit-exactly.
-    float3 dispCurr = curr;
-#if SM4 // ps_3_0 temp-register budget — SM3 displays the sharp reconstruction as-is
-    if (upscaleRatio > 1.001)
-    {
-        // MOTION-SUPPRESSED: the soften covers STATIC raw states (reveals at rest, warmup, low-coverage
-        // phases); under coherent motion the display stays on the crisp deringed reconstruction — which
-        // IS the spatial AA — pairing with the motion trust cap so the moving state reads
-        // sharp-and-refreshing rather than soft-and-stale.
-        float rawSoften = saturate((blend - TuneRawSoftenOnset) * TuneRawSoftenSlope) * (1.0 - moveGate * TuneRawSoftenMotionSup);
-        dispCurr = lerp(curr, filtSoft / max(wsumSoft, 1e-4), rawSoften);
-    }
-#endif
-
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     // ALWAYS ON by default (TuneKarisFade 0 — the TAALite/TSR/FSR behavior): sparkle suppression matters
     // most during pans, and depth-evidenced reveals are owned by the structural rejects. The weighting is
@@ -1192,9 +1161,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float lumaFade = max(moveGate, storedMove) * TuneKarisFade;
     float wc = blend * lerp(1.0 / (1.0 + max(lumaC, 0.0)), 1.0, lumaFade);
     float wh = (1.0 - blend) * lerp(1.0 / (1.0 + max(lumaH, 0.0)), 1.0, lumaFade);
-    float3 blended = (dispCurr * wc + history * wh) / max(wc + wh, 1e-5);
+    float3 blended = (curr * wc + history * wh) / max(wc + wh, 1e-5);
 
-    float3 outYCoCg = reprojectable ? blended : dispCurr;
+    float3 outYCoCg = reprojectable ? blended : curr;
 
     // Sentinel 2.0 ("no velocity anywhere in the 3x3") must NOT survive into an fp16 history alpha: next
     // frame it would read as outside every valid depth range and paint a permanent depthReject ring

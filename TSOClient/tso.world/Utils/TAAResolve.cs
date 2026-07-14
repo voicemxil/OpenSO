@@ -195,9 +195,6 @@ namespace FSO.LotView.Utils
             effect.Parameters["TuneRespEnd"]?.SetValue(TAATuning.RespEnd);
             effect.Parameters["TuneMotionTrustCap"]?.SetValue(TAATuning.MotionTrustCap);
             effect.Parameters["TuneMotionClampTighten"]?.SetValue(TAATuning.MotionClampTighten);
-            effect.Parameters["TuneRawSoftenOnset"]?.SetValue(TAATuning.RawSoftenOnset);
-            effect.Parameters["TuneRawSoftenSlope"]?.SetValue(TAATuning.RawSoftenSlope);
-            effect.Parameters["TuneRawSoftenMotionSup"]?.SetValue(TAATuning.RawSoftenMotionSup);
             effect.Parameters["TuneGamma"]?.SetValue(TAATuning.Gamma);
             effect.Parameters["TuneTexDetailFloor"]?.SetValue(TAATuning.TexDetailFloor);
             effect.Parameters["TuneConfFloor"]?.SetValue(TAATuning.ConfFloor);
