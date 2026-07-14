@@ -305,7 +305,7 @@ namespace FSO.Client.UI
 
             if (state.AltDown && state.NewKeys.Contains(Microsoft.Xna.Framework.Input.Keys.Enter))
             {
-                GameFacade.GraphicsDeviceManager.ToggleFullScreen();
+                ToggleFullscreenMode();
             }
 
             lock (m_ExtContainers)
@@ -333,6 +333,53 @@ namespace FSO.Client.UI
 
             Tooltip = state.UIState.Tooltip;
             TooltipProperties = state.UIState.TooltipProperties;
+        }
+
+        private Point _lastWindowedSize;
+
+        /// <summary>
+        /// Alt+Enter borderless fullscreen toggle. Fullscreen renders at the display's native
+        /// resolution; leaving fullscreen restores the previous windowed size rather than keeping
+        /// the display-sized backbuffer (which the OS would clamp, desyncing image and mouse).
+        /// </summary>
+        private void ToggleFullscreenMode()
+        {
+            var gdm = GameFacade.GraphicsDeviceManager;
+            var window = GameFacade.Game.Window;
+            var display = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+            if (!gdm.IsFullScreen)
+            {
+                _lastWindowedSize = new Point(
+                    Math.Max(1, window.ClientBounds.Width),
+                    Math.Max(1, window.ClientBounds.Height));
+                gdm.PreferredBackBufferWidth = display.Width;
+                gdm.PreferredBackBufferHeight = display.Height;
+            }
+            else
+            {
+                var size = _lastWindowedSize;
+                if (size == Point.Zero)
+                {
+                    size = new Point(
+                        (int)(GlobalSettings.Default.GraphicsWidth * FSOEnvironment.DPIScaleFactor),
+                        (int)(GlobalSettings.Default.GraphicsHeight * FSOEnvironment.DPIScaleFactor));
+                }
+                // never restore to a size covering the whole display - it cannot fit as a window
+                if (size.X >= display.Width && size.Y >= display.Height)
+                {
+                    size = new Point(display.Width * 4 / 5, display.Height * 4 / 5);
+                }
+                gdm.PreferredBackBufferWidth = size.X;
+                gdm.PreferredBackBufferHeight = size.Y;
+            }
+            gdm.ToggleFullScreen();
+
+            var width = Math.Max(1, window.ClientBounds.Width);
+            var height = Math.Max(1, window.ClientBounds.Height);
+            SpriteBatch?.ResizeBuffer(width, height);
+            GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
+            GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);
+            CurrentUIScreen?.GameResized();
         }
 
         private void HandleFocusNavigation(UpdateState state, UIContainer root)

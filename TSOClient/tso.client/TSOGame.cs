@@ -54,8 +54,24 @@ namespace FSO.Client
             FSOEnvironment.DPIScaleFactor = GlobalSettings.Default.DPIScaleFactor;
             if (!FSOEnvironment.SoftwareDepth)
             {
-                Graphics.PreferredBackBufferWidth = (int)(GlobalSettings.Default.GraphicsWidth * FSOEnvironment.DPIScaleFactor);
-                Graphics.PreferredBackBufferHeight = (int)(GlobalSettings.Default.GraphicsHeight * FSOEnvironment.DPIScaleFactor);
+                var width = (int)(GlobalSettings.Default.GraphicsWidth * FSOEnvironment.DPIScaleFactor);
+                var height = (int)(GlobalSettings.Default.GraphicsHeight * FSOEnvironment.DPIScaleFactor);
+                if (GlobalSettings.Default.Windowed)
+                {
+                    // A saved windowed size that covers the whole display is a stale fullscreen size:
+                    // the OS clamps the window, the backbuffer no longer matches the client area, and
+                    // the image is stretched with an offset mouse cursor. Shrink it to fit.
+                    var display = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
+                    if (width >= display.Width && height >= display.Height)
+                    {
+                        width = display.Width * 4 / 5;
+                        height = display.Height * 4 / 5;
+                        GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
+                        GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);
+                    }
+                }
+                Graphics.PreferredBackBufferWidth = width;
+                Graphics.PreferredBackBufferHeight = height;
                 //Graphics.PreferMultiSampling = true;
                 Graphics.PreferredDepthStencilFormat = DepthFormat.Depth24Stencil8;
                 TargetElapsedTime = new TimeSpan(10000000 / GlobalSettings.Default.TargetRefreshRate);
@@ -81,7 +97,11 @@ namespace FSO.Client
         bool newChange = false;
         void Window_ClientSizeChanged(object sender, EventArgs e)
         {
-            if (newChange || !GlobalSettings.Default.Windowed) return;
+            // Gate on the live fullscreen state, not the persisted Windowed setting: Alt+Enter
+            // toggles fullscreen without touching the setting, and a fullscreen-driven resize must
+            // never be recorded as the windowed size (it makes the next windowed launch open at
+            // full display size, which the OS clamps - stretched image + offset mouse).
+            if (newChange || Graphics.IsFullScreen) return;
             if (Window.ClientBounds.Width == 0 || Window.ClientBounds.Height == 0) return;
             newChange = true;
             var width = Math.Max(1, Window.ClientBounds.Width);
@@ -89,16 +109,13 @@ namespace FSO.Client
             Graphics.PreferredBackBufferWidth = width;
             Graphics.PreferredBackBufferHeight = height;
             Graphics.ApplyChanges();
-
-            GlobalSettings.Default.GraphicsWidth = width;
-            GlobalSettings.Default.GraphicsHeight = height;
-
             newChange = false;
-            if (uiLayer?.CurrentUIScreen == null) return;
 
-            uiLayer.SpriteBatch.ResizeBuffer(GlobalSettings.Default.GraphicsWidth, GlobalSettings.Default.GraphicsHeight);
             GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
             GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);
+
+            if (uiLayer?.CurrentUIScreen == null) return;
+            uiLayer.SpriteBatch.ResizeBuffer(width, height);
             uiLayer.CurrentUIScreen.GameResized();
         }
 
@@ -318,6 +335,15 @@ namespace FSO.Client
             if (!GlobalSettings.Default.Windowed && !GameFacade.GraphicsDeviceManager.IsFullScreen)
             {
                 GameFacade.GraphicsDeviceManager.ToggleFullScreen();
+            }
+            else if (!FSOEnvironment.SoftwareDepth && !GameFacade.GraphicsDeviceManager.IsFullScreen &&
+                (Window.ClientBounds.Width != Graphics.PreferredBackBufferWidth ||
+                 Window.ClientBounds.Height != Graphics.PreferredBackBufferHeight))
+            {
+                // The OS can clamp an oversized window during creation without raising
+                // ClientSizeChanged, leaving the backbuffer desynced from the client area
+                // (the artifact users worked around by toggling fullscreen). Resync now.
+                Window_ClientSizeChanged(null, EventArgs.Empty);
             }
 
             if (GameFacade.Linux) MP3Player.NewMode = false;
