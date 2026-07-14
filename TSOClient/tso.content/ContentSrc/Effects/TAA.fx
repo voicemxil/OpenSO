@@ -316,14 +316,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float2 en = grad / max(gmag, 1e-5);   // across-edge unit direction
     float2 et = float2(-en.y, en.x);      // along-edge unit direction
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0)); // neighborhood stddev (clamp box + clutter test below)
-    // CLUTTER-ADAPTIVE KERNEL WIDTH: foliage is isotropic sub-pixel clutter — high variance, no coherent
-    // gradient direction — and at high ratio the output-sized kernel is too tight to bridge neighbouring
-    // fragments (fizzle instead of consolidation). Widen toward 0.78x on directionless high-variance
-    // neighbourhoods at extreme upscale; lines (dirCoherence -> 1) keep the sharp anisotropic kernel; flat
-    // regions and ratios <= 1.5 are bit-exact unchanged.
+    // CLUTTER SIGNAL: directionless high-variance neighbourhoods (foliage-class isotropic sub-pixel
+    // clutter — high sigma, no coherent gradient direction). Consumed by the speckle consolidation in
+    // the reconstruction below.
     float dirCoherence = smoothstep(0.15, 0.5, gmag);
     float clutter = smoothstep(0.10, 0.25, sigma.x) * (1.0 - dirCoherence);
-    float kscaleEff = kscale * lerp(1.0, 0.78, clutter * saturate(upscaleRatio - 1.5));
     // Tap k in {-1,0,1} sits at distance fracd + k.
     // KERNEL SELECT: at upscale the reconstruction kernel is the FSR2 Lanczos2 approximation (negative
     // lobes = passband distinctness; ringing bounded by the 3x3 tap-hull clamp at the reconstruction
@@ -335,8 +332,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #else
     #define RECONK(x) MitchellK(x)
 #endif
-    float3 kx3 = float3(RECONK(abs(fracd.x - 1.0) * kscaleEff), RECONK(abs(fracd.x) * kscaleEff), RECONK(abs(fracd.x + 1.0) * kscaleEff));
-    float3 ky3 = float3(RECONK(abs(fracd.y - 1.0) * kscaleEff), RECONK(abs(fracd.y) * kscaleEff), RECONK(abs(fracd.y + 1.0) * kscaleEff));
+    float3 kx3 = float3(RECONK(abs(fracd.x - 1.0) * kscale), RECONK(abs(fracd.x) * kscale), RECONK(abs(fracd.x + 1.0) * kscale));
+    float3 ky3 = float3(RECONK(abs(fracd.y - 1.0) * kscale), RECONK(abs(fracd.y) * kscale), RECONK(abs(fracd.y + 1.0) * kscale));
     // SM4-ONLY (here and below): several register-heavy features overflow ps_3_0's 32 temp registers
     // (CI X4505 on OGL); SM3/OGL runs the lean resolve.
 #if SM4
@@ -394,7 +391,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
             float2 vtap = fracd + float2(dx, dy);
             float dAcross = dot(vtap, en);
             float dAlong = dot(vtap, et);
-            float wAni = RECONK(sqrt(dAcross * dAcross + dAlong * dAlong * 0.25) * kscaleEff);
+            float wAni = RECONK(sqrt(dAcross * dAcross + dAlong * dAlong * 0.25) * kscale);
             w = lerp(w, wAni, edgeAniso);
         }
         // DEPTH-AWARE KERNEL WEIGHT (upscale-only): unweighted, the 9 taps mix foreground and background
