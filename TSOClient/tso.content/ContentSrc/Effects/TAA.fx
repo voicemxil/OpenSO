@@ -880,7 +880,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // GROWTH is witness-gated only once EVIDENCE exists: the witness rule protects converged history from
     // off-phase false testimony, but a fresh pixel counts every frame (all samples are information when
     // you know nothing) — the off-phase discount fades in with minN.
-    float growK = agreeK * lerp(1.0, lerp(TuneGrowOffPhase, 1.0, testify), saturate(prevN / 8.0));
+    // ALTERNATION GROWTH BOOST: proven sign-alternation is strong evidence, so it earns trust FASTER
+    // (replacing the old display-time oscillation trust ceiling, which granted unearned depth after
+    // the caps — the raise-after-cap bug class). Relative motion carve-out matches agreeK's.
+    float growK = agreeK * lerp(1.0, lerp(TuneGrowOffPhase, 1.0, testify), saturate(prevN / 8.0))
+                * lerp(1.0, 2.5, smoothstep(0.35, 0.7, osc) * (1.0 - relMotion));
     float newN = reprojectable ? min(prevN * collapse + growK, MaxAccum) : 0.0;
     // Ghost-side reject RESETS the counter: the surface that wrote the history has provably left, so the
     // honest treatment is the same as off-screen — raw current, then the warmup ramp rebuilds. SHAPED:
@@ -1059,171 +1063,72 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // under drift via the thin-line relaxation, which needs no stillness.
     history = lerp(history, historyRaw, oscLock * (1.0 - 0.5 * oscAmp) * (1.0 - slowMotion));
 
-    // --- Blend: content-adaptive luminance-feedback weight, diff-driven. The counter (newN) feeds the
-    //     deep end and the warmup ramp; it does not drive the clamp. ---
-    // The confidence check uses the NEIGHBOURHOOD MEAN (m1.x), not the single raw jittered sample: a
-    // single tap of high-frequency content flips between wildly different values every frame BY DESIGN
-    // even once fully converged — comparing it to the smoothed history reads as permanent "change" and
-    // pins the blend responsive forever. m1 averages out per-sample noise while still moving immediately
-    // on a real change. Only the confidence signal changes — the displayed blend still uses the sharp curr.
+    // === BLEND — FSR2-style two-owner form: A = accumulated trust (in N-units, from the Kalman
+    // counter), c = this frame's information. blend = c / (c + A). Every mechanism modifies exactly
+    // one of the two quantities; nothing writes the blend directly, so the result is ORDERLESS —
+    // no raise-after-cap or floor-after-throttle interactions can exist. Warmup, honest disocclusion,
+    // and the deep window are emergent: A = 0 IS the raw frame, A small IS the warmup ramp (the old
+    // EMA floor and warmup ramp cancel algebraically into c/(c+N)), the window cap IS the EMA depth.
+    // A-cap identity: a target history weight w at c = 1 is the cap A = w / (1 - w).
     float lumaH = history.x; // display-side luma (Karis weights); the DIFF uses the resolution-matched lumaHCmp
+
+    // --- Shading-change signal (the one luma-driven trust reducer). Compared on the neighbourhood
+    // mean vs the resolution-matched history low component (a single high-frequency tap flips per
+    // phase by design). The filtered verdict bounds it (aliasing-sized diffs may be silenced, the
+    // rest-state flicker win) but the suppression is MAGNITUDE-BOUNDED — residue-sized diffs always
+    // pass (a mover trail two pixels behind the character has no motion signals left; only its
+    // magnitude betrays it) — and drift restores full point-diff authority (TAALite behavior).
     float diff = saturate(abs(m1.x - lumaHCmp) / max(0.2, max(m1.x, lumaHCmp)));
-    // The filtered rejection verdict BOUNDS the point diff (min): where the blur-domain comparison says
-    // the difference is aliasing, not shading, the point diff may not erode trust. Real changes fire
-    // both and pass unchanged; SM3's filtReject stays 1 (bit-identical there). Structural rejects
-    // still enter at full strength below.
-    // MAGNITUDE-BOUNDED suppression with a drift carve-out: over textured backgrounds the blur-domain
-    // box is wide, so deposited residue reads "in-box aliasing" and the very diff that would scrub it
-    // is silenced. The suppression may quiet aliasing-SIZED diffs (the rest-state flicker win) but
-    // never residue-SIZED ones — a mover trail two pixels behind the character has NO motion signals
-    // left (own velocity zero, remembered velocity expired, depth evidence self-erased), and only its
-    // magnitude betrays it. Drift additionally restores full point-diff authority (TAALite behavior).
     diff = min(diff, max(max(filtReject, slowMotion), smoothstep(0.15, 0.35, diff)));
     diff = max(max(diff, depthReject), max(max(ghostReject, featReject), ringContam));
-    // KALMAN DEEP END: the deep end follows the Kalman gain N/(N+1) once the EVIDENCE counter outgrows
-    // the EMA baseline — reference upscalers converge fine detail because accumulation approaches an
-    // equal-weight running average, which a fixed EMA floor never can. Safe because N counts witnessed
-    // agreement (sigma-normalized innovation, sign-alternation aware, witness-ruled), collapses on
-    // disagreement, and is reset/capped by every disocclusion path — a stale pixel structurally cannot
-    // keep a large N. The diff term still lerps toward full responsiveness instantly on top.
+
+    // --- A: accumulated trust. The Kalman counter IS the trust state (witnessed, sigma-normalized,
+    // alternation-aware, collapsed on disagreement, reset by disocclusion); everything below may only
+    // CAP it. The window cap is the EMA depth: native keeps TuneDeepCapBase's window, heavy upscale
+    // gets the cycle-hiding window (the deep end must exceed the Halton cycle it hides). ---
     float minN = min(prevN, newN);
-    // Deep-end cap = the CYCLE-HIDING WINDOW at upscale: excess depth beyond ~one Halton cycle buys
-    // nothing visible on converged content but preserves slight sub-threshold reprojection residue behind
-    // motion (small innovation reads as agreement, N maxes, deep history holds the residue after all
-    // motion evidence is gone). cycleWindow mirrors the lock path's cycleCeil (JitterPhases-driven),
-    // aligning the two deep paths. Fades in over ratio 1.2..1.8; native keeps TuneDeepCapBase.
-    float cycleWindow = clamp(1.0 - 1.0 / (1.0 * JitterPhases), 0.965, 0.99);
-    float deepCap = lerp(TuneDeepCapBase, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio));
-    float deepEnd = min(max(1.0 - BlendFactor, minN / (minN + 1.0)), deepCap);
-    // Responsive end: the structural rejects (depth/ghost/center/foreign/feature) own disocclusion duty
-    // and enter this lerp through the max() above at full strength; pure-luma responsiveness is gentler
-    // (~40%/frame, fully responsive in ~3 frames).
-    float historyWeight = lerp(deepEnd, TuneRespEnd, diff);
-    // Velocity-disparity reactive caps the history trust directly (soft — keeps a moving-content pixel
-    // from pulsing aliased when the camera stops).
-    historyWeight = min(historyWeight, lerp(1.0, 0.85, reactive));
-    // Foreign-velocity trust cap — MILD only: a safety net for imperfect own-velocity (e.g. unwritten
-    // alpha fringes decoding as zero); a hard cap re-creates raw jitter crunch on the ring.
-    historyWeight = min(historyWeight, lerp(1.0, 0.92, foreign));
-    // Velocityless-overlay cap (see noVel above): headline icons / speech bubbles get an ~8-frame window
-    // — fresh animation, no smear.
-    historyWeight = min(historyWeight, lerp(1.0, 0.88, noVel));
-    // MOTION TRUST CAP (upscale-only): a coherently-moving surface accumulates sub-pixel reprojection
-    // error each frame that no detector can see (innovation below the texture's own sigma, foreign 0 on
-    // mover interiors) — with a deep window the residue rides for seconds as surface ghosting. Cap trust
-    // while the pixel itself is moving: the surface continuously refreshes and the moving state reads as
-    // spatially-AA'd reconstruction. At rest the cap releases and full convergence resumes. Ghost-safe
-    // by direction. Native untouched.
-    historyWeight = min(historyWeight, lerp(1.0, TuneMotionTrustCap, moveGate * smoothstep(1.0, 1.5, upscaleRatio)));
-    // YOUNG-PIXEL MOTION CAP: the cap above protects CONVERGED pixels at walking speed, but a
-    // still-filling pixel (low N) under small drift has nothing capping its freshly-built, smeared
-    // history — the fill-in trail. Same cap, armed from the slow-drift band, fading out entirely by
-    // ~12 evidence frames; converged pixels and native are untouched.
-    historyWeight = min(historyWeight, lerp(1.0, TuneMotionTrustCap,
-        max(slowMotion, storedMove) * (1.0 - saturate(minN * (1.0 / 12.0))) * smoothstep(1.0, 1.5, upscaleRatio)));
+    float capNative = min(TuneDeepCapBase / max(1.0 - TuneDeepCapBase, 1e-3), MaxAccum);
+    float capCycle = clamp(1.2 * JitterPhases - 1.0, 27.0, 99.0);
+    float A = min(minN, lerp(capNative, capCycle, smoothstep(1.2, 1.8, upscaleRatio)));
+    // Shading change: full diff drives trust to the responsive window (RespEnd in A-units).
+    A = lerp(A, min(A, TuneRespEnd / max(1.0 - TuneRespEnd, 1e-3)), diff);
+    // Structural trust caps, each the old w-cap converted (A = w/(1-w)):
+    A = lerp(A, min(A, 5.7), reactive);                 // velocity disparity (w 0.85)
+    A = lerp(A, min(A, 11.5), foreign);                 // dilation-ring safety net (w 0.92, mild)
+    A = lerp(A, min(A, 7.3), noVel);                    // velocityless overlays: ~8-frame window
+    float upsFade = smoothstep(1.0, 1.5, upscaleRatio);
+    // Motion trust cap (converged movers) + young-pixel cap (filling pixels under small drift):
+    float capMotionA = TuneMotionTrustCap / max(1.0 - TuneMotionTrustCap, 1e-3);
+    A = lerp(A, min(A, capMotionA), moveGate * upsFade);
+    A = lerp(A, min(A, capMotionA), max(slowMotion, storedMove) * (1.0 - saturate(minN * (1.0 / 12.0))) * upsFade);
+    // Evidence-gated motion refresh (the old additive motionBoost as an A-cap): full strength only
+    // where something is suspicious; evidence-silent pans keep the small floor share.
+    float boostK = saturate(vmag * 20.0) * lerp(TuneMotionBoostFloor, 1.0, suspicion)
+                 * saturate(TuneMotionBoostMax * (1.0 / 0.22));
+    A = lerp(A, min(A, 3.0), boostK);
+    // Texture-detail responsiveness (the anti-ghost backstop where movers walk): evidence-armed —
+    // full near current/remembered motion, fading on converged motion-silent rest; locks exempt.
+    float texFloorArm = max(gammaMotion, 1.0 - saturate(minN * (1.0 / 24.0)));
+    A = lerp(A, min(A, 2.6), texDetail * texFloorArm * (1.0 - oscLock) * saturate(TuneTexDetailFloor * (1.0 / 0.28)));
+    // HONEST DISOCCLUSION (discard, not fade): a confident reject slashes trust so the blend IS the
+    // raw frame; grazing partial rejects lean on the clamp instead. Same shaped knee as before.
+    float honestS = smoothstep(0.55, 0.9, max(depthReject, ghostReject));
+    A = min(A, (1.0 - honestS) / max(honestS, 1e-3));
 
-    // OSCILLATION TRUST (anti-fizzle action). Every gate must pass: proven sign-alternation (a ghost
-    // fails osc), ~zero velocity (a mover fails stillGate), no disocclusion signal, and low diff
-    // (essential — without it this lerp could RAISE trust on a changing pixel). SOFT diff gate: only
-    // large diffs kill the trust — thin geometry's render-res-diluted neighbourhood mean gives it a
-    // permanent baseline diff below ~0.2, so fine geometry keeps its lock; trust dies fully by diff ~0.54.
-    // Known residual: TV/video textures equilibrate at osc~0.5 -> at most slight partial trust,
-    // clamp-bounded.
-    // DRIFT FADE: the ceiling raise is RAISE-ONLY and lands after every trust cap, and the lock's
-    // still-gate tolerates slow pans — under drift that re-grants deep trust to osc-proven background
-    // texture carrying deposited residue (a seconds-long trail TAALite, with no ceiling, never shows).
-    // The cycle-hiding job is a REST need; thin-line pan stability is owned by the same-surface box.
-    float oscTrust = oscLock * (1.0 - saturate((diff - 0.25) * 3.5)) * (1.0 - slowMotion);
-    // CYCLE-AWARE ceiling: the visible repeating jitter pattern at extreme upscale is a cycle-vs-window
-    // mismatch — the deep end must exceed the Halton cycle it has to hide (72 frames at 1/3 scale), so
-    // the ceiling scales with the cycle: 1 - 1/(1.2*cycle), clamped. Ghost-safety gates unchanged: deep
-    // trust still needs sustained alternation, stillness, and no rejects; the Kalman collapse, honest
-    // disocclusion and feature rectification all override from below.
-    float cycleCeil = clamp(1.0 - 1.0 / (1.2 * JitterPhases), 0.965, 0.99);
-    // ENTRY ALIGNED WITH THE LOCK (low-scale only): a partially-locked pixel (osc 0.32..0.55 — where
-    // distant canopy equilibrates at 1/3 scale) must not get lock privileges with only the shallow
-    // ceiling (a window far under the cycle it must hide). Slide the lower edge down to the lock band as
-    // render scale drops; native keeps 0.55 (the TV/video partial-trust guard — at native the 8-frame
-    // cycle fits any window, and content-changing screens are killed by diff).
-    float ceilLo = lerp(0.32, 0.55, floorScale); // 0.55 native -> 0.32 at <= 0.5x, matching the lock entry
-    float oscCeil = min(1.0 - 0.5 * BlendFactor, lerp(0.965, cycleCeil, smoothstep(ceilLo, 0.85, osc)));
-    // RAISE-ONLY: the Kalman deep end can legitimately exceed the lock ceiling — the lock lerp must never
-    // pull earned evidence-trust back down.
-    historyWeight = max(historyWeight, lerp(historyWeight, oscCeil, oscTrust));
-
-    // EVIDENCE-GATED motion boost: full raw boost only where something is actually suspicious (a reject,
-    // foreign velocity, or velocity disparity); an evidence-silent pan keeps only the small floor share
-    // (native has no other anti-lag insurance — the sample-confidence motion regime below is upscale-gated).
-    float motionBoost = saturate(vmag * 20.0) * TuneMotionBoostMax * lerp(TuneMotionBoostFloor, 1.0, suspicion);
-    float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
-
-    // TAAU SAMPLE CONFIDENCE (upscale only — the standard temporal-upscaler mechanism): an output pixel's
-    // nearest real sample is sometimes dead-center and sometimes ~a full render texel away; on the far
-    // frames the reconstruction is pure interpolation, and blending it at full weight injects per-frame
-    // wobble. Weight the current contribution by the nearest sample's kernel proximity: real-sample
-    // frames update strongly, in-between frames lean on history. Off at 1:1; faded under motion.
-    if (upscaleRatio > 1.001) // upscaleRatio/sampleConf hoisted above the Kalman counter
+    // --- c: this frame's information. Base 1; under TAAU scaled by the nearest real sample's kernel
+    // proximity (FSR2's frame weighting — off-phase frames are interpolation and inject less), with
+    // the coverage-scaled anti-starvation floor and the motion regime as before. The old trust-fade
+    // arms the throttle with evidence depth (a fresh pixel counts every frame — this is what makes
+    // the emergent warmup fill at full speed).
+    float c = 1.0;
+    if (upscaleRatio > 1.001)
     {
-        // Floor decays toward 0.08 past 2x ratio (reference-equivalent: FSR2 weights each frame's
-        // contribution by nearest-sample kernel proximity, continuously approaching zero on
-        // information-free phases at heavy ratios — this floor is an anti-starvation invention with no
-        // reference analogue, so decaying it moves toward the references' asymptotic zero).
-        // COVERAGE-SCALED: a frame with no information contributes NOTHING — on zero-coverage frames the
-        // floor would otherwise inject the bilinear fallback, a steady blur + flicker drip. Pure history
-        // hold there; motion and the covering frames carry all responsiveness.
         float confFloor = lerp(TuneConfFloor, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
-        // MOTION-SCALED, not motion-DISABLED: a binary switch to full unfiltered injection under motion is
-        // a hard-raw cliff. Off-phase frames inject at 55% under motion and lean the rest on reprojected
-        // history (AA keeps working while moving); dead-on samples keep full weight; every reject path
-        // still overrides from below. Regime keyed on SUSPICION-scaled motion: coherent pans keep most of
-        // the confidence-weighted accumulation.
-        // TRUST-FADED throttle: the off-phase protection exists for CONVERGED history; a fresh pixel
-        // counts every frame (fast, clean resolve-in), so the throttle fades in with accumulated evidence.
         float confMul = lerp(lerp(confFloor, 1.0, sampleConf), lerp(0.55, 1.0, sampleConf), moveGate * lerp(0.3, 1.0, suspicion));
-        blend *= lerp(1.0, confMul, saturate(minN / TuneConfFadeN));
+        c = lerp(1.0, confMul, saturate(minN / TuneConfFadeN));
     }
 
-    // WARMUP RAMP (counter-driven): with no accumulated history the buffer is BLACK, and blending any of
-    // it darkens the image. Seed from the current frame: full current on the first frame, then 1/2, 1/3...
-    // KEYED OFF min(prevN,newN): prevN is the evidence that actually EXISTS in the history (prevN=0 on
-    // frame one -> blend=1 -> output IS the raw frame), while newN keeps the ghost/reactive soft-caps'
-    // responsiveness boost. Ghost-safe by direction: max() only ever pushes toward more current frame.
-    // LOCK EXEMPTION: a lock structurally cannot coexist with cleared or invalid history (its evidence
-    // resets with the meta), so the ramp has no legitimate job on a locked pixel — without this, a
-    // Kalman-collapsed N re-injects raw jitter over the lock's deep trust.
-    // PHASE-AWARE under TAAU: an off-phase frame's reconstruction is interpolation, and forcing it in
-    // at the full ramp made the whole rebuild window alternate between real detail and interpolation
-    // of it (settle-phase fizzle). Off-phase frames inject at the 55% floor the motion regime uses;
-    // covering frames keep the full ramp. MOTION CARVE-OUT: under any drift the hold is wrong — the
-    // young history is being dragged and resampled, and holding it IS a fill-in trail — so motion
-    // restores the full-ramp refresh. Native 1:1 keeps the plain ramp.
-    float rampConf = (upscaleRatio > 1.001)
-        ? lerp(lerp(0.55, 1.0, sampleConf), 1.0, max(slowMotion, storedMove)) : 1.0;
-    blend = max(blend, (1.0 / (min(prevN, newN) + 1.0)) * rampConf * (1.0 - oscLock));
-
-    // HONEST DISOCCLUSION (reference behavior — discard, not fade): a positively identified disocclusion
-    // means the history is INVALID; blending any of it is wrong by construction. Full-strength reject =
-    // raw frame immediately + the counter reset rebuilds through the warmup ramp. SHAPED knee: a
-    // confident reject buys the full raw frame, while grazing partial rejects — constant along every
-    // moving depth edge because the stored depth is dilated — lean on the motion clamp instead of
-    // injecting fractional raw every frame.
-    blend = max(blend, smoothstep(0.55, 0.9, max(depthReject, ghostReject)));
-
-    // TEXTURE-DETAIL blend floor (pairs with the raw-sample input lean above): the converged value is the
-    // temporal mean over the jitter footprint, which wipes single-texel texture detail. On low-variance
-    // texture regions keep the blend responsive (~3-4 frame window) so the per-frame raw sample dominates.
-    // ALL SCALES: this floor doubles as the anti-ghost backstop on low-variance surfaces (exactly where
-    // movers walk). LOCK BYPASS: semi-uniform fine detail (distant canopy) can read low-variance at
-    // render res and the floor would re-churn it forever under intense TAAU — ghost-safe by the lock's
-    // own argument (ghost residue is monotonic, cannot earn the lock; the lock also dies on motion,
-    // rejects, and foreign velocity).
-    // EVIDENCE-ARMED: permanent raw injection has no reference analogue and reads as stipple on
-    // converged flat surfaces at rest. Full floor wherever there is CURRENT or REMEMBERED motion — a
-    // mover always deposits storedMove on the pixels it leaves, so the trail-scrub window keeps the
-    // whole backstop — fading out only once the pixel is motion-silent AND evidence-deep (a ghost
-    // cannot be hiding there: it needed motion to arrive, which re-arms the floor).
-    float texFloorArm = max(gammaMotion, 1.0 - saturate(minN * (1.0 / 24.0)));
-    blend = max(blend, texDetail * TuneTexDetailFloor * (1.0 - oscLock) * texFloorArm);
+    float blend = saturate(c / max(c + A, 1e-4)); // current-frame weight
 
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     // ALWAYS ON by default (TuneKarisFade 0 — the TAALite/TSR/FSR behavior): sparkle suppression matters
