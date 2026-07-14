@@ -50,7 +50,7 @@ namespace FSO.LotView.Utils
         // GAMMA widening *= (1 - GammaMotionDecay * gammaMotion) — wide-box narrowing strength in motion
         public static float GammaMotionDecay = 0.6f;
         // blend *= lerp(1, confMul, saturate(minN / ConfFadeN)) — evidence depth arming the off-phase throttle
-        public static float ConfFadeN = 20.0f;
+        public static float ConfFadeN = 6.0f; // off-phase throttle arms early: the un-throttled rebuild window read as settle fizzle at heavy TAAU
         // growK = agreeK * lerp(1, lerp(GrowOffPhase, 1, testify), saturate(prevN / 8)) — off-phase growth discount floor
         public static float GrowOffPhase = 0.3f;
         // deepCap = lerp(DeepCapBase, cycleWindow, smoothstep(1.2, 1.8, upscaleRatio)) — deep-end memory cap
@@ -58,9 +58,10 @@ namespace FSO.LotView.Utils
         // thin-line depth-ridge test: ridge fires when both opposite plus-tap depths exceed the center by
         // ThinLineEps * depth (TSR DetectThinGeometry ErrorMultiplier analogue)
         public static float ThinLineEps = 0.02f;
-        // thin-line clamp relaxation: box bounds lerp toward including the history value on proven
-        // ridges (TSR WeightRelaxation consumption), suspicion-gated
-        public static float ThinRelax = 0.3f;
+        // same-surface box share on proven thin ridges: how far the clamp box lerps toward statistics
+        // built from depth-similar taps only (current-frame data; replaces the history-inclusive
+        // relaxation), suspicion-gated
+        public static float ThinRelax = 0.7f;
 
         // ---- TAALite tunables (2026-07-07 promotion). Lite's "raw motion resolve" (the user's
         // Switch-2-DLSS-lite anchor) is the DESIGN CHARACTER — tune to taste, don't converge it toward

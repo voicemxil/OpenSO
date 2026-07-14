@@ -75,11 +75,11 @@ float TuneRingHi = 0.10;             // ringContam own-vs-dilated color knee, up
 float TuneDirectClampMix = 0.75;     // motion direct-clamp share vs phase-coherent rectification
 float TuneKarisFade = 0.0;           // Karis motion fade share (0 = weighting always on, the reference behavior)
 float TuneGammaMotionDecay = 0.6;    // wide-box narrowing strength while in motion
-float TuneConfFadeN = 20.0;          // evidence depth (minN) at which the off-phase confidence throttle is fully armed
+float TuneConfFadeN = 6.0;           // evidence depth (minN) at which the off-phase confidence throttle is fully armed
 float TuneGrowOffPhase = 0.3;        // off-phase growth discount floor for the evidence counter
 float TuneDeepCapBase = 0.992;       // Kalman deep-end cap at native/mild upscale
 float TuneThinLineEps = 0.02;        // thin-line depth-ridge relative step (TSR ErrorMultiplier analogue)
-float TuneThinRelax = 0.3;           // thin-line clamp relaxation weight (box bounds toward history)
+float TuneThinRelax = 0.7;           // same-surface box share on proven thin ridges (depth-similar taps)
 
 // ---- TAALite tunables (only consumed by TAALite_PS; TAATuning.cs is the C# single source). ----
 float LiteGamma = 1.5;               // variance box base width (sigma) at native
@@ -318,7 +318,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0)); // neighborhood stddev (clamp box + clutter test below)
     // CLUTTER SIGNAL: directionless high-variance neighbourhoods (foliage-class isotropic sub-pixel
     // clutter — high sigma, no coherent gradient direction). Consumed by the speckle consolidation in
-    // the reconstruction below.
+    // the reconstruction below and the clutter clamp slack at the box.
     float dirCoherence = smoothstep(0.15, 0.5, gmag);
     float clutter = smoothstep(0.10, 0.25, sigma.x) * (1.0 - dirCoherence);
     // Tap k in {-1,0,1} sits at distance fracd + k.
@@ -472,6 +472,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // Slight motion (sub-pixel drift, slow pans) keeps its accumulation and reprojects through the
     // movement; walking-speed motion (~2-4 px/f) arms everything fully.
     float moveGate = smoothstep(TuneMoveGateLo, TuneMoveGateHi, velPx);
+    // SLOW-DRIFT gate, far below moveGate: sub-walking-speed camera creep accumulates sub-pixel
+    // reprojection error that the rest-state history protections (split rectification's detail hull,
+    // the lock escape) would escort as a pixelated detail trail. Arms the TAALite-style behavior —
+    // direct clamp, no escape — while the box width stays untouched (tightening it under drift
+    // re-clips deep history to per-phase statistics and churns).
+    float slowMotion = smoothstep(0.03, 0.3, velPx);
     // FOREIGN-VELOCITY SIGNAL: the nearest-depth dilation gives the ring of background pixels around a
     // mover's silhouette the MOVER's velocity — their history reprojects from the wrong place while
     // passing every depth test. foreign measures the dilated-vs-own-velocity disagreement; it feeds
@@ -945,19 +951,58 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // amplitude — a smooth, evidence-priced allowance replacing lock-threshold chatter on partial-osc
     // content. Gated by the full lock gate stack (any motion/disocclusion evidence removes it) and
     // structurally ghost-safe: a monotonic ghost cannot build or hold amplitude state. Chroma untouched.
-    float ampSlackY = oscAmp * 0.35 * lockGates;
+    // SELF-LIMITING STALENESS FADE, shared by the history-admitting slacks below: whatever staleness
+    // a slack admits raises the resolution-matched blurred diff, which closes that slack — each may
+    // calm phase noise around a CONVERGED mean but can never escort a drifting one, at any creep
+    // speed (velocity gates cannot see sub-0.03px/frame drift). Well-reprojected content on clean
+    // pans scores ~0, so pan-shimmer protection is unaffected.
+    float staleFade = 1.0 - smoothstep(0.08, 0.25, pointDiffPre);
+    float ampSlackY = oscAmp * 0.35 * lockGates * staleFade;
     cmin.x -= ampSlackY;
     cmax.x += ampSlackY;
-    // THIN-GEOMETRY CLAMP RELAXATION (TSR WeightRelaxation's consumption; detector = the depth
-    // thin-line prior): a thin feature is diluted in its own render-res box statistics, so the clamp
-    // re-erodes its converged history every frame until a lock lands — and the lock needs stillness
-    // plus witnessed flips. On a proven same-frame depth ridge, move the box bounds partway toward
-    // INCLUDING the history value: validated thin geometry partially clamps to itself instead of to
-    // the undersampled input, pre-lock and under motion, where the lock cannot help. Ghost-safe by
-    // the detector's argument (a color trail cannot fake a depth ridge) and suspicion-gated on top.
-    float thinRelax = thinLine * TuneThinRelax * (1.0 - suspicion);
-    cmin = lerp(cmin, min(cmin, historyRaw), thinRelax);
-    cmax = lerp(cmax, max(cmax, historyRaw), thinRelax);
+    // CLUTTER CLAMP SLACK: on directionless clutter at heavy ratio, the sharp anisotropic
+    // reconstruction legitimately swings per jitter phase (which fragments exist changes each frame) —
+    // give the LUMA clamp sigma-proportional slack there so the converged temporal average survives
+    // the swing, instead of softening the reconstruction that resolves the detail. EXACT-REST ONLY
+    // (gate closes by 0.03 native px/frame) AND SELF-LIMITING on accumulated staleness: sub-gate
+    // creep is invisible to any velocity signal, so the slack is additionally faded by pointDiffPre —
+    // it may calm phase noise around a CONVERGED blurred mean but can never escort a drifting one
+    // (the staleness it admits raises the very signal that closes it). Evidence-collapsed; real
+    // lines get none (dirCoherence zeroes clutter).
+    float clutterSlackY = clutter * 0.5 * sigma.x * saturate(upscaleRatio - 1.5)
+                        * (1.0 - suspGamma) * (1.0 - smoothstep(0.005, 0.03, velPx)) * staleFade;
+    cmin.x -= clutterSlackY;
+    cmax.x += clutterSlackY;
+    // SAME-SURFACE BOX on thin ridges (replaces moving the box toward history — a history-inclusive
+    // box is an escort service for creeping staleness no matter how it is gated): the plus-pattern
+    // statistics mix the ridge with its background, and that dilution is the entire erosion problem.
+    // Rebuild the box from DEPTH-SIMILAR taps only, using the depths the thin-line detector already
+    // holds — the box then describes the line's OWN distribution and naturally contains its converged
+    // value. CURRENT-FRAME DATA ONLY: structurally incapable of escorting staleness, so it needs no
+    // stillness or staleness gate; per-phase line-sample variation is the amplitude slack's job (the
+    // luma slacks carry over onto the same-surface bounds). Suspicion evidence restores the normal
+    // box; SM4 (register budget — SM3 keeps the plain box).
+#if SM4
+    if (thinLine > 0.0)
+    {
+        float simW = 1.0 - smoothstep(0.5 * thinEps, thinEps, plusD.x - thinDC);
+        float simE = 1.0 - smoothstep(0.5 * thinEps, thinEps, plusD.y - thinDC);
+        float simN = 1.0 - smoothstep(0.5 * thinEps, thinEps, plusD.z - thinDC);
+        float simS = 1.0 - smoothstep(0.5 * thinEps, thinEps, plusD.w - thinDC);
+        float wsumS = 1.0 + simW + simE + simN + simS;
+        float3 m1s = (cboxC + cboxW * simW + cboxE * simE + cboxN * simN + cboxS * simS) / wsumS;
+        float3 m2s = (cboxC * cboxC + cboxW * cboxW * simW + cboxE * cboxE * simE
+                    + cboxN * cboxN * simN + cboxS * cboxS * simS) / wsumS;
+        float3 sigmaS = max(sqrt(max(m2s - m1s * m1s, 0.0)), 0.02);
+        float3 sminS = m1s - gammaEff * sigmaS;
+        float3 smaxS = m1s + gammaEff * sigmaS;
+        sminS.x -= ampSlackY + clutterSlackY;
+        smaxS.x += ampSlackY + clutterSlackY;
+        float thinShare = thinLine * TuneThinRelax * (1.0 - suspicion);
+        cmin = lerp(cmin, sminS, thinShare);
+        cmax = lerp(cmax, smaxS, thinShare);
+    }
+#endif
     // INPUT-RESOLUTION RECTIFICATION under TAAU (TSR mechanism): the box statistics come from bilinear
     // taps whose mixture changes with jitter phase, so clamping the native-res history re-clips converged
     // output-res detail slightly differently every frame on pixels that can't fully lock. Split the
@@ -982,7 +1027,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // transitions; the remaining rectified share keeps the clamp value phase-coherent.
         float3 rectified = ClipAABB(m1 - 2.0 * gammaEff * sigma, m1 + 2.0 * gammaEff * sigma, historyRaw + (hLowC - hLow));
         float3 directCl  = ClipAABB(cmin, cmax, historyRaw);
-        history = lerp(rectified, directCl, TuneDirectClampMix * max(moveGate, storedMove));
+        // Direct-clamp handoff arms from SLOW DRIFT (slowMotion), not walking speed: the split's
+        // protected detail component is the trail vehicle for creeping sub-pixel staleness (TAALite,
+        // which always direct-clamps, does not trail here). Rest keeps the full rectified split.
+        history = lerp(rectified, directCl, TuneDirectClampMix * max(slowMotion, storedMove));
         // RESOLUTION-MATCHED DIFF (TSR: compare at input resolution): m1 is a render-res mean but the
         // sharp history is output-res — for converged thin geometry they disagree FOREVER (the line is
         // diluted in m1), a permanent phantom "content change". Compare against the history's render-texel
@@ -1004,8 +1052,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // stillness, and zero rejects — the exact gates that break FSR2 locks. Partial locks get a partial
     // escape. The diff below stays on the resolution-matched lumaHCmp (pre-escape) by design.
     // Escape share scales DOWN as measured amplitude rises: the box slack above already admits the
-    // oscillation, and keeping both at full strength would license a ghost band.
-    history = lerp(history, historyRaw, oscLock * (1.0 - 0.5 * oscAmp));
+    // oscillation, and keeping both at full strength would license a ghost band. SLOW-DRIFT FADE: the
+    // escape passes RAW history, and the lock's still-gate tolerates slow pans by design — under any
+    // real drift the escape must close (the trail vector) while the lock's deep TRUST stays (the
+    // trusted value is the direct-clamped, box-bounded one). Thin lines keep their clamp protection
+    // under drift via the thin-line relaxation, which needs no stillness.
+    history = lerp(history, historyRaw, oscLock * (1.0 - 0.5 * oscAmp) * (1.0 - slowMotion));
 
     // --- Blend: content-adaptive luminance-feedback weight, diff-driven. The counter (newN) feeds the
     //     deep end and the warmup ramp; it does not drive the clamp. ---
@@ -1020,7 +1072,13 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // the difference is aliasing, not shading, the point diff may not erode trust. Real changes fire
     // both and pass unchanged; SM3's filtReject stays 1 (bit-identical there). Structural rejects
     // still enter at full strength below.
-    diff = min(diff, filtReject);
+    // MAGNITUDE-BOUNDED suppression with a drift carve-out: over textured backgrounds the blur-domain
+    // box is wide, so deposited residue reads "in-box aliasing" and the very diff that would scrub it
+    // is silenced. The suppression may quiet aliasing-SIZED diffs (the rest-state flicker win) but
+    // never residue-SIZED ones — a mover trail two pixels behind the character has NO motion signals
+    // left (own velocity zero, remembered velocity expired, depth evidence self-erased), and only its
+    // magnitude betrays it. Drift additionally restores full point-diff authority (TAALite behavior).
+    diff = min(diff, max(max(filtReject, slowMotion), smoothstep(0.15, 0.35, diff)));
     diff = max(max(diff, depthReject), max(max(ghostReject, featReject), ringContam));
     // KALMAN DEEP END: the deep end follows the Kalman gain N/(N+1) once the EVIDENCE counter outgrows
     // the EMA baseline — reference upscalers converge fine detail because accumulation approaches an
@@ -1057,6 +1115,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // spatially-AA'd reconstruction. At rest the cap releases and full convergence resumes. Ghost-safe
     // by direction. Native untouched.
     historyWeight = min(historyWeight, lerp(1.0, TuneMotionTrustCap, moveGate * smoothstep(1.0, 1.5, upscaleRatio)));
+    // YOUNG-PIXEL MOTION CAP: the cap above protects CONVERGED pixels at walking speed, but a
+    // still-filling pixel (low N) under small drift has nothing capping its freshly-built, smeared
+    // history — the fill-in trail. Same cap, armed from the slow-drift band, fading out entirely by
+    // ~12 evidence frames; converged pixels and native are untouched.
+    historyWeight = min(historyWeight, lerp(1.0, TuneMotionTrustCap,
+        max(slowMotion, storedMove) * (1.0 - saturate(minN * (1.0 / 12.0))) * smoothstep(1.0, 1.5, upscaleRatio)));
 
     // OSCILLATION TRUST (anti-fizzle action). Every gate must pass: proven sign-alternation (a ghost
     // fails osc), ~zero velocity (a mover fails stillGate), no disocclusion signal, and low diff
@@ -1065,7 +1129,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // permanent baseline diff below ~0.2, so fine geometry keeps its lock; trust dies fully by diff ~0.54.
     // Known residual: TV/video textures equilibrate at osc~0.5 -> at most slight partial trust,
     // clamp-bounded.
-    float oscTrust = oscLock * (1.0 - saturate((diff - 0.25) * 3.5));
+    // DRIFT FADE: the ceiling raise is RAISE-ONLY and lands after every trust cap, and the lock's
+    // still-gate tolerates slow pans — under drift that re-grants deep trust to osc-proven background
+    // texture carrying deposited residue (a seconds-long trail TAALite, with no ceiling, never shows).
+    // The cycle-hiding job is a REST need; thin-line pan stability is owned by the same-surface box.
+    float oscTrust = oscLock * (1.0 - saturate((diff - 0.25) * 3.5)) * (1.0 - slowMotion);
     // CYCLE-AWARE ceiling: the visible repeating jitter pattern at extreme upscale is a cycle-vs-window
     // mismatch — the deep end must exceed the Halton cycle it has to hide (72 frames at 1/3 scale), so
     // the ceiling scales with the cycle: 1 - 1/(1.2*cycle), clamped. Ghost-safety gates unchanged: deep
@@ -1123,7 +1191,15 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // LOCK EXEMPTION: a lock structurally cannot coexist with cleared or invalid history (its evidence
     // resets with the meta), so the ramp has no legitimate job on a locked pixel — without this, a
     // Kalman-collapsed N re-injects raw jitter over the lock's deep trust.
-    blend = max(blend, (1.0 / (min(prevN, newN) + 1.0)) * (1.0 - oscLock));
+    // PHASE-AWARE under TAAU: an off-phase frame's reconstruction is interpolation, and forcing it in
+    // at the full ramp made the whole rebuild window alternate between real detail and interpolation
+    // of it (settle-phase fizzle). Off-phase frames inject at the 55% floor the motion regime uses;
+    // covering frames keep the full ramp. MOTION CARVE-OUT: under any drift the hold is wrong — the
+    // young history is being dragged and resampled, and holding it IS a fill-in trail — so motion
+    // restores the full-ramp refresh. Native 1:1 keeps the plain ramp.
+    float rampConf = (upscaleRatio > 1.001)
+        ? lerp(lerp(0.55, 1.0, sampleConf), 1.0, max(slowMotion, storedMove)) : 1.0;
+    blend = max(blend, (1.0 / (min(prevN, newN) + 1.0)) * rampConf * (1.0 - oscLock));
 
     // HONEST DISOCCLUSION (reference behavior — discard, not fade): a positively identified disocclusion
     // means the history is INVALID; blending any of it is wrong by construction. Full-strength reject =
