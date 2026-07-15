@@ -1,6 +1,10 @@
-# TAA — how OpenSO smooths the picture
+# Post Processing Systems
 
-OpenSO offers a custom **temporal anti-aliasing (TAA)** implementation: instead of smoothing each
+A post processing pipeline was created to test the ablity to add new shaders and rendering improvements.
+It features an optional velocity and depth buffer that is enabled only when needed. The effects created for the experiment include TAA and TAA Lite with temporal upsampling, Ambient Occlusion (not ready-needs redone), Bloom, Motion Blur, and FSR1/RCAS upscaling.
+
+# Temporal AA
+OpenSO offers a custom **temporal anti-aliasing (TAA)** implementation named Cosmic TAA: instead of smoothing each
 frame on its own, the renderer nudges the camera by a fraction of a pixel every frame and blends
 the last several frames together. Edges stop looking jagged, thin details stop shimmering, and it costs far less than
 rendering at a higher resolution. The same machinery also powers **TAA upscaling (TAAU)**: the game
@@ -27,14 +31,6 @@ stale history shows up as ghosting and smearing. Two small classes own that prob
 | `tso.world/Utils/TAATuning.cs` | The single source of truth for every tunable value. |
 | `tso.content/ContentSrc/Effects/TAA.fx` | The shader itself (both tiers). |
 
-## How motion blur connects
-
-Motion blur has two modes. **Camera** blur is a simple 2D effect derived from camera movement and
-has nothing to do with the temporal systems. **Per-pixel** blur shares their plumbing: it reads the
-same per-frame motion-vector ("velocity") buffer that TAA uses to track where each pixel moved.
-The engine renders that buffer whenever either effect asks for it, so the two can run together or
-independently — TAA never depends on the motion-blur effect itself.
-
 ## Tuning
 
 All tuning constants live in `TAATuning.cs` and are uploaded to the shader automatically each
@@ -42,9 +38,18 @@ frame. At startup the game audits the loaded shader and reports any uniform that
 whose baked-in default drifted from `TAATuning.cs`, so the two can't silently disagree. Adding a
 tunable is a two-file change: a static float in `TAATuning.cs` plus a matching uniform in `TAA.fx`.
 
-Note: shader binaries (`.xnb`) are compiled **only in CI** (Windows job,
+Note: shader binaries (`.xnb`) are automatically compiled **only in CI** (Windows job,
 `.github/scripts/compile-shaders.sh`). After editing `TAA.fx`, the committed binary is stale until
 CI rebuilds it — the runtime binding audit will flag exactly this state.
+
+
+# Motion Blur
+
+Motion blur has two modes. **Camera** blur is a work in progress simple 2D effect derived from camera movement and
+has nothing to do with the temporal systems. **Per-pixel** blur shares the temporal plumbing: it reads the
+same per-frame motion-vector ("velocity") buffer that TAA uses to track where each pixel moved.
+The engine renders that buffer whenever either effect asks for it, so the two can run together or
+independently — TAA never depends on the motion-blur effect itself.
 
 ## Experimenting
 
