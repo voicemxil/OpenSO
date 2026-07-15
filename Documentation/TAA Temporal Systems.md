@@ -1,8 +1,8 @@
 # TAA — how OpenSO smooths the picture
 
-OpenSO uses **temporal anti-aliasing (TAA)**: instead of smoothing each frame on its own, the
-renderer nudges the camera by a fraction of a pixel every frame and blends the last several frames
-together. Edges stop looking jagged, thin details stop shimmering, and it costs far less than
+OpenSO offers a custom **temporal anti-aliasing (TAA)** implementation: instead of smoothing each
+frame on its own, the renderer nudges the camera by a fraction of a pixel every frame and blends
+the last several frames together. Edges stop looking jagged, thin details stop shimmering, and it costs far less than
 rendering at a higher resolution. The same machinery also powers **TAA upscaling (TAAU)**: the game
 can render at a lower resolution and reconstruct a sharp native-resolution image, with a mild
 auto-sharpen pass applied on top to compensate for the softness blending introduces.
@@ -26,6 +26,14 @@ stale history shows up as ghosting and smearing. Two small classes own that prob
 | `tso.world/Utils/TAAResolve.cs` | Drives the shader each frame: builds the contract, uploads tuning values, runs the resolve. |
 | `tso.world/Utils/TAATuning.cs` | The single source of truth for every tunable value. |
 | `tso.content/ContentSrc/Effects/TAA.fx` | The shader itself (both tiers). |
+
+## How motion blur connects
+
+Motion blur has two modes. **Camera** blur is a simple 2D effect derived from camera movement and
+has nothing to do with the temporal systems. **Per-pixel** blur shares their plumbing: it reads the
+same per-frame motion-vector ("velocity") buffer that TAA uses to track where each pixel moved.
+The engine renders that buffer whenever either effect asks for it, so the two can run together or
+independently — TAA never depends on the motion-blur effect itself.
 
 ## Tuning
 
