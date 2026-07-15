@@ -309,6 +309,14 @@
       "requires": [
         "44daae65-0097-4c44-ad99-375e858a9bb9"
       ]
+    },
+    {
+      "id": "b529fbeb-c205-445c-b480-5326025f342b",
+      "script": "changes/0035_registration_tuning.sql",
+      "idempotent": false,
+      "requires": [
+        "b21e29a1-8c25-465e-aa43-c7a0d6f44fb8"
+      ]
     }
   ]
 }

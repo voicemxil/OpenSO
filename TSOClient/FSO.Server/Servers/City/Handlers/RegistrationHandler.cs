@@ -24,6 +24,11 @@ namespace FSO.Server.Servers.City.Handlers
         private static Regex NAME_VALIDATION = new Regex("^([a-zA-Z]){1}([a-zA-Z ]){2,23}$");
 
         /// <summary>
+        /// Simoleons given to newly created avatars when no 'registration' tuning entry exists.
+        /// </summary>
+        private const int DEFAULT_STARTING_BUDGET = 100000;
+
+        /// <summary>
         /// Only printable ascii characters
         /// Minimum 0 characters
         /// Maximum 499 characters
@@ -138,7 +143,11 @@ namespace FSO.Server.Servers.City.Handlers
                 newAvatar.skin_tone = (byte)packet.SkinTone;
                 newAvatar.gender = packet.Gender == Protocol.Voltron.Model.Gender.FEMALE ? DbAvatarGender.female : DbAvatarGender.male;
                 newAvatar.user_id = session.UserId;
-                newAvatar.budget = 0;
+                // Starting funds come from the 'registration' tuning entry (fso_tuning), so they can
+                // be changed live with a db update. Falls back to the default if the row is missing.
+                var startingBudget = (int)(db.Tuning.AllCategory("registration", 0)
+                    .FirstOrDefault(x => x.tuning_index == 0)?.value ?? DEFAULT_STARTING_BUDGET);
+                newAvatar.budget = startingBudget;
 
                 if(packet.Gender == Protocol.Voltron.Model.Gender.MALE){
                     newAvatar.body_swimwear = 0x5470000000D;
@@ -152,7 +161,7 @@ namespace FSO.Server.Servers.City.Handlers
                 var user = db.Users.GetById(session.UserId);
                 if ((user?.is_moderator) ?? false)
                 {
-                    newAvatar.budget = 100000;
+                    newAvatar.budget = Math.Max(startingBudget, 100000);
                     newAvatar.moderation_level = 1;
                 }
 
