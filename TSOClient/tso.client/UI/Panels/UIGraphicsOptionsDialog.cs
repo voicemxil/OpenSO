@@ -907,6 +907,9 @@ namespace FSO.Client.UI.Panels
     {
         public UILabel DPILabel;
         public UISlider DPISlider;
+        public UIButton AutoButton;
+        private bool InternalChange;
+
         public UIDPIScaleDialog() : base(UIDialogStyle.OK, true) {
 
             DPILabel = new UILabel();
@@ -929,6 +932,14 @@ namespace FSO.Client.UI.Panels
 
             DPISlider.OnChange += DPISlider_OnChange;
 
+            AutoButton = new UIButton();
+            AutoButton.Size = new Vector2(100, 35);
+            AutoButton.Caption = "Auto";
+            AutoButton.Tooltip = "Match your operating system's display scale";
+            AutoButton.Position = new Vector2(25, 105);
+            AutoButton.OnButtonClick += AutoButton_OnButtonClick;
+            DynamicOverlay.Add(AutoButton);
+
             SetSize(400, 150);
 
             OKButton.OnButtonClick += (btn) =>
@@ -937,10 +948,21 @@ namespace FSO.Client.UI.Panels
             };
         }
 
+        private void AutoButton_OnButtonClick(UIElement button)
+        {
+            GlobalSettings.Default.AutoDPI = 1;
+            InternalChange = true;
+            DPISlider.Value = Utils.DPIScaleDetect.GetSnappedScale() * 4;
+            InternalChange = false;
+            GlobalSettings.Default.Save(); //persist the auto flag even when the scale didn't change
+        }
+
         private void DPISlider_OnChange(UIElement element)
         {
+            var manual = !InternalChange;
             GameThread.NextUpdate((cb) =>
             {
+                if (manual) GlobalSettings.Default.AutoDPI = 0;
                 FSOEnvironment.DPIScaleFactor = DPISlider.Value / 4f;
                 GlobalSettings.Default.DPIScaleFactor = FSOEnvironment.DPIScaleFactor;
 
@@ -961,7 +983,8 @@ namespace FSO.Client.UI.Panels
         {
             ScaleX = 1f / FSOEnvironment.DPIScaleFactor;
             ScaleY = 1f / FSOEnvironment.DPIScaleFactor;
-            DPILabel.Caption = (FSOEnvironment.DPIScaleFactor * 100).ToString() + "%";
+            DPILabel.Caption = (FSOEnvironment.DPIScaleFactor * 100).ToString() + "%"
+                + ((GlobalSettings.Default.AutoDPI == 1) ? " (Auto)" : "");
             base.Update(state);
             Position = Vector2.Zero;
         }

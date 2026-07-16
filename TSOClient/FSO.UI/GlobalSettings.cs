@@ -44,6 +44,14 @@ namespace FSO.Client
                         defaultInstance.ArchiveClientGUID = GenerateGUID();
                     }
 
+                    // AutoDPI -1 = unset: a config that already carries a manual UI scale keeps it
+                    // (auto off), anything else gets automatic OS scale detection each launch.
+                    if (defaultInstance.AutoDPI == -1)
+                    {
+                        defaultInstance.AutoDPI = (defaultInstance.DPIScaleFactor == 1) ? 1 : 0;
+                        defaultInstance.Save();
+                    }
+
                     // Migrate the legacy mutually-exclusive AntiAlias preset (0/1/2) into the decoupled
                     // MSAA + supersampling fields the first time we see a config without them.
                     if (defaultInstance.MSAALevel < 0)
@@ -146,6 +154,7 @@ namespace FSO.Client
             { "Weather", "true" },
             { "DirectionalLight3D", "true" },
             { "DPIScaleFactor", "1" },
+            { "AutoDPI", "-1" },         //match the OS display scale at startup: -1=unset (migrated on first load), 0=manual, 1=auto
             { "TexCompression", "0" },
 
             { "ChatColor", "0" }, //uint packed color. 0 means choose random
@@ -241,6 +250,7 @@ namespace FSO.Client
         public bool Weather { get; set; }
         public bool DirectionalLight3D { get; set; }
         public float DPIScaleFactor { get; set; }
+        public int AutoDPI { get; set; } //-1=unset, 0=manual, 1=match the OS display scale at startup
         public int TexCompression { get; set; } //first bit on/off, second bit is user defined or auto.
 
         public uint ChatColor { get; set; }

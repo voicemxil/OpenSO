@@ -51,6 +51,7 @@ namespace FSO.Client
                 Graphics.GraphicsProfile = GraphicsProfile.HiDef;
             }
 
+            Utils.DPIScaleDetect.Startup(GlobalSettings.Default);
             FSOEnvironment.DPIScaleFactor = GlobalSettings.Default.DPIScaleFactor;
             if (!FSOEnvironment.SoftwareDepth)
             {
@@ -110,6 +111,21 @@ namespace FSO.Client
             Graphics.PreferredBackBufferHeight = height;
             Graphics.ApplyChanges();
             newChange = false;
+
+            // Auto DPI follows the live window: re-fit the detected scale to the new client size
+            // (stepping down a quarter tier while the window is too small for it) and track the
+            // monitor the window is on.
+            if (GlobalSettings.Default.AutoDPI == 1)
+            {
+                var scale = Utils.DPIScaleDetect.GetScaleForWindow(Window.Handle, width, height);
+                if (scale != FSOEnvironment.DPIScaleFactor)
+                {
+                    FSOEnvironment.DPIScaleFactor = scale;
+                    GlobalSettings.Default.DPIScaleFactor = scale;
+                    if (uiLayer?.CurrentUIScreen != null)
+                        uiLayer.CurrentUIScreen.ScaleX = uiLayer.CurrentUIScreen.ScaleY = scale;
+                }
+            }
 
             GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
             GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);
