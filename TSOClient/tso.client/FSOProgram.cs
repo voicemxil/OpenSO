@@ -40,8 +40,9 @@ namespace FSO.Client
             bool useDX = !linux;
 
             // OpenSO enables the 3D feature set by default (smooth zoom/rotation + the switchable 3D camera).
-            // The "-3d" arg is kept below for compatibility but is now redundant. (Client-only: the headless
-            // server never runs this path, so its lot simulation is unaffected.)
+            // "-2d" opts back into the classic 2D-only pipeline; "-3d" is kept for compatibility but is
+            // now redundant. (Client-only: the headless server never runs this path, so its lot simulation
+            // is unaffected.)
             FSOEnvironment.Enable3D = true;
 
             #region User resolution parmeters
@@ -91,6 +92,9 @@ namespace FSO.Client
                                 break;
                             case "3d":
                                 FSOEnvironment.Enable3D = true;
+                                break;
+                            case "2d":
+                                FSOEnvironment.Enable3D = false;
                                 break;
                             case "touch":
                                 FSOEnvironment.SoftwareKeyboard = true;
