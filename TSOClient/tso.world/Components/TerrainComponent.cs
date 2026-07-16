@@ -65,7 +65,12 @@ namespace FSO.LotView.Components
             this.Size = size;
             this.Effect = WorldContent.GrassEffect;
             this.Bp = blueprint;
-            GridAsTexture = FSOEnvironment.Enable3D;
+            //Intel-macOS GL corrupts the textured grid's UV path (renders a solid sheet over the
+            //buildable area until a floor draw precedes it); the line grid works there, so x64 Mac
+            //builds fall back to it. Rosetta is caught by the same gate, which is fine.
+            var intelMacGL = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
+                && System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.X64;
+            GridAsTexture = FSOEnvironment.Enable3D && !intelMacGL;
 
             UpdateLotType();
         }
@@ -649,12 +654,6 @@ namespace FSO.LotView.Components
                     var depth = device.DepthStencilState;
                     device.DepthStencilState = DepthStencilState.DepthRead;
                     Effect.SetTechnique(GrassTechniques.DrawGrid);
-                    //force a full vertex attribute rebind for the grid's shader program: the GL
-                    //backend's attribute-enable cache can carry the previous program's layout into
-                    //this draw, which corrupts the grid UVs on Intel-macOS GL (solid sheet instead
-                    //of dashes) until a floor draw happens to leave compatible state.
-                    device.SetVertexBuffer(null);
-                    device.SetVertexBuffer(VertexBuffer);
                     Effect.BaseTex = GridTex;
                     Effect.World = Matrix.Identity * Matrix.CreateTranslation(0, (18 / 522f) * grassScale - altOff, 0);
                     pass = Effect.CurrentTechnique.Passes[(GridAsTexture)?2:0];
