@@ -449,6 +449,11 @@ namespace FSO.LotView.LMap
 
         public void DrawRoom(Room room, RoomLighting lighting, bool clear)
         {
+            // Architecture rebuilds (eg. stairs auto-placing floor tiles) dispose the 3D floor/wall
+            // index buffers, which can still be bound to the device. The render target switches in
+            // this pass mark the binding for re-apply, and re-applying a disposed buffer crashes the
+            // game. Every draw here is non-indexed, so drop any stale binding first.
+            GD.Indices = null;
             var size = Blueprint.Width - borderSize;
             //TODO: set floor shadow map here to stop surrounding light issues
             LightEffect.floorShadowMap = ObjShadowTarg;
