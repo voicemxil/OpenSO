@@ -50,9 +50,9 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          ( cd publish && zip -r "../dist/OpenSO-client-osx-x64-gridtest.zip" . )
+          ( cd publish && zip -r "../dist/OpenSO-client-osx-x64-gridtest-${GITHUB_SHA:0:7}.zip" . )
 
       - uses: actions/upload-artifact@v4
         with:
-          name: OpenSO-client-osx-x64-gridtest
+          name: OpenSO-client-osx-x64-gridtest-${{ github.sha }}
           path: dist/*
