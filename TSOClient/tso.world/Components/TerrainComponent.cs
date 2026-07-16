@@ -427,9 +427,12 @@ namespace FSO.LotView.Components
         public override void Draw(GraphicsDevice device, WorldState world){
             var _3d = world.CameraMode == CameraRenderMode._3D;
             var nonIso = world.CameraMode != CameraRenderMode._2D;
-            if (TerrainDirty || VertexBuffer == null || GridAsTexture != _3d)
+            //the same Intel-Mac gate as the constructor: this reassignment tracks live camera-mode
+            //switches and would otherwise silently undo the line-grid fallback on the first frame.
+            var gridAsTex = _3d && !IntelMacGL;
+            if (TerrainDirty || VertexBuffer == null || GridAsTexture != gridAsTex)
             {
-                GridAsTexture = _3d;
+                GridAsTexture = gridAsTex;
                 RegenTerrain(device, Bp);
             }
             if (VertexBuffer == null) return;
@@ -643,11 +646,8 @@ namespace FSO.LotView.Components
 
                 if (GridPrimitives > 0 && world.BuildMode > 0)
                 {
-                    //Intel-macOS GL: skip the single-target unbind/rebind around the grid draw — the
-                    //MRT roundtrip is the remaining buy/build-only operation under suspicion for the
-                    //solid-sheet artifact there (velocity garbage over grid lines is the lesser evil).
                     RenderTargetBinding[] rts = null;
-                    if (FSOEnvironment.UseMRT && !IntelMacGL)
+                    if (FSOEnvironment.UseMRT)
                     {
                         rts = device.GetRenderTargets();
                         if (rts.Length > 1)
