@@ -1,13 +1,13 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    FSO.TAALab — standalone interactive TAA tuning harness. Runs the project's ACTUAL compiled TAA
+    FSO.TAALab â€” standalone interactive TAA tuning harness. Runs the project's ACTUAL compiled TAA
     resolve (Content/DX/Effects/TAA.xnb, the WindowsDX/SM4 build) on a synthetic animated scene with
     live-adjustable Tune* uniforms (see TAA.fx "LIVE-TUNING UNIFORMS" + TAATuning.cs), so temporal-
     resolve constants can be refined visually without full game restarts.
 
     WindowsDX ON PURPOSE: five tunables (TuneRawSoftenOnset/Slope/MotionSup, TuneRingLo/Hi) live in
-    #if SM4 blocks in TAA.fx — the MojoShader/OGL xnb strips them, only the DX xnb binds all 16.
+    #if SM4 blocks in TAA.fx â€” the MojoShader/OGL xnb strips them, only the DX xnb binds all 16.
     Unlike FSO.Windows this project references WindowsDX directly (no MonogameLinker DLL swap).
 
     Deliberately dependency-free of tso.* PROJECT REFERENCES: the jitter generator and resolve driver
@@ -34,13 +34,13 @@
   </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.5-preview.6" />
+    <PackageReference Include="MonoGame.Framework.WindowsDX" Version="3.8.5" />
     <!-- Pinned known-good with the canonical MonoGame ImGuiRenderer sample API. -->
     <PackageReference Include="ImGui.NET" Version="1.89.5" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- The game's REAL compiled TAA resolve (DX/SM4 target — all 16 Tune* uniforms present) + the
+    <!-- The game's REAL compiled TAA resolve (DX/SM4 target â€” all 16 Tune* uniforms present) + the
          lab-only constant-velocity writer (LabVelocity.fx, compiled by the same shared shader script
          because MonoGame cannot compile effects at runtime). -->
     <Content Include="..\tso.content\Content\DX\Effects\TAA.xnb" Link="Content\Effects\TAA.xnb" CopyToOutputDirectory="PreserveNewest" />
@@ -48,7 +48,7 @@
     <!-- Lab-only ground-truth downsampler (linear-light box chain + sigma-0.44 Gaussian reference). -->
     <Content Include="..\tso.content\Content\DX\Effects\LabDownsample.xnb" Link="Content\Effects\LabDownsample.xnb" CopyToOutputDirectory="PreserveNewest" />
     <!-- Real game 3D object meshes (.fsom remesh files + their custom PNG textures), loaded by the
-         lab's own standalone parser (LabMesh.cs) — still no tso.* project references. -->
+         lab's own standalone parser (LabMesh.cs) â€” still no tso.* project references. -->
     <Content Include="..\tso.content\Content\MeshReplace\**" Link="Content\MeshReplace\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
