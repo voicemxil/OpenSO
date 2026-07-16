@@ -137,6 +137,32 @@ namespace FSO.Server.Database.DA.Avatars
             Context.Connection.Query("UPDATE fso_avatars SET user_id = @user_id WHERE avatar_id = @id", new { id = id, user_id });
         }
 
+        public int UpdateAvatarAppearance(DbAvatar avatar, int cost)
+        {
+            //conditional on budget so a paid edit can never overdraw; returns 0 rows when funds are short.
+            return Context.Connection.Execute("UPDATE fso_avatars SET "
+                + "gender = @gender, "
+                + "skin_tone = @skin_tone, "
+                + "head = @head, "
+                + "body = @body, "
+                + "body_swimwear = @body_swimwear, "
+                + "body_sleepwear = @body_sleepwear, "
+                + "body_current = @body_current, "
+                + "budget = budget - @cost "
+                + "WHERE avatar_id = @avatar_id AND budget >= @cost", new
+                {
+                    avatar_id = avatar.avatar_id,
+                    gender = avatar.gender.ToString(),
+                    skin_tone = avatar.skin_tone,
+                    head = avatar.head,
+                    body = avatar.body,
+                    body_swimwear = avatar.body_swimwear,
+                    body_sleepwear = avatar.body_sleepwear,
+                    body_current = avatar.body_current,
+                    cost = cost
+                });
+        }
+
         public void UpdateDescription(uint id, string description)
         {
             Context.Connection.Query("UPDATE fso_avatars SET description = @desc WHERE avatar_id = @id", new { id = id, desc = description });

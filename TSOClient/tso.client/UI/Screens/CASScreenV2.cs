@@ -247,6 +247,11 @@ namespace FSO.Client.UI.Screens
             SetTab(_Tab); // Place() marks everything visible; restore tab visibility
         }
 
+        protected override void OnEditModeApplied()
+        {
+            if (_NameLabel != null) _NameLabel.Caption = "Name (locked — contact moderation to change):";
+        }
+
         private void Place(UIElement e, float x, float y)
         {
             if (e == null) return;

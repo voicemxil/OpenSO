@@ -63,6 +63,11 @@ namespace FSO.Client.UI.Screens
         public AppearanceType AppearanceType { get; internal set; } = AppearanceType.Light;
         private UIButton SelectedAppearanceButton;
         public Gender Gender { get; internal set; } = Gender.Female;
+        /// <summary>
+        /// Set when this screen is editing an existing avatar rather than creating a new one.
+        /// The name is locked in this mode — changing it requires contacting moderation.
+        /// </summary>
+        public bool EditMode { get; private set; }
         
         public UISim SimBox;
 
@@ -205,6 +210,51 @@ namespace FSO.Client.UI.Screens
             {
                 FSOFacade.Hints.TriggerHint("screen:cas");
             });
+        }
+
+        /// <summary>
+        /// Switches the screen to edit an existing avatar: preselects their current gender, skin tone,
+        /// head and body, and locks the name field (name changes go through moderation).
+        /// </summary>
+        public void SetEditMode(Server.Protocol.CitySelector.AvatarData avatar)
+        {
+            EditMode = true;
+
+            Gender = avatar.Gender == Server.Protocol.CitySelector.AvatarGender.Male ? Gender.Male : Gender.Female;
+            MaleButton.Selected = Gender == Gender.Male;
+            FemaleButton.Selected = Gender == Gender.Female;
+
+            AppearanceType = (AppearanceType)Enum.Parse(typeof(AppearanceType), avatar.AppearanceType.ToString());
+            SelectedAppearanceButton.Selected = false;
+            switch (AppearanceType)
+            {
+                case AppearanceType.Light:
+                    SelectedAppearanceButton = SkinLightButton; break;
+                case AppearanceType.Medium:
+                    SelectedAppearanceButton = SkinMediumButton; break;
+                case AppearanceType.Dark:
+                    SelectedAppearanceButton = SkinDarkButton; break;
+            }
+            SelectedAppearanceButton.Selected = true;
+
+            NameTextEdit.CurrentText = avatar.Name;
+            NameTextEdit.Mode = UITextEditMode.ReadOnly;
+            NameTextEdit.Tooltip = "Name changes require contacting moderation.";
+            DescriptionTextEdit.CurrentText = avatar.Description ?? "";
+
+            RefreshCollections();
+            SearchCollectionForInitID(avatar.HeadOutfitID, avatar.BodyOutfitID);
+            UpdateAcceptButtonState();
+
+            FSO.UI.Model.DiscordRpcEngine.SendFSOPresence("In Edit A Sim");
+            OnEditModeApplied();
+        }
+
+        /// <summary>
+        /// Hook for subclasses (CASScreenV2) to restyle themselves for edit mode.
+        /// </summary>
+        protected virtual void OnEditModeApplied()
+        {
         }
 
         protected UIImage Background;
@@ -366,7 +416,8 @@ namespace FSO.Client.UI.Screens
         private void UpdateAcceptButtonState()
         {
             var enabled = true;
-            if (!NAME_VALIDATION.IsMatch(NameTextEdit.CurrentText))
+            //in edit mode the name is server-provided and locked, so it must not gate the accept button
+            if (!EditMode && !NAME_VALIDATION.IsMatch(NameTextEdit.CurrentText))
             {
                 enabled = false;
             }

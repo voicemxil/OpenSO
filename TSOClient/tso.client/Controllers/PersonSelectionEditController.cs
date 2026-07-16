@@ -13,17 +13,24 @@ namespace FSO.Client.Controllers
     {
         private PersonSelectionEdit View;
         private CreateASimRegulator CASRegulator;
+        private EditASimRegulator EditRegulator;
 
         public bool Archive;
+        /// <summary>
+        /// When set, the screen edits this existing avatar's appearance instead of creating a new one.
+        /// </summary>
+        public FSO.Server.Protocol.CitySelector.AvatarData EditTarget;
 
-        public PersonSelectionEditController(PersonSelectionEdit view, CreateASimRegulator casRegulator)
+        public PersonSelectionEditController(PersonSelectionEdit view, CreateASimRegulator casRegulator, EditASimRegulator editRegulator)
         {
             this.View = view;
             this.CASRegulator = casRegulator;
+            this.EditRegulator = editRegulator;
 
             CASRegulator.OnTransition += CASRegulator_OnTransition;
+            EditRegulator.OnTransition += EditRegulator_OnTransition;
         }
-        
+
         private void CASRegulator_OnTransition(string state, object data)
         {
             Common.Utils.GameThread.NextUpdate(x =>
@@ -70,7 +77,43 @@ namespace FSO.Client.Controllers
             });
         }
 
-        private void ShowError(ErrorMessage errorMsg) { 
+        private void EditRegulator_OnTransition(string state, object data)
+        {
+            Common.Utils.GameThread.NextUpdate(x =>
+            {
+                switch (state)
+                {
+                    case "Waiting":
+                        View.ShowCreationProgressBar(true);
+                        break;
+                    case "Error":
+                        View.ShowCreationProgressBar(false);
+                        var message = "Your Sim could not be updated. Please try again later.";
+                        if (data != null)
+                        {
+                            switch (((UpdateAvatarAppearanceResponse)data).Reason)
+                            {
+                                case UpdateAvatarAppearanceFailureReason.INSUFFICIENT_FUNDS:
+                                    message = "Your Sim does not have enough simoleons to pay for this makeover.";
+                                    break;
+                                case UpdateAvatarAppearanceFailureReason.AVATAR_IN_USE:
+                                    message = "This Sim is currently in use. Make sure they are fully logged out, then try again.";
+                                    break;
+                            }
+                        }
+                        ShowError(ErrorMessage.FromLiteral("Edit Sim", message));
+                        break;
+                    case "Success":
+                        //back to Select A Sim; the disconnect flow re-fetches avatar data, so the
+                        //refreshed slot doubles as confirmation of the new look
+                        View.ShowCreationProgressBar(false);
+                        FSOFacade.Controller.Disconnect();
+                        break;
+                }
+            });
+        }
+
+        private void ShowError(ErrorMessage errorMsg) {
             /** Error message intended for the user **/
             UIAlertOptions Options = new UIAlertOptions();
             Options.Message = errorMsg.Message;
@@ -91,6 +134,20 @@ namespace FSO.Client.Controllers
                     break;
             }
 
+            if (EditTarget != null)
+            {
+                EditRegulator.UpdateSim(new UpdateAvatarAppearanceRequest
+                {
+                    AvatarId = EditTarget.ID,
+                    BodyOutfitId = (uint)(View.BodyOutfitId >> 32),
+                    HeadOutfitId = (uint)(View.HeadOutfitId >> 32),
+                    Description = View.Description,
+                    Gender = View.Gender == Gender.Male ? Server.Protocol.Voltron.Model.Gender.MALE : Server.Protocol.Voltron.Model.Gender.FEMALE,
+                    SkinTone = skinTone
+                });
+                return;
+            }
+
             var packet = new RSGZWrapperPDU
             {
                 BodyOutfitId = (uint)(View.BodyOutfitId >> 32),
@@ -105,7 +162,7 @@ namespace FSO.Client.Controllers
         }
 
         public void Cancel(){
-            if (CASRegulator.CurrentState.Name == "Idle")
+            if (CASRegulator.CurrentState.Name == "Idle" && EditRegulator.CurrentState.Name == "Idle")
             {
                 //Cant cancel while cas in progress
                 FSOFacade.Controller.Disconnect();
@@ -115,6 +172,7 @@ namespace FSO.Client.Controllers
         public void Dispose()
         {
             CASRegulator.OnTransition -= CASRegulator_OnTransition;
+            EditRegulator.OnTransition -= EditRegulator_OnTransition;
         }
     }
 }
