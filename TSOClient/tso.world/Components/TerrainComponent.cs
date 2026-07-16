@@ -61,18 +61,11 @@ namespace FSO.LotView.Components
         private bool GridAsTexture;
         private Texture2D GridTex;
 
-        private static readonly bool IntelMacGL =
-            System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
-            && System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.X64;
-
         public TerrainComponent(Rectangle size, Blueprint blueprint) {
             this.Size = size;
             this.Effect = WorldContent.GrassEffect;
             this.Bp = blueprint;
-            //Intel-macOS GL corrupts the textured grid's UV path (renders a solid sheet over the
-            //buildable area until a floor draw precedes it); the line grid works there, so x64 Mac
-            //builds fall back to it. Rosetta is caught by the same gate, which is fine.
-            GridAsTexture = FSOEnvironment.Enable3D && !IntelMacGL;
+            GridAsTexture = FSOEnvironment.Enable3D;
 
             UpdateLotType();
         }
@@ -427,12 +420,9 @@ namespace FSO.LotView.Components
         public override void Draw(GraphicsDevice device, WorldState world){
             var _3d = world.CameraMode == CameraRenderMode._3D;
             var nonIso = world.CameraMode != CameraRenderMode._2D;
-            //the same Intel-Mac gate as the constructor: this reassignment tracks live camera-mode
-            //switches and would otherwise silently undo the line-grid fallback on the first frame.
-            var gridAsTex = _3d && !IntelMacGL;
-            if (TerrainDirty || VertexBuffer == null || GridAsTexture != gridAsTex)
+            if (TerrainDirty || VertexBuffer == null || GridAsTexture != _3d)
             {
-                GridAsTexture = gridAsTex;
+                GridAsTexture = _3d;
                 RegenTerrain(device, Bp);
             }
             if (VertexBuffer == null) return;
@@ -660,6 +650,13 @@ namespace FSO.LotView.Components
                     device.DepthStencilState = DepthStencilState.DepthRead;
                     Effect.SetTechnique(GrassTechniques.DrawGrid);
                     Effect.BaseTex = GridTex;
+                    //the grid samples its texture in tile space, so the screen-align UV path must be
+                    //off and TexSize valid. These are normally only set by the floor pass — with no
+                    //floors on the lot they are stale/uninitialized, and drivers that don't zero-init
+                    //uniforms (Intel macOS GL) turn the grid into screen-space NaN UVs: a solid sheet
+                    //over the buildable area until the first floor is placed.
+                    Effect.ScreenAlignUV = false;
+                    Effect.TexSize = new Vector2(GridTex.Width, GridTex.Height);
                     Effect.World = Matrix.Identity * Matrix.CreateTranslation(0, (18 / 522f) * grassScale - altOff, 0);
                     pass = Effect.CurrentTechnique.Passes[(GridAsTexture)?2:0];
 
