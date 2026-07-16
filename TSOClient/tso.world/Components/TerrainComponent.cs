@@ -661,16 +661,21 @@ namespace FSO.LotView.Components
                             device.Indices = TGridIndexBuffer;
                             Effect.DiffuseColor = new Vector4(0.5f, 1f, 0.5f, 1.0f);
                             pass.Apply();
+                            //the dashed tile texture repeats across the whole lot, so unit 0 must wrap. The GL
+                            //backend does not apply the effect's declared sampler state, and without floors no
+                            //earlier pass has left a wrap sampler bound (same idiom as DrawFloor's CustomWrap).
+                            device.SamplerStates[0] = SamplerState.LinearWrap;
                             device.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, TGridPrimitives);
                         }
 
 
-                        Effect.DiffuseColor = 
+                        Effect.DiffuseColor =
                             Content.Content.Get().TS1 ?
                             new Vector4(1.0f, 1.0f, 1.0f, 0.8f) :
                             new Vector4(0.0f, 0.0f, 0.0f, 0.8f);
                         device.Indices = GridIndexBuffer;
                         pass.Apply();
+                        device.SamplerStates[0] = SamplerState.LinearWrap;
                         device.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, GridPrimitives);
                     }
                     else
