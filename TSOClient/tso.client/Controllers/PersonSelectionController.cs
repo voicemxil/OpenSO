@@ -33,5 +33,10 @@ namespace FSO.Client.Controllers
                 FSOFacade.Controller.ConnectToCAS(selectedShard.Name);
             });
         }
+
+        public void EditAvatar(AvatarData avatar)
+        {
+            FSOFacade.Controller.EditAvatar(avatar);
+        }
     }
 }

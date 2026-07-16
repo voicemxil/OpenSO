@@ -15,6 +15,7 @@ namespace FSO.Server.Protocol.CitySelector
 
         /** Appearance **/
         public AvatarAppearanceType AppearanceType { get; set; }
+        public AvatarGender Gender { get; set; }
         public ulong HeadOutfitID { get; set; }
         public ulong BodyOutfitID { get; set; }
         public string Description { get; set; }
@@ -37,6 +38,7 @@ namespace FSO.Server.Protocol.CitySelector
             result.AppendTextNode("Head", HeadOutfitID.ToString());
             result.AppendTextNode("Body", BodyOutfitID.ToString());
             result.AppendTextNode("Appearance", AppearanceType.ToString());
+            result.AppendTextNode("Gender", Gender.ToString());
 
             if (LotId.HasValue && LotLocation.HasValue && LotName != null){
                 result.AppendTextNode("LotId", LotId.Value.ToString());
@@ -71,6 +73,12 @@ namespace FSO.Server.Protocol.CitySelector
             if (apprString != null)
             {
                 this.AppearanceType = (AvatarAppearanceType)Enum.Parse(typeof(AvatarAppearanceType), apprString);
+            }
+
+            var genderString = element.ReadTextNode("Gender");
+            if (genderString != null)
+            {
+                this.Gender = (AvatarGender)Enum.Parse(typeof(AvatarGender), genderString);
             }
 
             var lotId = element.ReadTextNode("LotId");

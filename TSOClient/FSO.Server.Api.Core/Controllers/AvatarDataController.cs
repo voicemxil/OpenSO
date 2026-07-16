@@ -34,6 +34,7 @@ namespace FSO.Server.Api.Core.Controllers
                         HeadOutfitID = avatar.head,
                         BodyOutfitID = avatar.body,
                         AppearanceType = (AvatarAppearanceType)Enum.Parse(typeof(AvatarAppearanceType), avatar.skin_tone.ToString()),
+                        Gender = avatar.gender == Database.DA.Avatars.DbAvatarGender.male ? AvatarGender.Male : AvatarGender.Female,
                         Description = avatar.description,
                         LotId = avatar.lot_id,
                         LotName = avatar.lot_name,

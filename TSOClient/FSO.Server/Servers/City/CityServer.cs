@@ -530,6 +530,7 @@ namespace FSO.Server.Servers.City
             return new Type[]{
                 typeof(SetPreferencesHandler),
                 typeof(RegistrationHandler),
+                typeof(UpdateAvatarAppearanceHandler),
                 typeof(DataServiceWrapperHandler),
                 typeof(DBRequestWrapperHandler),
                 typeof(VoltronConnectionLifecycleHandler),
