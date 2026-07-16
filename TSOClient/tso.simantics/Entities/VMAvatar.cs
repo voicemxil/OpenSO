@@ -950,7 +950,10 @@ namespace FSO.SimAntics
                     if (Thread.Context.VM.TS1) BodyOutfit = VMSuitProvider.GetPersonSuitTS1(this, (ushort)value);
                     else
                     {
-                        var suit = VMSuitProvider.GetSuit(Thread.Stack.LastOrDefault(), Engine.Scopes.VMSuitScope.Person, (ushort)value);
+                        // Look the suit up from this avatar directly - the last frame of our own
+                        // stack may not exist (init tree running as a check on entity creation,
+                        // eg. job lot NPC stand-ins) and its Caller may not even be this avatar.
+                        var suit = VMSuitProvider.GetPersonSuit(this, (ushort)value);
                         if (suit is VMOutfitReference) BodyOutfit = suit as VMOutfitReference;
                         if (suit is ulong) BodyOutfit = new VMOutfitReference((ulong)suit);
                     }
