@@ -649,6 +649,12 @@ namespace FSO.LotView.Components
                     var depth = device.DepthStencilState;
                     device.DepthStencilState = DepthStencilState.DepthRead;
                     Effect.SetTechnique(GrassTechniques.DrawGrid);
+                    //force a full vertex attribute rebind for the grid's shader program: the GL
+                    //backend's attribute-enable cache can carry the previous program's layout into
+                    //this draw, which corrupts the grid UVs on Intel-macOS GL (solid sheet instead
+                    //of dashes) until a floor draw happens to leave compatible state.
+                    device.SetVertexBuffer(null);
+                    device.SetVertexBuffer(VertexBuffer);
                     Effect.BaseTex = GridTex;
                     Effect.World = Matrix.Identity * Matrix.CreateTranslation(0, (18 / 522f) * grassScale - altOff, 0);
                     pass = Effect.CurrentTechnique.Passes[(GridAsTexture)?2:0];

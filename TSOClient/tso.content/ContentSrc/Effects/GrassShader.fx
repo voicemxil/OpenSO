@@ -632,21 +632,7 @@ void GridPSTex3D(GrassPSVTX input, out float4 color:COLOR0)
 		discard;
 	}
 	else {
-		// DIAGNOSTIC (do not ship): screen-space checker alternating three probes so one screenshot
-		// isolates the broken stage on Intel-Mac GL.
-		//   probe 0: UVs as color (red/green gradient per tile) + biased sample alpha in blue
-		//   probe 1: plain tex2D sample (no bias)
-		//   probe 2: normal output (tex2Dbias)
-		float4 sampBias = tex2Dbias(TexSampler, float4(input.GrassInfo.yz, 0, -0.5));
-		float4 sampPlain = tex2D(TexSampler, input.GrassInfo.yz);
-		float band = fmod(floor(input.ScreenPos.x / 64.0) + floor(input.ScreenPos.y / 64.0), 3.0);
-		if (band < 1.0) {
-			color = float4(frac(input.GrassInfo.y), frac(input.GrassInfo.z), sampBias.a, 0.9);
-		} else if (band < 2.0) {
-			color = sampPlain * DiffuseColor * Alpha;
-		} else {
-			color = sampBias * DiffuseColor * Alpha;
-		}
+		color = tex2Dbias(TexSampler, float4(input.GrassInfo.yz, 0, -0.5)) * DiffuseColor * Alpha;
 	}
 }
 
