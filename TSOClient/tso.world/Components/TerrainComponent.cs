@@ -61,6 +61,10 @@ namespace FSO.LotView.Components
         private bool GridAsTexture;
         private Texture2D GridTex;
 
+        private static readonly bool IntelMacGL =
+            System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
+            && System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.X64;
+
         public TerrainComponent(Rectangle size, Blueprint blueprint) {
             this.Size = size;
             this.Effect = WorldContent.GrassEffect;
@@ -68,9 +72,7 @@ namespace FSO.LotView.Components
             //Intel-macOS GL corrupts the textured grid's UV path (renders a solid sheet over the
             //buildable area until a floor draw precedes it); the line grid works there, so x64 Mac
             //builds fall back to it. Rosetta is caught by the same gate, which is fine.
-            var intelMacGL = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.OSX)
-                && System.Runtime.InteropServices.RuntimeInformation.OSArchitecture == System.Runtime.InteropServices.Architecture.X64;
-            GridAsTexture = FSOEnvironment.Enable3D && !intelMacGL;
+            GridAsTexture = FSOEnvironment.Enable3D && !IntelMacGL;
 
             UpdateLotType();
         }
@@ -641,8 +643,11 @@ namespace FSO.LotView.Components
 
                 if (GridPrimitives > 0 && world.BuildMode > 0)
                 {
+                    //Intel-macOS GL: skip the single-target unbind/rebind around the grid draw — the
+                    //MRT roundtrip is the remaining buy/build-only operation under suspicion for the
+                    //solid-sheet artifact there (velocity garbage over grid lines is the lesser evil).
                     RenderTargetBinding[] rts = null;
-                    if (FSOEnvironment.UseMRT)
+                    if (FSOEnvironment.UseMRT && !IntelMacGL)
                     {
                         rts = device.GetRenderTargets();
                         if (rts.Length > 1)
@@ -650,7 +655,7 @@ namespace FSO.LotView.Components
                             device.SetRenderTarget((RenderTarget2D)rts[0].RenderTarget);
                         }
                     }
-                    
+
                     var depth = device.DepthStencilState;
                     device.DepthStencilState = DepthStencilState.DepthRead;
                     Effect.SetTechnique(GrassTechniques.DrawGrid);
@@ -705,7 +710,7 @@ namespace FSO.LotView.Components
 
                     device.DepthStencilState = depth;
 
-                    if (FSOEnvironment.UseMRT)
+                    if (FSOEnvironment.UseMRT && rts != null)
                     {
                         device.SetRenderTargets(rts);
                     }
