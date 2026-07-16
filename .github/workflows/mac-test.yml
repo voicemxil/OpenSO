@@ -1,0 +1,58 @@
+name: mac-test-build
+
+# Lean macOS-only test build for iterating on Mac-specific issues WITHOUT cutting a release or a full
+# CI matrix. This variant targets osx-x64 (Intel) for the build/buy grid diagnostic. NOTE: this does a
+# bare publish, so it ships the COMMITTED Content/OGL/Effects .xnb — recompile and commit shaders when
+# the diagnostic touches a .fx. Produces a signed OpenSO.app uploaded as a downloadable artifact.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ diag/grid-intel-mac ]
+    paths:
+      - 'TSOClient/**'
+      - '.github/workflows/mac-test.yml'
+
+jobs:
+  mac-test:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: "9.0.315"
+
+      - name: Publish macOS client (Intel)
+        run: dotnet publish TSOClient/FSO.Unix -c Release -r osx-x64 --self-contained -o publish
+
+      - name: Stamp version.txt
+        shell: bash
+        run: |
+          # Identifiable, non-release version so it's obvious which test build a report came from.
+          VERSION="gridtest-${GITHUB_SHA:0:7}"
+          echo "Stamping version: $VERSION"
+          printf '%s\n' "$VERSION" > publish/version.txt
+          if [ -f "publish/OpenSO.app/Contents/MacOS/version.txt" ]; then printf '%s\n' "$VERSION" > "publish/OpenSO.app/Contents/MacOS/version.txt"; fi
+
+      - name: Ad-hoc codesign
+        shell: bash
+        run: |
+          set -uo pipefail
+          for f in publish/*.dylib publish/OpenSO; do [ -e "$f" ] && codesign --force --timestamp=none -s - "$f" || true; done
+          if [ -d publish/OpenSO.app ]; then
+            codesign --force --deep --timestamp=none -s - publish/OpenSO.app && echo "signed OpenSO.app" \
+              || echo "::warning::sign failed: OpenSO.app"
+            codesign --verify --deep --strict publish/OpenSO.app && echo "OpenSO.app signature OK." \
+              || echo "::warning::codesign verify failed."
+          fi
+          true
+
+      - name: Package
+        shell: bash
+        run: |
+          mkdir -p dist
+          ( cd publish && zip -r "../dist/OpenSO-client-osx-x64-gridtest.zip" . )
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSO-client-osx-x64-gridtest
+          path: dist/*
