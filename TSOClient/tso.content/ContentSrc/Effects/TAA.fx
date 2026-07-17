@@ -364,6 +364,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // range, never overshoot past it. Taps are already fetched — ALU only.
     float3 reconHullMin = 1e9;
     float3 reconHullMax = -1e9;
+    // INPUT-SIZED kernel accumulation (FSR3 fKernelBiasMin analogue): the smooth end of the
+    // kernel-width modulation applied after the structural rejects are known. Same taps, ALU only.
+    float3 kxIn = float3(MitchellK(abs(fracd.x - 1.0)), MitchellK(abs(fracd.x)), MitchellK(abs(fracd.x + 1.0)));
+    float3 kyIn = float3(MitchellK(abs(fracd.y - 1.0)), MitchellK(abs(fracd.y)), MitchellK(abs(fracd.y + 1.0)));
+    float3 filtIn = 0;
+    float wsumIn = 0;
 #endif
     float3 filt = 0;
     float wsum = 0;
@@ -380,6 +386,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float4 vCen = tex2Dlod(velocitySampler, float4(boxUV, 0, 0));
     float2 centerVel = vCen.rg; // unwritten decodes as zero
     float centerDepth = (vCen.a >= 0.5) ? vCen.b : -1.0; // -1 = no depth anchor (weighting disabled)
+    // REACTIVE MASK decode (a = 1 - 0.5*r band, currently written by the rain velocity pass): the
+    // FSR particle contract — transient content declares itself instead of relying on inference.
+    float reactMask = (vCen.a >= 0.5) ? saturate((1.0 - vCen.a) * 2.0) : 0.0;
     [unroll] for (int dy = -1; dy <= 1; dy++)
     [unroll] for (int dx = -1; dx <= 1; dx++)
     {
@@ -407,6 +416,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #if SM4
         reconHullMin = min(reconHullMin, craw);
         reconHullMax = max(reconHullMax, craw);
+        float wIn = kxIn[dx + 1] * kyIn[dy + 1];
+        filtIn += craw * wIn;
+        wsumIn += wIn;
 #endif
         float w = kx3[dx + 1] * ky3[dy + 1];
         if (edgeAniso > 0.001)
@@ -471,11 +483,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     curr = lerp(curr, crawC, texDetail * 0.75 * floorScale);
 
     // FIREFLY SUPPRESSION at upscale (input-side, zero ghost risk): a single bright or dark sub-pixel
-    // sample otherwise strobes its output pixel once per jitter cycle. Bound the incoming estimate's luma
-    // symmetrically against the neighborhood's own 2-sigma range. Native untouched.
+    // sample otherwise strobes its output pixel once per jitter cycle. Bound the incoming estimate's
+    // luma against the neighborhood range. 3-SIGMA under the 9-tap statistics: a lone full-brightness
+    // tap among nine sits at ~m1 + 2.8 sigma, so the old 2-sigma ceiling (calibrated for 5 taps)
+    // pre-dimmed legitimate light-on-dark detail ~25% every covering frame; 3 sigma passes a lone
+    // real bright untouched while still clipping multi-sigma transients. Native untouched.
     if (upscaleRatio > 1.5)
     {
-        curr.x = clamp(curr.x, m1.x - 2.0 * sigma.x - 0.02, m1.x + 2.0 * sigma.x + 0.02);
+        curr.x = clamp(curr.x, m1.x - 3.0 * sigma.x - 0.02, m1.x + 3.0 * sigma.x + 0.02);
     }
 
     // Reproject with the dilated velocity (+ jitter delta cancels the jitter baked into the velocity buffer).
@@ -607,7 +622,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // restores authority regardless of oscillation evidence (a slow trail over osc-proven ground must
         // still scrub).
         float relFgnPxE = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale;
-        float relMotionE = smoothstep(0.75, 2.5, max(velFgnPx, relFgnPxE));
+        float relMotionE = smoothstep(0.1, 1.0, max(velFgnPx, relFgnPxE)); // low band — see relMotion
         pointDiffPre = saturate(abs(m1.x - hLow.x) / max(0.2, max(m1.x, hLow.x)));
         // The osc discount FADES on a visible resolution-matched difference: deeply-accumulated fine
         // detail must not out-stubborn a real reveal behind it (parallax reveals share the camera's
@@ -646,7 +661,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // meta velocity vs the pixel's own); a static edge shares the camera's motion. Invalid center falls
     // back to the range test.
     float storedFgnPx = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale;
-    float relMotion = smoothstep(0.75, 2.5, max(velFgnPx, storedFgnPx));
+    // LOW band (0.1..1.0 native px): relative/foreign velocity is EXACTLY zero at rest and on camera
+    // pans (shared motion), and the un-jittered velocity buffer means jitter cannot fake it — so any
+    // real foreign velocity, however slow, is honest evidence. The old walking-speed band left slow
+    // silhouettes in a dead zone where the mover never exits the 3x3 and nothing ever fires.
+    float relMotion = smoothstep(0.1, 1.0, max(velFgnPx, storedFgnPx));
     float nearerC = (centerDepth >= 0.0) ? max(centerDepth - historyDepth - DepthRejectParams.x, 0.0) : 0.0;
     ghost = max(ghost, saturate(nearerC / max(historyDepth, DepthRejectParams.w) * 8.0) * 0.8 * relMotion);
     // Gated by CURRENT motion OR REMEMBERED motion (the stored meta velocity): the instant a mover exits
@@ -655,7 +674,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // frame in pm.gb; resting foliage remembers zero, so it cannot fake this signal.
     float storedMovePx = debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1) * texSize) * VelGatePxScale;
     float storedMove = smoothstep(0.35, 1.5, storedMovePx);
-    float ghostReject = max(moveGate, storedMove) * ghost * rejAuth;
+    // Arming includes RELATIVE motion: a slowly-moving silhouette never trips the walking-speed gates,
+    // but its ring carries genuine foreign velocity — the center-depth test's own evidence class may
+    // arm the reject it feeds (rest and camera pans stay closed: relMotion is structurally 0 there).
+    float ghostReject = max(max(moveGate, storedMove), relMotion) * ghost * rejAuth;
 
     // FEATURE-LEVEL HISTORY COMPARISON (structure, not value): a ghost carries its own edges at positions
     // the current frame does not confirm; value-diff misses contamination that preserves average
@@ -747,6 +769,28 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         * (1.0 - max(moveGate, storedMove))
         * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth;
     ghostReject = max(ghostReject, staticGhost);
+
+    // FSR3 KERNEL-WIDTH MODULATION (ffx_fsr2_upsample fKernelBias, hand-ported): the reconstruction
+    // kernel widens from output-sized (sharp) toward INPUT-sized (smooth) on structural evidence —
+    // disocclusion at quarter weight, fresh pixels (no accumulated history) at full — so rejected and
+    // newly-seeded pixels are BORN spatially anti-aliased and converge into detail as the evidence
+    // clears. This is the references' presentation for the raw-forced state (TSR sizes its kernel
+    // input-sized on rejection identically); a display-side blur swap is NOT the mechanism. The
+    // modulated curr feeds measurement and accumulation alike, as in the reference. Native is exempt
+    // (the reference kernel is already 1:1 there).
+#if SM4
+    if (upscaleRatio > 1.001)
+    {
+        // Alternation shield: grazing depth rejects fire per jitter phase on proven fine geometry
+        // (the churn every gate guards against), and letting them flap the kernel width reads as
+        // sharp/soft shimmer on thin lines — osc evidence keeps the sharp kernel; a ghost cannot
+        // fake it.
+        float kernelBiasK = saturate(max(0.25 * saturate(max(depthReject, ghostReject) * (1.0 / 0.85)),
+                                         1.0 - saturate(prevN)))
+                          * (1.0 - smoothstep(0.12, 0.35, prevOsc));
+        curr = lerp(curr, filtIn / max(wsumIn, 1e-4), kernelBiasK);
+    }
+#endif
 
     // VELOCITY-DISPARITY REACTIVE (FSR2 lock-break analogue): a mismatch between this frame's dilated
     // velocity and the velocity stored alongside the history means the history was written by content
@@ -932,7 +976,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // PROVEN sign-alternation (a ghost is monotonic — it cannot earn this), stillness, and no
     // disocclusion signals, let the locked history pass (see the lock escape after the clamp).
     // stillGate: locks survive sub-pixel drift and slow pans (suspicion-scaled velocity — coherent motion
-    // counts at reduced speed for lock purposes; any flagged pixel counts at full speed).
+    // counts at reduced speed for lock purposes; any flagged pixel counts at full speed). Motion-
+    // surviving locks were tried (FSR2.2 semantics) and read as aliasing/crawl in motion here — at this
+    // witnessing sparsity, escaped history under pans carries visible reprojection micro-error.
     float stillGate = 1.0 - smoothstep(0.8, 2.0, velPx * lerp(TuneStillGateFloor, 1.0, suspicion));
     // Lock entry eases with render scale (floorScale): under heavy TAAU an output pixel is witnessed only
     // ~1 frame in 1/scale^2, so lock evidence accumulates that much slower — entry edge 0.24 at <= 0.5x,
@@ -1069,6 +1115,21 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         lumaHCmp = history.x;
     }
 
+    // FSR3 CLAMP-EVENT SLASH (ffx_fsr2_accumulate RectifyHistory: fBaseAccumulation = min(base, 0.1),
+    // hand-ported): history landing OUTSIDE the rectification box is treated as proof the accumulation
+    // is stale — trust is slashed to near-raw rather than merely rectified. This is FSR3's principal
+    // anti-trail hammer: a dragged silhouette ring cannot ride a clamped-but-still-trusted history.
+    // Two justified deviations from the unconditional reference: exempt in the oscillation-evidence
+    // band (our analogue of FSR3's lock contribution on clamp events; ghost-safe — a monotonic trail
+    // cannot build alternation evidence), and gated to motion/evidence (the reference rest box is up
+    // to 20-sigma AABB-bounded, ours is ~3-sigma — unconditional slashing would re-churn converging
+    // detail at rest, where the rejects and diff already own responsiveness).
+    float clampSlash = ((historyRaw.x < cmin.x || historyRaw.x > cmax.x ||
+                         historyRaw.y < cmin.y || historyRaw.y > cmax.y ||
+                         historyRaw.z < cmin.z || historyRaw.z > cmax.z) ? 1.0 : 0.0)
+                     * (1.0 - smoothstep(0.12, 0.35, osc))
+                     * saturate(max(max(slowMotion, storedMove), suspicion) * 2.0);
+
     // LOCK ESCAPE (FSR2-style, replaces lock box-widening): on pixels with a proven oscillation lock,
     // blend from the clamped history toward the RAW history — converged output-res detail passes the
     // clamp intact without the box ever growing. Bounded by its endpoints (raw history at worst),
@@ -1080,7 +1141,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // escape passes RAW history, and the lock's still-gate tolerates slow pans by design — under any
     // real drift the escape must close (the trail vector) while the lock's deep TRUST stays (the
     // trusted value is the direct-clamped, box-bounded one). Thin lines keep their clamp protection
-    // under drift via the thin-line relaxation, which needs no stillness.
+    // under drift via the same-surface box, which needs no stillness.
     history = lerp(history, historyRaw, oscLock * (1.0 - 0.5 * oscAmp) * (1.0 - slowMotion));
 
     // === BLEND — FSR2-style two-owner form: A = accumulated trust (in N-units, from the Kalman
@@ -1124,25 +1185,19 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     A = CapA(A, 5.7, reactive);                 // velocity disparity (w 0.85)
     A = CapA(A, 11.5, foreign);                 // dilation-ring safety net (w 0.92, mild)
     A = CapA(A, 7.3, noVel);                    // velocityless overlays: ~8-frame window
-    float upsFade = smoothstep(1.0, 1.5, upscaleRatio);
-    // Motion trust cap (converged movers) + young-pixel cap (filling pixels under small drift):
-    float capMotionA = TuneMotionTrustCap / max(1.0 - TuneMotionTrustCap, 1e-3);
-    A = CapA(A, capMotionA, moveGate * upsFade);
-    A = CapA(A, capMotionA, max(slowMotion, storedMove) * (1.0 - saturate(minN * (1.0 / 12.0))) * upsFade);
-    // Evidence-gated motion refresh (the old additive motionBoost as an A-cap): full strength only
-    // where something is suspicious; evidence-silent pans keep the small floor share.
-    float boostK = saturate(vmag * 20.0) * lerp(TuneMotionBoostFloor, 1.0, suspicion)
-                 * saturate(TuneMotionBoostMax * (1.0 / 0.22));
-    A = CapA(A, 3.0, boostK);
-    // Texture-detail responsiveness (the anti-ghost backstop where movers walk): evidence-armed —
-    // full near current/remembered motion, fading on converged motion-silent rest; locks exempt.
-    float texFloorArm = max(gammaMotion, 1.0 - saturate(minN * (1.0 / 24.0)));
-    A = CapA(A, 2.6, texDetail * texFloorArm * (1.0 - oscLock) * saturate(TuneTexDetailFloor * (1.0 / 0.28)));
-    // HONEST DISOCCLUSION (discard, not fade): a confident reject slashes trust so the blend IS the
-    // raw frame; grazing partial rejects lean on the clamp instead. Same shaped knee as before.
-    float honestS = smoothstep(0.55, 0.9, max(depthReject, ghostReject));
-    A = min(A, (1.0 - honestS) / max(honestS, 1e-3));
-
+    // FSR3 velocity accumulation caps (ffx_fsr2_accumulate ComputeBaseAccumulationWeight, hand-ported;
+    // replaces the walking-speed motion cap and young-pixel drift cap): ANY real screen motion —
+    // current or remembered, from 0.1 native px/frame — caps accumulation at ~10 frames, ramping to
+    // equal-weight blending by 20 px/frame. The references' answer to every motion-trail class is a
+    // short window under motion, uniformly, with no per-cause gating.
+    float fsrVel = max(velPx, storedMovePx);
+    A = CapA(A, 10.0, saturate(fsrVel * 10.0));
+    A = CapA(A, 1.0, saturate(fsrVel / 20.0));
+    // Declared-reactive content (FSR reactive mask semantics): trust capped near equal-weight so
+    // transients render at full presence.
+    A = CapA(A, 0.5, reactMask);
+    // FSR3 clamp-event slash (computed at the rectification site): near-raw on a box violation.
+    A = lerp(A, min(A, 0.2), clampSlash);
     // --- c: this frame's information. Base 1; under TAAU scaled by the nearest real sample's kernel
     // proximity (FSR2's frame weighting — off-phase frames are interpolation and inject less), with
     // the coverage-scaled anti-starvation floor and the motion regime as before. The old trust-fade
@@ -1158,13 +1213,45 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 
     float blend = saturate(c / max(c + A, 1e-4)); // current-frame weight
 
+    // --- GUARANTEED-REFRESH FLOORS + the additive motion boost. These are the second orderless
+    // class: guarantees compose commutatively under max(), just as caps do on A — what must never
+    // return is caps and floors interleaved. Expressed as A-caps these were silently defeated by the
+    // confidence throttle (small c turns any A-cap into a deep hold): movers and rain ghosted,
+    // post-reject rebuilds seeded at a crawl, and the trust field dragged. As floors they are
+    // throttle-immune, exactly upstream's semantics. ---
+    // Evidence-gated motion boost: full raw boost only where something is actually suspicious; an
+    // evidence-silent pan keeps only the small floor share.
+    float motionBoost = saturate(vmag * 20.0) * TuneMotionBoostMax * lerp(TuneMotionBoostFloor, 1.0, suspicion);
+    blend = saturate(blend + motionBoost);
+    // Warmup seed: prevN = evidence that EXISTS in the history (frame one -> raw frame); newN keeps
+    // the reject-reset responsiveness. Locks exempt (their evidence resets with the meta).
+    // PHASE-AWARE under TAAU: an off-phase frame's reconstruction is interpolation, and seeding it at
+    // the full rate alternates sharp and interpolated content through the rebuild — wake fizzle
+    // behind movers. Off-phase seeds at the 55% floor; any motion restores the full rate (holding
+    // dragged young history IS a trail — both failure directions observed). Native keeps the plain ramp.
+    float rampPhase = (upscaleRatio > 1.001)
+        ? lerp(lerp(0.55, 1.0, sampleConf), 1.0, max(slowMotion, storedMove)) : 1.0;
+    blend = max(blend, (1.0 / (min(prevN, newN) + 1.0)) * rampPhase * (1.0 - oscLock));
+    // HONEST DISOCCLUSION (discard, not fade): a confident reject buys the raw frame regardless of
+    // frame confidence; grazing partial rejects lean on the clamp instead.
+    blend = max(blend, smoothstep(0.55, 0.9, max(depthReject, ghostReject)));
+    // Texture-detail responsiveness floor (the anti-ghost backstop where movers walk): evidence-armed —
+    // full near current/remembered motion, fading on converged motion-silent rest; locks exempt.
+    float texFloorArm = max(gammaMotion, 1.0 - saturate(minN * (1.0 / 24.0)));
+    blend = max(blend, texDetail * TuneTexDetailFloor * (1.0 - oscLock) * texFloorArm);
+
     // Anti-flicker (Karis): inverse-luma weighting so bright sub-pixel samples don't dominate/sparkle.
     // ALWAYS ON by default (TuneKarisFade 0 — the TAALite/TSR/FSR behavior): sparkle suppression matters
     // most during pans, and depth-evidenced reveals are owned by the structural rejects. The weighting is
     // structurally dark-biased (history weight scales by 1/(1+lumaH)), so TuneKarisFade remains the
     // escape hatch: raising it fades toward a plain energy-honest lerp under motion if dark->light
     // changes WITHOUT depth evidence ever lag.
-    float lumaFade = max(moveGate, storedMove) * TuneKarisFade;
+    // Reactive content and ALTERNATION-PROVEN pixels are exempt from the Karis dark-bias: the
+    // inverse-luma weighting exists to suppress UNPROVEN sparkle, but on proven-oscillating bright
+    // detail (light lines on dark backgrounds) it halves every bright sample's blend weight against
+    // the dark history — the detail converges dim and slow, and the shortfall reads as shimmer.
+    float lumaFade = max(max(moveGate, storedMove) * TuneKarisFade,
+                         max(reactMask, smoothstep(0.12, 0.35, osc)));
     float wc = blend * lerp(1.0 / (1.0 + max(lumaC, 0.0)), 1.0, lumaFade);
     float wh = (1.0 - blend) * lerp(1.0 / (1.0 + max(lumaH, 0.0)), 1.0, lumaFade);
     float3 blended = (curr * wc + history * wh) / max(wc + wh, 1e-5);

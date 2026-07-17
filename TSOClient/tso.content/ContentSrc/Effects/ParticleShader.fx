@@ -62,6 +62,11 @@ struct ParticleOutput
 	float2 TexCoord : TEXCOORD0;
 	float4 Color : TEXCOORD1;
 	float4 ModelPos : TEXCOORD2;
+	// Current/previous clip positions for the rain velocity pass (RainVS fills them; other VSes
+	// zero-init). Both go through the SAME jittered VP, so the TAA jitter cancels in the velocity
+	// subtraction — no JitterNDC term, unlike writers whose previous matrix is un-jittered.
+	float4 CurrClip : TEXCOORD3;
+	float4 PrevClip : TEXCOORD4;
 };
 
 float4 Billboard(float4 posIn, float4 modelPos) {
@@ -163,6 +168,10 @@ ParticleOutput RainVS(in ParticleInput input)
 	output.ModelPos = realPos / 2; //not sure why i need to do this
 	output.ModelPos.y -= BaseAlt;
 	output.Position = mul(realPos, mul(View, Projection));
+	// The streak's previous-frame position is the whole billboard translated back by the per-frame
+	// delta already computed for the stretch — projected through the same VP for the velocity pass.
+	output.CurrClip = output.Position;
+	output.PrevClip = mul(realPos - float4(delta, 0), mul(View, Projection));
 	output.Color = float4(1, 1, 1, 1) * min(1, (0.5 - abs(yFrac - 0.5)) * 20) * min(1, ClipLevel*(2.95 * 3) - output.ModelPos.y) * Color;
 
 	return output;
@@ -270,6 +279,31 @@ PSOutputV RainSimplePS(ParticleOutput input)
 	return o;
 }
 
+// Rain velocity pass (second draw, MRT1 only — RT0 is write-masked by the blend state): writes the
+// streak's TRUE screen velocity + normalized linear depth + valid mask on the streak core, so the
+// temporal resolve sees rain as fast moving geometry (motion caps arm, drops stop being averaged
+// away against deeply-trusted background history) instead of maskless transient noise. Additive
+// colour blending cannot coexist with a velocity overwrite in one pass: MonoGame blend functions
+// are shared across render targets, only the write masks are per-target.
+PSOutputV RainVelocityPS(ParticleOutput input)
+{
+	PSOutputV o;
+	float level = (input.ModelPos.y) / (2.95 * 3);
+	float indoorsLevel = round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories);
+	if (level >= ClipLevel || indoorsLevel > max(0.0, level)) discard;
+	float shape = (1 - cos(input.TexCoord.y*3.1415 * 2)) * (1 - cos(input.TexCoord.x*3.1415 * 2)) / 4;
+	if (shape * input.Color.a < 0.2) discard; // velocity only where the streak visibly covers
+	float cw = max(input.CurrClip.w, 1e-4);
+	float pw = max(input.PrevClip.w, 1e-4);
+	float2 v = clamp((input.CurrClip.xy / cw - input.PrevClip.xy / pw) * float2(0.5, -0.5), -0.5, 0.5);
+	o.color = float4(0, 0, 0, 0);
+	// Mask 0.6 = valid + REACTIVE 0.8 in the a = 1 - 0.5*r band (FSR's particle reactive mask): the
+	// resolve caps trust harder and drops the Karis dark-bias on drop pixels, so streaks render at
+	// full presence instead of a two-frame half-intensity average.
+	o.velocity = float4(v, saturate(input.CurrClip.w / 800.0), 0.6);
+	return o;
+}
+
 PSOutputV ParticlePS(ParticleOutput input)
 {
 	PSOutputV o;
@@ -324,5 +358,16 @@ technique GenericBoxParticle
 	{
 		VertexShader = compile VS_SHADERMODEL GenericBoxVS();
 		PixelShader = compile PS_SHADERMODEL ParticlePS();
+	}
+};
+
+// APPENDED LAST: the mode*2+depth technique indexing above must stay stable. Selected by name from
+// ParticleComponent's velocity pass (missing in an old xnb -> the pass is skipped, null-safe).
+technique RainVelocity
+{
+	pass P0
+	{
+		VertexShader = compile VS_SHADERMODEL RainVS();
+		PixelShader = compile PS_SHADERMODEL RainVelocityPS();
 	}
 };
