@@ -105,7 +105,7 @@ namespace FSO.Client
             { "Bloom", "false"},         //threshold bright-pass bloom (post-process)
             { "BloomThreshold", "1.0"},  //bloom luminance threshold (0..2)
             { "BloomIntensity", "0.5"},  //bloom composite strength (0..1, shader scales internally)
-            { "AO", "false"},            //GTAO ambient occlusion (3D only)
+            { "AO", "false"},            //SSAO ambient occlusion (3D only)
             { "AORadius", "0.5"},        //world-space AO sample radius
             { "AOIntensity", "1.0"},     //AO composite strength (0..2)
             { "VelocityDebug", "false"}, //diagnostic: render the MRT1 velocity buffer to screen (3D only)
@@ -201,7 +201,7 @@ namespace FSO.Client
         public bool Bloom { get; set; } //threshold bright-pass bloom
         public float BloomThreshold { get; set; } //bloom luminance threshold
         public float BloomIntensity { get; set; } //bloom composite strength
-        public bool AO { get; set; } //GTAO ambient occlusion (3D only)
+        public bool AO { get; set; } //SSAO ambient occlusion (3D only)
         public float AORadius { get; set; } //world-space AO sample radius
         public float AOIntensity { get; set; } //AO composite strength
         public bool VelocityDebug { get; set; } //diagnostic: visualize MRT1 velocity buffer to screen

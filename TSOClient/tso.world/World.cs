@@ -729,7 +729,7 @@ namespace FSO.LotView
                 _PrevTAAJitterNDC = Vector2.Zero;
             }
             State.Cameras.PreDraw(this);
-            // snapshot the active 3D camera's projection params for GTAO's depth linearization
+            // snapshot the active 3D camera's projection params for SSAO's depth linearization
             var active3D = (State.Cameras.ActiveCamera as FSO.LotView.Utils.Camera.CameraController3D)?.Camera;
             if (active3D != null && device != null)
             {
@@ -1221,7 +1221,12 @@ namespace FSO.LotView
             // pre-TAAU baseline TAA that sidesteps the suspected MojoShader branch-misevaluation bug
             // class behind the warble (see TAA.fx for the full writeup).
             bool taaOn = TaaCapable(cfg) && State.CameraMode == CameraRenderMode._3D;
-            if (taaOn) msaa = 0;
+            // AO supersedes MSAA for the same reason, plus cost: a multisampled fp32 G-buffer is heavy,
+            // and its resolve averages depth/normals across silhouettes exactly where the AO estimator
+            // needs clean edges. Same predicate as the AO wiring below.
+            bool aoOn = cfg.AO && cfg.AOIntensity > 0f && WorldContent.SSAO != null
+                        && FSOEnvironment.Enable3D && State.CameraMode == CameraRenderMode._3D;
+            if (taaOn || aoOn) msaa = 0;
             // Cosmic TAAU: the TAA resolve replaces EASU as the render-scale<1 upscaler. Must be set BEFORE
             // EnableHistoryTargets below (it sizes history to the native grid in TAAU mode).
             // Supported on ALL backends: DirectX runs TAA_Core's TAAU reconstruction; GL runs TAALite,
@@ -1291,9 +1296,14 @@ namespace FSO.LotView
 
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
 
-            // velocity buffer for TAA / per-pixel motion blur; 3D only, freed when both are off
+            // SSAO (Scalable Ambient Obscurance, SSAO.fx/AOPass.cs): aoOn decided above (it strips MSAA).
+            // The velocity predicate below includes it so the G-buffer allocates at the right precision
+            // (fp32 depth, never multisampled) on the first pass.
+            PPXDepthEngine.AOPreciseDepth = aoOn;
+
+            // velocity buffer for TAA / per-pixel motion blur / AO depth; 3D only, freed when all are off
             bool wantVelocity = FSOEnvironment.Enable3D && State.CameraMode == CameraRenderMode._3D
-                                && (cfg.TAA || cfg.MotionBlur == 2 || cfg.VelocityDebug);
+                                && (cfg.TAA || cfg.MotionBlur == 2 || cfg.VelocityDebug || aoOn);
             PPXDepthEngine.EnableVelocityTarget(wantVelocity);
             PPXDepthEngine.EnableHistoryTargets(cfg.TAA && State.CameraMode == CameraRenderMode._3D);
 
@@ -1304,20 +1314,9 @@ namespace FSO.LotView
             PPXDepthEngine.EnableBloomTargets(bloom); //allocate the mip chain only when bloom is on
             PPXDepthEngine.BloomFunc = bloom ? Utils.BloomPass.Draw : null;
 
-            // GTAO is functional but disabled for now. Flip AOEnabled to re-enable, restoring the
-            // UIGraphicsOptionsDialog controls alongside.
-            const bool AOEnabled = false;
-            bool ao = AOEnabled && wantVelocity && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null;
-            // Allocate the four AO targets only when AO is actually wanted (currently never). Keyed off the
-            // same predicate as the force-enable block below so a re-enable brings them back automatically.
-            PPXDepthEngine.EnableAOTargets(AOEnabled && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null && State.CameraMode == CameraRenderMode._3D);
-            PPXDepthEngine.AOFunc = ao ? Utils.AOPass.Draw : null;
-            // AO needs the velocity buffer too - force-enable it even when TAA/motion blur are off
-            if (AOEnabled && cfg.AO && cfg.AOIntensity > 0f && WorldContent.GTAO != null && State.CameraMode == CameraRenderMode._3D)
-            {
-                PPXDepthEngine.EnableVelocityTarget(true);
-                PPXDepthEngine.AOFunc = Utils.AOPass.Draw;
-            }
+            // AO target allocation + pass hook (aoOn computed above, before the velocity target)
+            PPXDepthEngine.EnableAOTargets(aoOn);
+            PPXDepthEngine.AOFunc = aoOn ? Utils.AOPass.Draw : null;
 
             // velocity visualizer overrides the whole post chain; the TAA meta debug view lives on the
             // TAA dropdown. Velocity view wins if both are on.
@@ -1399,7 +1398,8 @@ namespace FSO.LotView
             }
 
             // velocity is camera-induced (static terrain, see Terrain.Draw); allocate AFTER
-            // InitScreenTargets, which disposes the buffer
+            // InitScreenTargets, which disposes the buffer. No AO in the city, so no fp32 depth either.
+            PPXDepthEngine.AOPreciseDepth = false;
             bool wantVelocity = cfg.TAA || cfg.MotionBlur == 2 || cfg.VelocityDebug;
             PPXDepthEngine.EnableVelocityTarget(wantVelocity);
             PPXDepthEngine.EnableHistoryTargets(cfg.TAA);

@@ -64,9 +64,9 @@ namespace FSO.LotView
             // Bloom (threshold + Kawase dual-filter + composite).
             try { Bloom = ContentManager.Load<Effect>("Effects/Bloom"); }
             catch { Bloom = null; }
-            // GTAO (slice-based ambient occlusion).
-            try { GTAO = ContentManager.Load<Effect>("Effects/GTAO"); }
-            catch { GTAO = null; }
+            // SSAO (Scalable Ambient Obscurance).
+            try { SSAO = ContentManager.Load<Effect>("Effects/SSAO"); }
+            catch { SSAO = null; }
             SpriteEffect = new Effects.SpriteEffect(ContentManager.Load<Effect>("Effects/SpriteEffects" + EffectSuffix));
             ParticleEffect = new LightMappedEffect(ContentManager.Load<Effect>("Effects/ParticleShader"));
             AvatarEffect = new LightMappedEffect(ContentManager.Load<Effect>("Effects/Vitaboy" + EffectSuffix));
@@ -116,7 +116,7 @@ namespace FSO.LotView
         public static Effect SkyVelocity;
         public static Effect BillboardVelocity;
         public static Effect Bloom;
-        public static Effect GTAO;
+        public static Effect SSAO;
 
         // Load a PNG from ContentDir as a Texture2D. Returns null if missing/unreadable so the caller can
         // disable the dependent feature (matches the ParticleComponent/AbstractSkyDome pattern).

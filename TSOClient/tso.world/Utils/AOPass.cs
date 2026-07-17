@@ -7,13 +7,24 @@ using FSO.Common.Rendering.Framework.Camera;
 namespace FSO.LotView.Utils
 {
     /// <summary>
-    /// GTAO post-process: noisy AO pass, depth-aware blur, temporal accumulation, composite.
-    /// Runs at PPXDepthEngine.AOFunc, before bloom (AO darkens before bloom adds highlights).
+    /// SSAO post-process driving SSAO.fx — a port of Scalable Ambient Obscurance (McGuire et al.,
+    /// HPG 2012): spiral-tap AO estimator, separable depth-key bilateral blur, temporal accumulation,
+    /// composite. Runs at PPXDepthEngine.AOFunc, before bloom (AO darkens before bloom adds highlights).
     /// </summary>
     public static class AOPass
     {
-        // frame counter for per-frame noise rotation
+        // per-frame spiral rotation index; the temporal pass integrates successive rotations
         private static int _Frame;
+        // golden angle: successive frame rotations land maximally far apart
+        private const float FRAME_ROTATION = 2.39996323f;
+        // Maps the UI intensity slider (0..2) onto the estimator's useful range: at this world's unit
+        // scale the raw SAO sum saturates far below slider 1.0, so the slider is pre-scaled down.
+        private const float INTENSITY_SCALE = 0.3f;
+        // view-space self-shadowing bias, proportional to the sample radius so retuning the radius
+        // slider doesn't reintroduce flat-surface shadowing
+        private const float BIAS_PER_RADIUS = 0.04f;
+        // history weight in the temporal pass
+        private const float TEMPORAL_BLEND = 0.9f;
 
         // debug: 0 = normal, 1 = blurred AO grayscale, 2 = normals, 3 = depth
         public static int DebugMode;
@@ -21,39 +32,20 @@ namespace FSO.LotView.Utils
         // camera projection params, set by World.PreDraw each frame
         public static float NearPlane = 1.0f;
         public static float FarPlane = 800.0f;
-        public static float TanHalfFovY = 1.0f;
-        public static float AspectRatio = 16f / 9f;
         public static Matrix View = Matrix.Identity;
-        public static Matrix Projection = Matrix.Identity;
         public static Matrix InvProjection = Matrix.Identity;
         public static Vector2 ProjScale = Vector2.One;
 
-        // 64-sample hemisphere kernel (tangent space) + 4x4 noise rotation texture
-        private static Vector3[] _Kernel;
+        // 4x4 tiled noise: .x = random spiral phase [0,1)
         private static Texture2D _NoiseTex;
 
-        private static void EnsureSSAOData(GraphicsDevice gd)
+        private static void EnsureNoise(GraphicsDevice gd)
         {
-            if (_Kernel != null && _NoiseTex != null && !_NoiseTex.IsDisposed) return;
-            var rng = new Random(12345); // fixed seed
-
-            _Kernel = new Vector3[64];
-            for (int i = 0; i < 64; i++)
-            {
-                var s = new Vector3(
-                    (float)(rng.NextDouble() * 2.0 - 1.0),
-                    (float)(rng.NextDouble() * 2.0 - 1.0),
-                    (float)rng.NextDouble());
-                s = Vector3.Normalize(s) * (float)rng.NextDouble();
-                float scale = i / 64f;
-                scale = MathHelper.Lerp(0.1f, 1.0f, scale * scale);
-                _Kernel[i] = s * scale;
-            }
-
-            // 4x4 rotation vectors in the tangent plane (z = 0)
+            if (_NoiseTex != null && !_NoiseTex.IsDisposed) return;
+            var rng = new Random(12345); // fixed seed: deterministic pattern, temporal pass does the dithering
             var noise = new Vector4[16];
             for (int i = 0; i < 16; i++)
-                noise[i] = new Vector4((float)(rng.NextDouble() * 2.0 - 1.0), (float)(rng.NextDouble() * 2.0 - 1.0), 0f, 0f);
+                noise[i] = new Vector4((float)rng.NextDouble(), (float)rng.NextDouble(), 0f, 0f);
             _NoiseTex?.Dispose();
             _NoiseTex = new Texture2D(gd, 4, 4, false, SurfaceFormat.Vector4);
             _NoiseTex.SetData(noise);
@@ -61,7 +53,7 @@ namespace FSO.LotView.Utils
 
         public static void Draw(GraphicsDevice gd, RenderTarget2D src)
         {
-            var effect = WorldContent.GTAO;
+            var effect = WorldContent.SSAO;
             var velRT = PPXDepthEngine.GetVelocityTarget();
             var normalRT = PPXDepthEngine.GetNormalTarget();
             var ao = PPXDepthEngine.GetAOTarget();
@@ -84,17 +76,22 @@ namespace FSO.LotView.Utils
             var verts = WorldContent.GetTextureVerts(gd);
             gd.BlendState = BlendState.Opaque;
 
-            EnsureSSAOData(gd);
+            EnsureNoise(gd);
 
+            float radius = Math.Max(cfg.AORadius, 0.01f);
+            float r2 = radius * radius;
             effect.Parameters["InvScreenSize"]?.SetValue(new Vector2(1f / ao.Width, 1f / ao.Height));
             effect.Parameters["FarPlane"]?.SetValue(FarPlane);
-            effect.Parameters["Radius"]?.SetValue(cfg.AORadius);
-            effect.Parameters["Intensity"]?.SetValue(cfg.AOIntensity);
-            effect.Parameters["AOBias"]?.SetValue(0.025f);
+            effect.Parameters["Radius"]?.SetValue(radius);
+            effect.Parameters["Bias"]?.SetValue(BIAS_PER_RADIUS * radius);
+            // SAO estimator gain: Intensity / Radius^6 (the f^3 falloff term carries r^6)
+            effect.Parameters["IntensityDivR6"]?.SetValue(cfg.AOIntensity * INTENSITY_SCALE / (r2 * r2 * r2));
+            // pixels per view-space unit at z = -1 on the AO grid; the shader divides by depth
+            effect.Parameters["ProjScalePx"]?.SetValue(0.5f * ProjScale.Y * ao.Height);
+            effect.Parameters["FrameAngle"]?.SetValue((_Frame++ % 64) * FRAME_ROTATION);
             effect.Parameters["NoiseScale"]?.SetValue(new Vector2(ao.Width / 4f, ao.Height / 4f));
-            effect.Parameters["Samples"]?.SetValue(_Kernel);
+            effect.Parameters["TemporalBlend"]?.SetValue(TEMPORAL_BLEND);
             effect.Parameters["View"]?.SetValue(View);
-            effect.Parameters["Projection"]?.SetValue(Projection);
             effect.Parameters["InvProjection"]?.SetValue(InvProjection);
             effect.Parameters["velocityTex"]?.SetValue(velRT);
             effect.Parameters["normalTex"]?.SetValue(normalRT);
@@ -113,17 +110,25 @@ namespace FSO.LotView.Utils
                 return;
             }
 
+            // raw AO (+ packed depth key in .gb)
             gd.SetRenderTarget(ao);
-            ApplyDraw(gd, effect, "GTAO", verts);
+            ApplyDraw(gd, effect, "SAO", verts);
 
+            // separable bilateral blur: horizontal into ao2, vertical back into ao
             gd.SetRenderTarget(ao2);
             effect.Parameters["aoTex"]?.SetValue(ao);
+            effect.Parameters["BlurAxis"]?.SetValue(new Vector2(1f, 0f));
+            ApplyDraw(gd, effect, "Blur", verts);
+
+            gd.SetRenderTarget(ao);
+            effect.Parameters["aoTex"]?.SetValue(ao2);
+            effect.Parameters["BlurAxis"]?.SetValue(new Vector2(0f, 1f));
             ApplyDraw(gd, effect, "Blur", verts);
 
             if (DebugMode == 1)
             {
                 gd.SetRenderTargets(dst);
-                effect.Parameters["aoTex"]?.SetValue(ao2);
+                effect.Parameters["aoTex"]?.SetValue(ao);
                 ApplyDraw(gd, effect, "CompositeDebug", verts);
                 return;
             }
@@ -131,7 +136,7 @@ namespace FSO.LotView.Utils
             var historyPrev = PPXDepthEngine.GetAOHistoryPrev();
             var historyCurr = PPXDepthEngine.GetAOHistoryCurr();
             gd.SetRenderTarget(historyCurr);
-            effect.Parameters["aoTex"]?.SetValue(ao2);
+            effect.Parameters["aoTex"]?.SetValue(ao);
             effect.Parameters["aoHistoryTex"]?.SetValue(historyPrev);
             ApplyDraw(gd, effect, "Temporal", verts);
 
@@ -144,19 +149,16 @@ namespace FSO.LotView.Utils
         }
 
         /// <summary>
-        /// Snapshot the active camera's projection params for the GTAO shader. Called from World.PreDraw.
+        /// Snapshot the active camera's projection params for the SSAO shader. Called from World.PreDraw.
         /// </summary>
         public static void SetCamera(BasicCamera cam, float viewportAspect)
         {
             if (cam == null) return;
             NearPlane = cam.NearPlane;
             FarPlane = cam.FarPlane;
-            TanHalfFovY = (float)Math.Tan(cam.FOV * 0.5f);
-            AspectRatio = viewportAspect;
             View = cam.View;
-            Projection = cam.Projection;
             InvProjection = Matrix.Invert(cam.Projection);
-            // (M11, M22) = view->ndc XY scale; sizes the world-space Radius into UV space per depth
+            // (M11, M22) = view->ndc XY scale; sizes the world-space Radius into screen pixels per depth
             ProjScale = new Vector2(cam.Projection.M11, cam.Projection.M22);
         }
 

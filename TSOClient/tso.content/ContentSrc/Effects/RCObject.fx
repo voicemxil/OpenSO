@@ -344,11 +344,13 @@ PSOutputV psDirRCV(VertexOutV v)
 #else
 	float4 tex = tex2Dbias(TexSampler, float4(v.texCoord, 0, MipBias));
 #endif
-	float4 color = gammaMul(tex, lightProcessDirection(v.modelPos, n));
+	float pctAmbient;
+	float4 color = gammaMul(tex, lightProcessDirectionAmbient(v.modelPos, n, Level, pctAmbient));
 	if (color.a < 0.01) discard;
 	o.color = color;
 	o.velocity = float4(ComputeVelocity(v.currClip, v.prevClip), PackDepth(v.currClip), 1);
-	o.normal = float4(n, 1);
+	// normal.a: 0 = no geometry; else 0.5 + 0.5 * ambient light fraction (SSAO composite decodes it)
+	o.normal = float4(n, 0.5 + 0.5 * pctAmbient);
 	return o;
 }
 
