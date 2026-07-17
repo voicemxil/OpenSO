@@ -1799,6 +1799,10 @@ namespace FSO.Client.Rendering.City
         public static BlendState NoColor = new BlendState() { ColorWriteChannels = ColorWriteChannels.None };
 
         public uint StencilLotID;
+        // The stencil hole's size depends on how many surround lots render (3 lots wide with
+        // surrounds, 1 without) — cache that too, or lowering the Surrounding Lots setting while on
+        // a lot keeps the old oversized hole and the ring where surrounds used to be renders as void.
+        public int StencilSurroundNumber = -1;
         public VertexBuffer StencilVertices;
 
         public void DrawSurrounding(GraphicsDevice gfx, ICamera camera, Vector4 fogColor, int surroundNumber, Vector2 taaJitter) {
@@ -1861,7 +1865,13 @@ namespace FSO.Client.Rendering.City
             ShadowRes = GlobalSettings.Default.ShadowQuality;
             ShadowsEnabled = GlobalSettings.Default.CityShadows;
 
-            m_GraphicsDevice.RasterizerState = RasterizerState.CullCounterClockwise;
+            // No backface culling for the lot-view backdrop: it is anchored to the LOT's corner
+            // elevation, so surrounding city terrain that sits HIGHER than the lot hangs above
+            // lot-space zero — a low camera inside the lot can end up UNDER those slopes, and with
+            // culling on every triangle in view is discarded (terrain vanishes while the sky dome
+            // stays). A heightfield has no visible backfaces from legal angles, so CullNone renders
+            // identically everywhere else.
+            m_GraphicsDevice.RasterizerState = RasterizerState.CullNone;
             m_GraphicsDevice.DepthStencilState = DepthStencilState.Default;
 
             m_ScrHeight = m_GraphicsDevice.Viewport.Height;
@@ -1909,7 +1919,12 @@ namespace FSO.Client.Rendering.City
             PixelShader.Parameters["Time"].SetValue(OceanTime);
 
             var weatherMult = (Camera is CityCamera3D) ? (1 + Weather.Darken) : 1;
-            PixelShader.Parameters["FogMaxDist"].SetValue(m_LotZoomProgress*fogColor.W + (1- m_LotZoomProgress)* fogColor.W*weatherMult*Camera.FogMultiplier);
+            // The weather fog distance (FogColor.W) is tuned for the city view's scale (75 units per
+            // city tile), but the lot-view backdrop renders the same mesh at 75*3 units per tile — so
+            // the lot-side term needs the same *3, or heavy-weather fog (15 tiles in city view)
+            // saturates just past the lot and the whole backdrop flattens into the fog colour,
+            // looking like the terrain was culled/cleared at any camera angle that adds distance.
+            PixelShader.Parameters["FogMaxDist"].SetValue(m_LotZoomProgress*fogColor.W*3 + (1- m_LotZoomProgress)* fogColor.W*weatherMult*Camera.FogMultiplier);
             fogColor.W = 1f;
             PixelShader.Parameters["FogColor"].SetValue(fogColor);
 
@@ -1926,9 +1941,25 @@ namespace FSO.Client.Rendering.City
             var controller = UIScreen.Current.FindController<CoreGameScreenController>();
             var id = controller.GetVisualLotID();
 
+            // The city-side draw loop owns near-mesh/subdiv regeneration, but it does not run while
+            // zoomed into a lot. If anything resets that state mid-lot (e.g. applying graphics
+            // settings briefly bounces through the city path, which discards the subdiv slice), the
+            // backdrop is left on the wrong mesh with no recovery and terrain around the lot goes
+            // missing. Re-arm the near mesh + subdiv around the CURRENT lot here.
+            if (m_LotZoomProgress == 1 && id != 0 && SubdivGeometry.CurrentSlice == -1)
+            {
+                var lotX = id >> 16;
+                var lotY = id & 0xFFFF;
+                var slicex = Math.Max(0, Math.Min(30, (int)Math.Round(lotX / 16f) - 1));
+                var slicey = Math.Max(0, Math.Min(30, (int)Math.Round(lotY / 16f) - 1));
+                var slice = slicex + slicey * 32;
+                Geometry.RegenMeshVerts(m_GraphicsDevice, true);
+                SubdivGeometry.SubRegenMeshVerts(m_GraphicsDevice, new Rectangle(slicex * 16, slicey * 16, 32, 32), 4, slice);
+            }
+
             if (m_LotZoomProgress == 1)
             {
-                if (id != StencilLotID)
+                if (id != StencilLotID || surroundNumber != StencilSurroundNumber)
                 {
                     var x = id >> 16;
                     var y = id & 0xFFFF;
@@ -1937,6 +1968,16 @@ namespace FSO.Client.Rendering.City
                     {
                         x = 255;
                         y = 255;
+                    }
+
+                    // A free-roam lot switch joins the next lot DIRECTLY — no city camera zoom, which
+                    // is what normally sets LotPosition. Recompute it whenever the visual lot changes,
+                    // or the whole backdrop stays centred on the lot originally entered from the map
+                    // and shows misaligned seams (the white void) once the player walks to another lot.
+                    if (id != 0)
+                    {
+                        float lotElev = GetElevationAt((int)x, (int)y);
+                        LotPosition = new Vector3((float)(x + 1), lotElev / 12.0f, (float)(y + 0));
                     }
 
                     float minElev = float.MaxValue;
@@ -1961,11 +2002,18 @@ namespace FSO.Client.Rendering.City
                     StencilVertices = new VertexBuffer(gfx, typeof(MeshVertex), 4, BufferUsage.None);
                     StencilVertices.SetData(verts);
                     StencilLotID = id;
+                    StencilSurroundNumber = surroundNumber;
                 }
 
                 gfx.SetVertexBuffer(StencilVertices);
                 //gfx.DrawPrimitives(PrimitiveType.TriangleStrip, 0, 2);
-                gfx.DepthStencilState = StencilOnly;
+                // The stencil-hole optimization is DEAD CODE: the quad that would write the mask is
+                // commented out above, so StencilOnly (draw where stencil != 1) never tests against
+                // its own mask — only against whatever the stencil channel happens to contain (the
+                // lot's own passes write 1s; MRT rebinds can swap the depth-stencil surface under
+                // us). At camera angles where last frame's lot covered the screen, the entire
+                // backdrop was masked away. Draw with plain depth instead.
+                gfx.DepthStencilState = DepthStencilState.Default;
             } else
             {
                 gfx.DepthStencilState = DepthStencilState.Default;
@@ -1992,8 +2040,15 @@ namespace FSO.Client.Rendering.City
                 FSO.Common.Utils.PPXDepthEngine.BindVelocityMRT(gfx, colorRT, velRT);
             }
 
+            // Draw the FULL city mesh here. The subdiv substitution (cut a 32x32-tile hole around
+            // the lot, fill it with the high-detail subdiv mesh) belongs to the city view's draw
+            // loop, which maintains the subdiv's data — that loop does not run while zoomed into a
+            // lot, so the subdiv can be stale/unuploaded and the hole (which covers EVERYTHING near
+            // the lot) renders as missing terrain at any downward camera. The backdrop is distant
+            // scenery; standard mesh detail is fine, and drawing the subdiv on top when it IS valid
+            // just adds detail.
             if (SubdivGeometry.Ready != -1) SubdivGeometry.DrawAll(m_GraphicsDevice, Content, VertexShader, PixelShader, cityPass, cityPass);
-            Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, cityPass, cityPass, SubdivGeometry.Ready, 16);
+            Geometry.DrawSlice(m_GraphicsDevice, Content, VertexShader, PixelShader, cityPass, cityPass, -1, 16);
 
             Foliage.Draw(this, m_GraphicsDevice, Content, VertexShader, PixelShader, 3, 1, frustum);
             DrawFacades(new Vector2(id >> 16, id & 0xFFFF), 3, true, frustum);

@@ -1507,12 +1507,19 @@ namespace FSO.LotView
             float minAlt = 0;
             foreach (var height in Blueprint.Altitude)
             {
-                var alt = height * Blueprint.TerrainFactor - Blueprint.BaseAlt;
+                // World-space altitude is (height - BaseAlt) * TerrainFactor * 3 — the old formula
+                // subtracted BaseAlt unscaled, making the sky boxes' vertical extent wrong on any
+                // lot with a nonzero base altitude.
+                var alt = (height - Blueprint.BaseAlt) * Blueprint.TerrainFactor * 3;
                 if (alt < minAlt)
                 {
                     minAlt = alt;
                 }
             }
+            // The city backdrop around the lot can dip well below the lot's own lowest point (sloped
+            // city terrain) — extend the boxes downward so down-angled views of that lower ground
+            // still count as "background visible".
+            minAlt -= 100;
 
             BoundingBox overall = new BoundingBox(new Vector3(0, minAlt, 0), new Vector3(Blueprint.Width * 3, 1000, Blueprint.Height * 3));
             foreach (var world in Blueprint.SubWorlds)
