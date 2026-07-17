@@ -1344,6 +1344,79 @@ namespace FSO.Server.Servers.Lot.Domain
             }
         }
 
+        // Free-roam admit pre-check results, cached briefly per (avatar, target lot) — EdgeCheck
+        // fires every tick while a player pushes against a border, and each check costs DB queries.
+        private readonly Dictionary<(uint pid, uint loc), (long time, bool allowed)> FreeRoamAdmitCache = new();
+        private const long FreeRoamAdmitCacheTicks = 10 * TimeSpan.TicksPerSecond;
+
+        /// <summary>Mirror of the city server's admit rules (LotAllocations.AvatarMayEnterLot), run
+        /// BEFORE initiating a free-roam transition so a denied player bounces at the border instead
+        /// of being disconnected into a join the city will refuse anyway (which would strand them at
+        /// the city view). The city-side check remains authoritative.
+        ///
+        /// On a FRESH denial the player is shown the same "not admitted" dialog a map join gets
+        /// (direct command — only they see it), and when <paramref name="cancelInteraction"/> is set
+        /// (the routing path, whose destination is always inside the target lot) the transition
+        /// interaction is cancelled through the normal net path so the sim stops gracefully and its
+        /// queue continues, instead of standing at the border retrying forever.</summary>
+        private bool FreeRoamAdmitCheck(VMAvatar ava, uint targetLocation, bool cancelInteraction)
+        {
+            var avatarId = ava.PersistID;
+            var key = (avatarId, targetLocation);
+            var now = DateTime.UtcNow.Ticks;
+            lock (FreeRoamAdmitCache)
+            {
+                if (FreeRoamAdmitCache.TryGetValue(key, out var cached) && now - cached.time < FreeRoamAdmitCacheTicks)
+                    return cached.allowed;
+            }
+
+            bool allowed = true;
+            try
+            {
+                using (var db = DAFactory.Get())
+                {
+                    var lot = db.Lots.GetByLocation(Context.ShardId, targetLocation);
+                    if (lot != null && lot.lot_id != 0 && lot.admit_mode > 0 && lot.admit_mode < 4
+                        && lot.category != FSO.Common.Enum.LotCategory.community
+                        && db.Avatars.GetModerationLevel(avatarId) == 0)
+                    {
+                        var roomies = db.Roommates.GetLotRoommates(lot.lot_id);
+                        var isRoomie = roomies.Any(r => r.avatar_id == avatarId && r.is_pending == 0);
+                        if (!isRoomie)
+                        {
+                            switch (lot.admit_mode)
+                            {
+                                case 1: allowed = db.LotAdmit.GetLotAdmitDeny(lot.lot_id, 0).Contains(avatarId); break;  // admit list
+                                case 2: allowed = !db.LotAdmit.GetLotAdmitDeny(lot.lot_id, 1).Contains(avatarId); break; // ban list
+                                case 3: allowed = false; break;                                                          // ban all
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                LOG.Warn(e, "Free-roam admit pre-check failed; allowing transition (the city join re-checks).");
+            }
+
+            lock (FreeRoamAdmitCache) FreeRoamAdmitCache[key] = (now, allowed);
+
+            if (!allowed)
+            {
+                VMDriver.SendDirectCommand(avatarId, new VMNetFreeRoamDeniedCmd());
+                var action = ava.Thread?.ActiveAction;
+                if (cancelInteraction && action != null)
+                {
+                    Lot.ForwardCommand(new VMNetInteractionCancelCmd
+                    {
+                        ActorUID = avatarId,
+                        ActionUID = action.UID
+                    });
+                }
+            }
+            return allowed;
+        }
+
         public void TickFreeRoam()
         {
             foreach (var obj in Lot.Context.ObjectQueries.Avatars)
@@ -1372,7 +1445,8 @@ namespace FSO.Server.Servers.Lot.Domain
                         coords.X += (ushort)cityOffset.X;
                         coords.Y += (ushort)cityOffset.Y;
 
-                        if (Realestate.IsOpenable(coords.X, coords.Y))
+                        if (Realestate.IsOpenable(coords.X, coords.Y)
+                            && FreeRoamAdmitCheck(ava, MapCoordinates.Pack(coords.X, coords.Y), cancelInteraction: false))
                         {
                             if (!TryBeginFreeRoam(ava.PersistID)) continue;
 
@@ -1436,7 +1510,8 @@ namespace FSO.Server.Servers.Lot.Domain
                         var location = (uint)((int)idLow | (idHigh << 16));
                         var coords = MapCoordinates.Unpack(location);
 
-                        if (Realestate.IsOpenable(coords.X, coords.Y))
+                        if (Realestate.IsOpenable(coords.X, coords.Y)
+                            && FreeRoamAdmitCheck(ava, location, cancelInteraction: true))
                         {
                             if (!TryBeginFreeRoam(ava.PersistID)) continue;
 
