@@ -16,6 +16,9 @@
 - Sledgehammer works on **both diagonal wall orientations** and on **diagonal floor
   triangles** (each triangle deletes independently).
 - Painting diagonal walls applies to the face you're pointing at.
+- Flood-filling floors now fills the triangles on **both sides** of a diagonal wall
+  when the fill reaches both (e.g. around a free-standing wall line) — one triangle
+  no longer stays bare.
 
 ## Create-A-Sim (CAS V2)
 - Arrow keys no longer jump focus between tiles/buttons and change your selections —
