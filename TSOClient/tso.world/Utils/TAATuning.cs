@@ -58,9 +58,9 @@ namespace FSO.LotView.Utils
         // thin-line depth-ridge test: ridge fires when both opposite plus-tap depths exceed the center by
         // ThinLineEps * depth (TSR DetectThinGeometry ErrorMultiplier analogue)
         public static float ThinLineEps = 0.02f;
-        // same-surface box share on proven thin ridges: how far the clamp box lerps toward statistics
-        // built from depth-similar taps only (current-frame data; replaces the history-inclusive
-        // relaxation), suspicion-gated
+        // same-surface box share on depth-contrast neighborhoods: how far the clamp box lerps toward
+        // statistics built from depth-similar taps (current-frame data; proven thin ridges get the
+        // strictest box), contrast- and suspicion-scaled
         public static float ThinRelax = 0.7f;
 
         // ---- TAALite tunables (2026-07-07 promotion). Lite's "raw motion resolve" (the user's

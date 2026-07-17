@@ -74,8 +74,8 @@ float TuneRingLo = 0.03;             // ringContam own-vs-dilated color knee, lo
 float TuneRingHi = 0.10;             // ringContam own-vs-dilated color knee, upper edge
 float TuneDirectClampMix = 0.75;     // motion direct-clamp share vs phase-coherent rectification
 float TuneKarisFade = 0.0;           // Karis motion fade share (0 = weighting always on, the reference behavior)
-float TuneGammaMotionDecay = 0.6;    // wide-box narrowing strength while in motion
 float TuneConfFadeN = 6.0;           // evidence depth (minN) at which the off-phase confidence throttle is fully armed
+float TuneGammaMotionDecay = 0.6;    // wide-box narrowing strength while in motion
 float TuneGrowOffPhase = 0.3;        // off-phase growth discount floor for the evidence counter
 float TuneDeepCapBase = 0.992;       // Kalman deep-end cap at native/mild upscale
 float TuneThinLineEps = 0.02;        // thin-line depth-ridge relative step (TSR ErrorMultiplier analogue)
@@ -141,6 +141,14 @@ VSOut VS(VSIn input)
 // YCoCg color space — perceptually-cleaner than RGB for neighborhood comparison (luma dominates Y).
 float3 RGB_to_YCoCg(float3 c) { return float3(0.25*c.r + 0.5*c.g + 0.25*c.b, 0.5*c.r - 0.5*c.b, -0.25*c.r + 0.5*c.g - 0.25*c.b); }
 float3 YCoCg_to_RGB(float3 c) { return float3(c.x + c.y - c.z, c.x + c.z, c.x - c.y - c.z); }
+
+// Partial-strength trust cap in A-units (accumulated-frame space). Trust weight is HYPERBOLIC in A
+// (w = A/(A+1)), so a linear lerp of A is toothless mid-range: halving A = 70 barely moves w. This is
+// the exact w-space partial cap: at s = 1 the hard cap targetA, releasing hyperbolically as s -> 0.
+float CapA(float A, float targetA, float s)
+{
+    return min(A, (targetA + 1.0) / max(s, 1e-3) - 1.0);
+}
 
 // Clip history toward the YCoCg AABB (soft line-clip, smoother than a hard min/max snap).
 float3 ClipAABB(float3 cmin, float3 cmax, float3 hist)
@@ -304,8 +312,23 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float3 cboxE = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(InvColorSize.x, 0), 0, 0)).rgb);
     float3 cboxN = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV - float2(0, InvColorSize.y), 0, 0)).rgb);
     float3 cboxS = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(0, InvColorSize.y), 0, 0)).rgb);
+#if SM4
+    // FULL 3x3 BOX MOMENTS (references use 3x3; the plus-only diet made every sigma-derived behavior
+    // DIRECTIONAL): with 5 taps, detail inflates the sigma of its AXIAL neighbours but not its
+    // diagonal ones, so the widened box licenses a cross-shaped halo of haze around fine detail —
+    // the corner taps make the statistics rotationally fair and dilute the detail's share (1/9 vs
+    // 1/5). SM3 keeps the plus-tap moments (fetch/register budget).
+    float3 cboxNW = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV - InvColorSize, 0, 0)).rgb);
+    float3 cboxNE = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(InvColorSize.x, -InvColorSize.y), 0, 0)).rgb);
+    float3 cboxSW = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + float2(-InvColorSize.x, InvColorSize.y), 0, 0)).rgb);
+    float3 cboxSE = RGB_to_YCoCg(tex2Dlod(colorSampler, float4(boxUV + InvColorSize, 0, 0)).rgb);
+    float3 m1 = (cboxC + cboxW + cboxE + cboxN + cboxS + cboxNW + cboxNE + cboxSW + cboxSE) * (1.0 / 9.0);
+    float3 m2 = (cboxC * cboxC + cboxW * cboxW + cboxE * cboxE + cboxN * cboxN + cboxS * cboxS
+               + cboxNW * cboxNW + cboxNE * cboxNE + cboxSW * cboxSW + cboxSE * cboxSE) * (1.0 / 9.0);
+#else
     float3 m1 = (cboxC + cboxW + cboxE + cboxN + cboxS) * (1.0 / 5.0);
     float3 m2 = (cboxC * cboxC + cboxW * cboxW + cboxE * cboxE + cboxN * cboxN + cboxS * cboxS) * (1.0 / 5.0);
+#endif
     // EDGE-DIRECTIONAL (ANISOTROPIC) RECONSTRUCTION: on a strong luma edge, stretch the kernel ALONG the
     // edge (distances along the tangent count half) so thin geometry gathers several real samples per frame
     // along its own length. Central-difference gradient from the stationary box taps (no extra fetches);
@@ -414,7 +437,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // 0 state). Unwritten taps keep the far sentinel: a thin object over velocity-less backdrop still
     // registers, while a solid region's edge fails the both-sides requirement. An unwritten CENTER decodes
     // as the far sentinel too, so the test is structurally 0 there. Consumers: oscLock entry ease +
-    // biasPenalty exemption — acceleration only, every lock kill-gate stays in force.
+    // the same-surface box share at the clamp — acceleration only, every lock kill-gate stays in force.
     float thinDC = (vCen.a >= 0.5) ? vCen.b : 2.0;
     float thinEps = TuneThinLineEps * max(thinDC, DepthRejectParams.w); // relative step, floored denominator
     float thinLine = max(step(thinEps, plusD.x - thinDC) * step(thinEps, plusD.y - thinDC),
@@ -453,13 +476,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     if (upscaleRatio > 1.5)
     {
         curr.x = clamp(curr.x, m1.x - 2.0 * sigma.x - 0.02, m1.x + 2.0 * sigma.x + 0.02);
-        // SPECKLE CONSOLIDATION on directionless clutter: sub-render-pixel fragments exist-or-don't per
-        // jitter phase and their quasi-random alternation never earns the full lock, so every covering
-        // frame re-injects a different fragment pattern (dithering). Lean curr toward the stationary
-        // neighborhood mean by clutter strength: injection variance drops BEFORE the blend, current-frame
-        // data only. Lines are protected by construction (dirCoherence -> clutter = 0 on directed edges);
-        // flat regions have ~zero sigma so the lean is a no-op.
-        curr = lerp(curr, m1, 0.28 * clutter * saturate(upscaleRatio - 1.5));
     }
 
     // Reproject with the dilated velocity (+ jitter delta cancels the jitter baked into the velocity buffer).
@@ -681,8 +697,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // MeasureBackbufferLDRQuantizationError analogue). The verdict: how much of the blurred history
         // would clamping destroy, relative to max(frame difference, the neighborhood's own spread) —
         // in-box history is indistinguishable from spatial variation and scores 0 rejection.
-        float bmin = min(min(cboxC.x, cboxW.x), min(min(cboxE.x, cboxN.x), cboxS.x)) - (2.0 / 255.0);
-        float bmax = max(max(cboxC.x, cboxW.x), max(max(cboxE.x, cboxN.x), cboxS.x)) + (2.0 / 255.0);
+        float bmin = min(min(min(cboxC.x, cboxW.x), min(min(cboxE.x, cboxN.x), cboxS.x)),
+                         min(min(cboxNW.x, cboxNE.x), min(cboxSW.x, cboxSE.x))) - (2.0 / 255.0);
+        float bmax = max(max(max(cboxC.x, cboxW.x), max(max(cboxE.x, cboxN.x), cboxS.x)),
+                         max(max(cboxNW.x, cboxNE.x), max(cboxSW.x, cboxSE.x))) + (2.0 / 255.0);
         float clampE = abs(clamp(bH, bmin, bmax) - bH);
         filtReject = saturate(clampE / max(abs(m1.x - bH), bmax - bmin));
         // Point-diff gate (first-cycle conservatism): the filtered verdict acts only where the point
@@ -984,8 +1002,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // holds — the box then describes the line's OWN distribution and naturally contains its converged
     // value. CURRENT-FRAME DATA ONLY: structurally incapable of escorting staleness, so it needs no
     // stillness or staleness gate; per-phase line-sample variation is the amplitude slack's job (the
-    // luma slacks carry over onto the same-surface bounds). Suspicion evidence restores the normal
-    // box; SM4 (register budget — SM3 keeps the plain box).
+    // luma slacks carry over onto the same-surface bounds). RIDGES ONLY: generalizing this to every
+    // depth-contrast neighborhood removes most of the box variance and progressively low-passes
+    // converged content at heavy ratio. Suspicion evidence restores the normal box; SM4 (register
+    // budget — SM3 keeps the plain box).
 #if SM4
     if (thinLine > 0.0)
     {
@@ -1080,6 +1100,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // magnitude betrays it) — and drift restores full point-diff authority (TAALite behavior).
     float diff = saturate(abs(m1.x - lumaHCmp) / max(0.2, max(m1.x, lumaHCmp)));
     diff = min(diff, max(max(filtReject, slowMotion), smoothstep(0.15, 0.35, diff)));
+    // LOCK DIFF DISCOUNT (the old trust ceiling's job, expressed signal-side to stay orderless): at
+    // heavy ratio, converged fine detail carries a PERMANENT baseline diff (the render-res mean can
+    // never match super-res history), and consuming it caps trust at the responsive window — a
+    // constant soft-reconstruction churn whose equilibrium is a screen-wide haze. The lock is the
+    // evidence that this residual diff IS aliasing: discount it before consumption. Large diffs
+    // survive the kill band (content changes on locked pixels still respond), and every lock
+    // kill-gate (rejects, motion, foreign) already zeroes oscLock where the diff must be honored.
+    diff *= 1.0 - oscLock * (1.0 - saturate((diff - 0.25) * 3.5));
     diff = max(max(diff, depthReject), max(max(ghostReject, featReject), ringContam));
 
     // --- A: accumulated trust. The Kalman counter IS the trust state (witnessed, sigma-normalized,
@@ -1091,25 +1119,25 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float capCycle = clamp(1.2 * JitterPhases - 1.0, 27.0, 99.0);
     float A = min(minN, lerp(capNative, capCycle, smoothstep(1.2, 1.8, upscaleRatio)));
     // Shading change: full diff drives trust to the responsive window (RespEnd in A-units).
-    A = lerp(A, min(A, TuneRespEnd / max(1.0 - TuneRespEnd, 1e-3)), diff);
+    A = CapA(A, TuneRespEnd / max(1.0 - TuneRespEnd, 1e-3), diff);
     // Structural trust caps, each the old w-cap converted (A = w/(1-w)):
-    A = lerp(A, min(A, 5.7), reactive);                 // velocity disparity (w 0.85)
-    A = lerp(A, min(A, 11.5), foreign);                 // dilation-ring safety net (w 0.92, mild)
-    A = lerp(A, min(A, 7.3), noVel);                    // velocityless overlays: ~8-frame window
+    A = CapA(A, 5.7, reactive);                 // velocity disparity (w 0.85)
+    A = CapA(A, 11.5, foreign);                 // dilation-ring safety net (w 0.92, mild)
+    A = CapA(A, 7.3, noVel);                    // velocityless overlays: ~8-frame window
     float upsFade = smoothstep(1.0, 1.5, upscaleRatio);
     // Motion trust cap (converged movers) + young-pixel cap (filling pixels under small drift):
     float capMotionA = TuneMotionTrustCap / max(1.0 - TuneMotionTrustCap, 1e-3);
-    A = lerp(A, min(A, capMotionA), moveGate * upsFade);
-    A = lerp(A, min(A, capMotionA), max(slowMotion, storedMove) * (1.0 - saturate(minN * (1.0 / 12.0))) * upsFade);
+    A = CapA(A, capMotionA, moveGate * upsFade);
+    A = CapA(A, capMotionA, max(slowMotion, storedMove) * (1.0 - saturate(minN * (1.0 / 12.0))) * upsFade);
     // Evidence-gated motion refresh (the old additive motionBoost as an A-cap): full strength only
     // where something is suspicious; evidence-silent pans keep the small floor share.
     float boostK = saturate(vmag * 20.0) * lerp(TuneMotionBoostFloor, 1.0, suspicion)
                  * saturate(TuneMotionBoostMax * (1.0 / 0.22));
-    A = lerp(A, min(A, 3.0), boostK);
+    A = CapA(A, 3.0, boostK);
     // Texture-detail responsiveness (the anti-ghost backstop where movers walk): evidence-armed —
     // full near current/remembered motion, fading on converged motion-silent rest; locks exempt.
     float texFloorArm = max(gammaMotion, 1.0 - saturate(minN * (1.0 / 24.0)));
-    A = lerp(A, min(A, 2.6), texDetail * texFloorArm * (1.0 - oscLock) * saturate(TuneTexDetailFloor * (1.0 / 0.28)));
+    A = CapA(A, 2.6, texDetail * texFloorArm * (1.0 - oscLock) * saturate(TuneTexDetailFloor * (1.0 / 0.28)));
     // HONEST DISOCCLUSION (discard, not fade): a confident reject slashes trust so the blend IS the
     // raw frame; grazing partial rejects lean on the clamp instead. Same shaped knee as before.
     float honestS = smoothstep(0.55, 0.9, max(depthReject, ghostReject));
