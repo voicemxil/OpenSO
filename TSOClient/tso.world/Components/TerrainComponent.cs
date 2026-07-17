@@ -645,11 +645,18 @@ namespace FSO.LotView.Components
                             device.SetRenderTarget((RenderTarget2D)rts[0].RenderTarget);
                         }
                     }
-                    
+
                     var depth = device.DepthStencilState;
                     device.DepthStencilState = DepthStencilState.DepthRead;
                     Effect.SetTechnique(GrassTechniques.DrawGrid);
                     Effect.BaseTex = GridTex;
+                    //the grid samples its texture in tile space, so the screen-align UV path must be
+                    //off and TexSize valid. These are normally only set by the floor pass — with no
+                    //floors on the lot they are stale/uninitialized, and drivers that don't zero-init
+                    //uniforms (Intel macOS GL) turn the grid into screen-space NaN UVs: a solid sheet
+                    //over the buildable area until the first floor is placed.
+                    Effect.ScreenAlignUV = false;
+                    Effect.TexSize = new Vector2(GridTex.Width, GridTex.Height);
                     Effect.World = Matrix.Identity * Matrix.CreateTranslation(0, (18 / 522f) * grassScale - altOff, 0);
                     pass = Effect.CurrentTechnique.Passes[(GridAsTexture)?2:0];
 
@@ -661,16 +668,21 @@ namespace FSO.LotView.Components
                             device.Indices = TGridIndexBuffer;
                             Effect.DiffuseColor = new Vector4(0.5f, 1f, 0.5f, 1.0f);
                             pass.Apply();
+                            //the dashed tile texture repeats across the whole lot, so unit 0 must wrap. The GL
+                            //backend does not apply the effect's declared sampler state, and without floors no
+                            //earlier pass has left a wrap sampler bound (same idiom as DrawFloor's CustomWrap).
+                            device.SamplerStates[0] = SamplerState.LinearWrap;
                             device.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, TGridPrimitives);
                         }
 
 
-                        Effect.DiffuseColor = 
+                        Effect.DiffuseColor =
                             Content.Content.Get().TS1 ?
                             new Vector4(1.0f, 1.0f, 1.0f, 0.8f) :
                             new Vector4(0.0f, 0.0f, 0.0f, 0.8f);
                         device.Indices = GridIndexBuffer;
                         pass.Apply();
+                        device.SamplerStates[0] = SamplerState.LinearWrap;
                         device.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, GridPrimitives);
                     }
                     else
@@ -695,7 +707,7 @@ namespace FSO.LotView.Components
 
                     device.DepthStencilState = depth;
 
-                    if (FSOEnvironment.UseMRT)
+                    if (FSOEnvironment.UseMRT && rts != null)
                     {
                         device.SetRenderTargets(rts);
                     }

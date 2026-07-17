@@ -320,6 +320,16 @@ namespace FSO.Client.UI.Controls
                      */
                     var position = this.GetMousePosition(state.MouseState);
                     var index = this.HitTestText(position);
+                    if (index == -1)
+                    {
+                        // Click in the box's empty area (no line band under the cursor): above the
+                        // text selects the first visible line's start; below the last line acts as a
+                        // click at the very END of the text. Without this, -1 fell through and was
+                        // clamped to 0 — the caret visibly jumped to the START of the text.
+                        index = position.Y < TextMargin.Y && m_Lines.Count > m_VScroll
+                            ? m_Lines[m_VScroll].StartIndex
+                            : m_SBuilder.Length;
+                    }
 
                     Control_SetSelectionStart(
                         Control_GetSelectableIndex(index, -1)
@@ -504,6 +514,11 @@ namespace FSO.Client.UI.Controls
                      */
                     foreach (var key in inputResult.UnhandledKeys)
                     {
+                        // A focused text box owns the arrow keys (caret/selection movement) — consume
+                        // them so UILayer's focus navigation doesn't ALSO treat them as Tab and yank
+                        // focus to the next control mid-edit (same pattern as UIListBox).
+                        if (key == Keys.Left || key == Keys.Right || key == Keys.Up || key == Keys.Down)
+                            state.NewKeys.Remove(key);
                         switch (key)
                         {
                             case Keys.Left:
@@ -1256,13 +1271,23 @@ namespace FSO.Client.UI.Controls
                 if (point.Y >= yPosition && point.Y <= yPosition + m_LineHeight)
                 {
                     /** Its this line! **/
-                    /** Now we need to work out what the X coordinate relates to **/
-                    var roughEst =
-                        Math.Round(
-                            ((point.X - line.LineStartX) / line.LineWidth) * line.Text.Length
-                        );
+                    /** Now we need to work out what the X coordinate relates to.
+                     *  Clamped both ways, so a click in the space past the end of the line lands at
+                     *  the line's END (and an empty line — LineWidth 0 — never divides by zero). **/
+                    var roughEst = line.LineWidth > 0
+                        ? Math.Round(((point.X - line.LineStartX) / line.LineWidth) * line.Text.Length)
+                        : 0;
                     var index = Math.Max(0, roughEst);
                     index = Math.Min(index, line.Text.Length);
+
+                    // A non-final line's Text carries one trailing space that sits BETWEEN lines: a
+                    // real wrap space, or CalculateLines' stand-in for the '\n' (which no line
+                    // stores). An index past it belongs to the NEXT line, so a click beyond the end
+                    // of a line would land the caret at the next line's start — step back over it.
+                    // (On the LAST line a trailing space is real typed content: leave it alone.)
+                    if (index == line.Text.Length && line.Text.Length > 0 && line.Text[line.Text.Length - 1] == ' '
+                        && m_VScroll + i < m_Lines.Count - 1)
+                        index--;
 
                     return (int)line.StartIndex + (int)index;
                 }

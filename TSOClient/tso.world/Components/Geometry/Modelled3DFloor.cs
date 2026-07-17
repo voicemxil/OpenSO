@@ -27,7 +27,12 @@ namespace FSO.LotView.Components.Geometry
 
         public override void PrepareGPU(GraphicsDevice gd)
         {
-            if (GPUData != null) GPUData.Dispose();
+            if (GPUData != null)
+            {
+                // never leave a disposed buffer bound to the device - it crashes the next state apply
+                if (gd.Indices == GPUData) gd.Indices = null;
+                GPUData.Dispose();
+            }
             if (VertGPUData != null) VertGPUData.Dispose();
 
             GenerateGeometry();

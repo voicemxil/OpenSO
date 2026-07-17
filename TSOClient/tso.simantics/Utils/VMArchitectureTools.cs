@@ -511,19 +511,22 @@ namespace FSO.SimAntics.Utils
                     var wall = walls[item.X + item.Y * width];
                     byte flags = Map[item.X + item.Y * width];
 
-                    if (flags == 3) continue;
-                    if ((mainWalls.Segments & WallSegments.HorizontalDiag) > 0) flags = (byte)(3 - flags);
+                    //the fill can reach this diagonal from both sides (e.g. around the end of a
+                    //free-standing wall line) — each reached side paints its own triangle, so
+                    //swap the side bits for HorizontalDiag rather than 3-flags (which turns
+                    //"both sides" into "neither") and paint both when both bits are set.
+                    if ((mainWalls.Segments & WallSegments.HorizontalDiag) > 0) flags = (byte)(((flags & 1) << 1) | ((flags >> 1) & 1));
 
-                        if ((flags & 1) == 1 && wall.TopLeftPattern != pattern)
-                        {
-                            floorsCovered.Add(wall.TopLeftPattern);
-                            wall.TopLeftPattern = pattern;
-                        }
-                        else if ((flags & 2) == 2 && wall.TopLeftStyle != pattern)
-                        {
-                            floorsCovered.Add(wall.TopLeftStyle);
-                            wall.TopLeftStyle = pattern;
-                        }
+                    if ((flags & 1) == 1 && wall.TopLeftPattern != pattern)
+                    {
+                        floorsCovered.Add(wall.TopLeftPattern);
+                        wall.TopLeftPattern = pattern;
+                    }
+                    if ((flags & 2) == 2 && wall.TopLeftStyle != pattern)
+                    {
+                        floorsCovered.Add(wall.TopLeftStyle);
+                        wall.TopLeftStyle = pattern;
+                    }
 
                     walls[item.X + item.Y * width] = wall;
                     continue; //don't spread on diagonals for now

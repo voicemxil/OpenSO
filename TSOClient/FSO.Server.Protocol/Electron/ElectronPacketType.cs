@@ -40,6 +40,8 @@ namespace FSO.Server.Protocol.Electron
         VerificationNotification,
         JoinLotWithTransitionRequest,
         FSOVMSurroundPuppets,
+        UpdateAvatarAppearanceRequest,
+        UpdateAvatarAppearanceResponse,
         Unknown = 0xFFFF
     }
 

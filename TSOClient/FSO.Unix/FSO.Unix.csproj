@@ -1,4 +1,4 @@
-<Project>
+﻿<Project>
     <Import Project="Sdk.props" Sdk="Microsoft.NET.Sdk" />
 
     <PropertyGroup>
@@ -7,7 +7,7 @@
         <RootNamespace>FSO.Unix</RootNamespace>
         <AssemblyName>OpenSO</AssemblyName>
         <ApplicationIcon>fso.ico</ApplicationIcon>
-        <!-- R2R precompile for release publishes, matching the Windows client — linux/osx players
+        <!-- R2R precompile for release publishes, matching the Windows client â€” linux/osx players
              otherwise pay full JIT warmup at launch. Per-push CI overrides this off for speed. -->
         <PublishReadyToRun>true</PublishReadyToRun>
         <_EnableMacOSCodeSign>false</_EnableMacOSCodeSign>
@@ -21,7 +21,7 @@
 
     <!-- MonoGame DesktopGL auto-loads an embedded "Icon.bmp" and calls SDL_SetWindowIcon at window
          creation. On macOS that overrides the .app bundle's Liquid Glass Dock icon with this bitmap, so do
-         NOT embed it for osx builds — the bundle icon (Assets.car) is authoritative there. Keep it off-macOS
+         NOT embed it for osx builds â€” the bundle icon (Assets.car) is authoritative there. Keep it off-macOS
          (e.g. Linux), where it's the window icon. -->
     <ItemGroup Condition="!$(RuntimeIdentifier.StartsWith('osx'))">
         <EmbeddedResource Include="Icon.bmp">
@@ -37,7 +37,7 @@
     </ItemGroup>
 
     <ItemGroup>
-        <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.5-preview.6"/>
+        <PackageReference Include="MonoGame.Framework.DesktopGL" Version="3.8.5"/>
         <ProjectReference Include="..\tso.client\FSO.Client.csproj"/>
         <ProjectReference Include="..\tso.common\FSO.Common.csproj"/>
     </ItemGroup>
@@ -58,7 +58,7 @@
         <MakeDir Directories="$(PublishDir)/OpenSO.app/Contents/Resources"/>
 
         <!-- CODE-ONLY bundle: the apphost + .NET runtime + managed DLLs go in Contents/MacOS. The game
-             Content (and all mutable data — MeshReplace, MeshCache, saves, downloaded patches) deliberately
+             Content (and all mutable data â€” MeshReplace, MeshCache, saves, downloaded patches) deliberately
              stays in the folder AROUND the .app. This keeps the bundle immutable so codesign can seal it
              (the Content/*.dir folders were what broke signing) and so updates + the remesh pack never
              touch the signature. The game resolves Content from the .app's parent dir (see FSO.Unix/Program).
@@ -71,7 +71,7 @@
               DestinationFiles="@(BundleCode->'$(PublishDir)/OpenSO.app/Contents/MacOS/%(RecursiveDir)%(Filename)%(Extension)')"
               SkipUnchangedFiles="true"/>
         <!-- Icon comes from the Liquid Glass openso.icon (compiled to Assets.car in CI, referenced via
-             CFBundleIconName). No legacy .icns fallback — we don't ship the old FreeSO icon. -->
+             CFBundleIconName). No legacy .icns fallback â€” we don't ship the old FreeSO icon. -->
         <Copy SourceFiles="Info.plist" DestinationFolder="$(PublishDir)/OpenSO.app/Contents"/>
         <Exec Command="chmod +x &quot;$(PublishDir)/OpenSO.app/Contents/MacOS/OpenSO&quot;"/>
 

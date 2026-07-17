@@ -97,6 +97,9 @@
     <Content Include="DatabaseScripts\changes\0034_email_send_log.sql">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="DatabaseScripts\changes\0035_registration_tuning.sql">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
     <Content Include="DatabaseScripts\changes\0030_tokens.sql">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

@@ -49,7 +49,7 @@ namespace FSO.Client.UI.Controls
         private float _Azimuth = 0f;                       // radians; 0 = sim facing the camera
         private float _Distance = 11f;                     // camera distance from the focus point
         private Vector3 _Focus = new Vector3(0, 3.0f, 0);  // look-at (body centre); head focus retargets this later
-        public float MinDistance = 3f, MaxDistance = 22f;
+        public float MinDistance = 2.4f, MaxDistance = 22f;
         private int _TargetW = 140, _TargetH = 200;        // render-target logical size
 
         private Vector3 _FocusTarget = new Vector3(0, 3.0f, 0);
@@ -154,7 +154,10 @@ namespace FSO.Client.UI.Controls
             if (targetW > 0) _TargetW = targetW;
             if (targetH > 0) _TargetH = targetH;
             Perspective = on;
-            StudioLighting = on;
+            // Flat lighting, like the legacy CAS: the synthetic studio key overshoots (1.2x peak on
+            // a 1.3x key colour) and clips the prefab heads' near-white baked glasses lenses to a
+            // white blob with dark facet wedges. The flat techniques ignore normals entirely.
+            StudioLighting = false;
             if (on) Avatar.RotationY = 0f; // orbit the camera, keep the model front-facing
             RebuildScene();
         }
@@ -212,7 +215,7 @@ namespace FSO.Client.UI.Controls
             if (!Perspective) return;
             var head = Avatar?.Skeleton?.GetBone("HEAD");
             _FocusTarget = (head != null) ? head.AbsolutePosition : new Vector3(0, 5.2f, 0);
-            _DistanceTarget = 3.8f;
+            _DistanceTarget = 3.2f;
             _SmoothFocus = true;
             _UserControlled = true;
         }
@@ -451,7 +454,19 @@ namespace FSO.Client.UI.Controls
                     var prevSpec = Vitaboy.Avatar.SuppressHeadObjectSpec;
                     if (Perspective && StudioLighting) ApplyStudioLighting();
                     batch.Pause();
-                    Scene.Draw(GameFacade.GraphicsDevice);
+                    // Pause() ends the sprite batch but leaves its device state behind — notably
+                    // RasterizerState.CullNone, so the glasses' inner lens faces drew too. Flat
+                    // lighting shaded both faces identically (invisible doubling); the directional
+                    // studio light shades each by its own normal and the stacked translucent layers
+                    // compound into a white blob. Mirror DrawAvatars' states (CullCCW + AlphaBlend).
+                    var gd = GameFacade.GraphicsDevice;
+                    var prevBlend = gd.BlendState;
+                    var prevRast = gd.RasterizerState;
+                    gd.BlendState = BlendState.AlphaBlend;
+                    gd.RasterizerState = RasterizerState.CullCounterClockwise;
+                    Scene.Draw(gd);
+                    gd.BlendState = prevBlend;
+                    gd.RasterizerState = prevRast;
                     batch.Resume();
                     Vitaboy.Avatar.DefaultTechnique = prevTech;
                     Vitaboy.Avatar.SuppressHeadObjectSpec = prevSpec;

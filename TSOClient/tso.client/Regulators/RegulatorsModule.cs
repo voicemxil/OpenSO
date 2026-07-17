@@ -9,6 +9,7 @@ namespace FSO.Client.Regulators
             Bind<LoginRegulator>().To<LoginRegulator>().InSingletonScope();
             Bind<CityConnectionRegulator>().To<CityConnectionRegulator>().InSingletonScope();
             Bind<CreateASimRegulator>().To<CreateASimRegulator>().InSingletonScope();
+            Bind<EditASimRegulator>().To<EditASimRegulator>().InSingletonScope();
             Bind<PurchaseLotRegulator>().To<PurchaseLotRegulator>().InSingletonScope();
             Bind<LotConnectionRegulator>().To<LotConnectionRegulator>().InSingletonScope();
         }

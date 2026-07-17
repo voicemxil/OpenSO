@@ -101,8 +101,28 @@ namespace FSO.LotView
         public void DrawBg(GraphicsDevice gd, WorldState state, BoundingBox[] skyBounds, bool forceSurround)
         {
             state.PrepareCamera();
-            if (forceSurround || (state.CameraMode == CameraRenderMode._3D && state.Cameras.ExternalTransitionActive()) || skyBounds?.Any(x => x.Intersects(state.Frustum)) != false)
+            // The sky bounds are thin walls hugging the lot's perimeter: they detect the background
+            // peeking past the lot's EDGES from a camera above the lot. A free camera OUTSIDE the
+            // lot bounds can look down at backdrop terrain without its frustum ever crossing those
+            // walls — skipping the sky + city backdrop and leaving a void — so treat an
+            // out-of-bounds camera as "background visible" unconditionally.
+            var camPos = state.Camera.Position;
+            var camOutsideLot = camPos.X < 0 || camPos.Z < 0 || camPos.X > Bp.Width * 3 || camPos.Z > Bp.Height * 3;
+            // With no surrounding-lot subworlds loaded, the city backdrop is the only geometry
+            // covering the ground outside the lot — culling it against the perimeter boxes can
+            // only ever produce a void, never save meaningful work.
+            var noSurround = Bp.SubWorlds.Count == 0;
+            if (forceSurround || noSurround || camOutsideLot || (state.CameraMode == CameraRenderMode._3D && state.Cameras.ExternalTransitionActive()) || skyBounds?.Any(x => x.Intersects(state.Frustum)) != false)
             {
+                // The background draws FIRST in the frame, but on preserve-contents targets the
+                // depth AND stencil channels still hold LAST frame's lot rendering. The city
+                // backdrop draws with a stencil test (draw where stencil != 1) and the lot's own
+                // passes write 1s — so wherever the lot covered the screen a frame ago, this
+                // frame's backdrop was masked out entirely (a camera pointing straight down inside
+                // the lot lost the whole backdrop to the sky dome). Start the background pass with
+                // clean depth AND stencil.
+                gd.Clear(ClearOptions.DepthBuffer | ClearOptions.Stencil, Color.White, 1, 0);
+
                 if (Dome == null) Dome = new SkyDomeComponent(gd, Bp);
                 Dome.BP = Bp;
                 Dome.Draw(gd, state);

@@ -26,6 +26,14 @@ namespace FSO.LotView.Platform
         short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, WorldState state);
 
         /// <summary>
+        /// Like <see cref="GetObjectIDAtScreenPos"/>, but also reports how far along the camera ray at
+        /// that screen position the picked object sits (world units, on the unshifted level-1 ray from
+        /// WorldState.CameraRayAtScreenPos). float.MaxValue when nothing was picked. Lets callers
+        /// depth-arbitrate an object pick against other raycasts (e.g. walls) at the exact click point.
+        /// </summary>
+        short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, WorldState state, out float distance);
+
+        /// <summary>
         /// Gets an object group's thumbnail provided an array of objects.
         /// </summary>
         /// <param name="objects">The object components to draw.</param>

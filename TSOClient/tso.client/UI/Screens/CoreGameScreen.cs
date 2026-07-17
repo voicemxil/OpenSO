@@ -999,6 +999,16 @@ namespace FSO.Client.UI.Screens
                     var rnd = new Random();
                     dialog.Position = new Vector2(rnd.Next(Math.Max(0, ScreenWidth - 380)), rnd.Next(Math.Max(0, ScreenHeight - 180)));
                     break;
+                case VMEventType.TSOFreeRoamDenied:
+                    // A free-roam lot transition was denied by the target lot's admit rules — show
+                    // the same dialog a map join answers NO_ADMIT with.
+                    UIScreen.GlobalShowAlert(new UIAlertOptions()
+                    {
+                        Title = GameFacade.Strings.GetString("211", "45"),
+                        Message = GameFacade.Strings.GetString("211", "42"),
+                        Buttons = UIAlertButton.Ok()
+                    }, true);
+                    break;
             }
         }
 

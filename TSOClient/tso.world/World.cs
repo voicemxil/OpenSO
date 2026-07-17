@@ -1102,6 +1102,50 @@ namespace FSO.LotView
             return Platform.GetObjectIDAtScreenPos(x, y, gd, State);
         }
 
+        /// <summary>As <see cref="GetObjectIDAtScreenPos(int, int, GraphicsDevice)"/>, but also reports
+        /// the picked object's distance along the camera ray at that screen position (world units,
+        /// level-1 ray; float.MaxValue when nothing was hit) for exact depth arbitration against
+        /// wall/architecture raycasts.</summary>
+        public short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, out float distance)
+        {
+            State._2D.Begin(this.State.Camera2D);
+            return Platform.GetObjectIDAtScreenPos(x, y, gd, State, out distance);
+        }
+
+        public (Point Tile, sbyte Level, WallSegments Segment, int DiagDir, float Dist)? GetWallAtScreenPos(Vector2 screenPos)
+        {
+            if (Blueprint == null) return null;
+            var maxFloor = Math.Min(State.Level, Blueprint.Stories);
+
+            (Point Tile, sbyte Level, WallSegments Segment, int DiagDir, float Dist)? best = null;
+            float bestDist = 1000f;
+            for (sbyte floor = 1; floor <= maxFloor; floor++)
+            {
+                var ray = State.CameraRayAtScreenPos(screenPos, floor);
+                var hit = WallQuadPicker.Raycast(ray, floor, Blueprint, bestDist);
+                if (hit == null) continue;
+                // The per-floor ray shift cancels out of the hit distance, so Dist is directly the
+                // distance along the UNSHIFTED (level 1) camera ray to the wall's real-world hit point
+                // — exactly comparable with GetObjectIDAtScreenPos's out distance.
+                bestDist = hit.Value.Dist;
+                var tile = hit.Value.Hit.Tile;
+                var seg = hit.Value.Hit.Segment;
+                // A diagonal has two faces on one segment: the visible one is the one whose side of
+                // the diagonal the camera is on. WallPatternDot's direction semantics come from the
+                // legacy 2D flow, where the mouse ground-projects to the side BEHIND the clicked face —
+                // so the direction for the camera-side face is the one named for the OPPOSITE side
+                // (vertical diag: camera on the u>v side sees the face direction 0 paints; horizontal
+                // diag: camera on the u+v>1 side sees the face direction 1 paints).
+                int diagDir = 0;
+                if ((seg & WallSegments.VerticalDiag) != 0)
+                    diagDir = ray.Position.X - ray.Position.Z > (tile.X - tile.Y) * 3f ? 0 : 1;
+                else if ((seg & WallSegments.HorizontalDiag) != 0)
+                    diagDir = ray.Position.X + ray.Position.Z > (tile.X + tile.Y + 1) * 3f ? 1 : 3;
+                best = (tile, floor, seg, diagDir, bestDist);
+            }
+            return best;
+        }
+
          /// <summary>
         /// Gets an object group's thumbnail provided an array of objects.
         /// </summary>
@@ -1463,12 +1507,19 @@ namespace FSO.LotView
             float minAlt = 0;
             foreach (var height in Blueprint.Altitude)
             {
-                var alt = height * Blueprint.TerrainFactor - Blueprint.BaseAlt;
+                // World-space altitude is (height - BaseAlt) * TerrainFactor * 3 — the old formula
+                // subtracted BaseAlt unscaled, making the sky boxes' vertical extent wrong on any
+                // lot with a nonzero base altitude.
+                var alt = (height - Blueprint.BaseAlt) * Blueprint.TerrainFactor * 3;
                 if (alt < minAlt)
                 {
                     minAlt = alt;
                 }
             }
+            // The city backdrop around the lot can dip well below the lot's own lowest point (sloped
+            // city terrain) — extend the boxes downward so down-angled views of that lower ground
+            // still count as "background visible".
+            minAlt -= 100;
 
             BoundingBox overall = new BoundingBox(new Vector3(0, minAlt, 0), new Vector3(Blueprint.Width * 3, 1000, Blueprint.Height * 3));
             foreach (var world in Blueprint.SubWorlds)

@@ -157,8 +157,9 @@ namespace FSO.Client
             var lc = new LoginController(null, null);
             var lr = new Regulators.LoginRegulator(null, null, null);
 
-            var seled = new PersonSelectionEditController(null, null);
+            var seled = new PersonSelectionEditController(null, null, null);
             var casr = new Regulators.CreateASimRegulator(null);
+            var easr = new Regulators.EditASimRegulator(null);
             var purch = new Regulators.PurchaseLotRegulator(null);
             var conn = new Regulators.LotConnectionRegulator(null, null, null);
             var t2 = new Regulators.CityConnectionRegulator(null, null, null, null, Kernel, null);
@@ -276,6 +277,32 @@ namespace FSO.Client
                     }, 1000);
                 }, new Common.Utils.Callback(Disconnect));
             });
+        }
+
+        /// <summary>
+        /// Edit an existing avatar's appearance: connect to their city anonymously (CAS mode, so the
+        /// avatar stays offline and unclaimed), then open the CAS screen preloaded with their look.
+        /// </summary>
+        public void EditAvatar(AvatarData avatar)
+        {
+            ChangeState<TransitionScreen, ConnectCASController>((view, controller) =>
+            {
+                controller.Connect(avatar.ShardName, new Common.Utils.Callback(() => GotoCASEdit(avatar)), new Common.Utils.Callback(Disconnect));
+            });
+        }
+
+        public void GotoCASEdit(AvatarData avatar)
+        {
+            if (GlobalSettings.Default.ModernCAS)
+                ChangeState<CASScreenV2, PersonSelectionEditController>((view, controller) => {
+                    controller.EditTarget = avatar;
+                    view.SetEditMode(avatar);
+                });
+            else
+                ChangeState<PersonSelectionEdit, PersonSelectionEditController>((view, controller) => {
+                    controller.EditTarget = avatar;
+                    view.SetEditMode(avatar);
+                });
         }
 
         public void ConnectToCAS(string cityName)

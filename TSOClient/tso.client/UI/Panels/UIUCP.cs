@@ -446,7 +446,11 @@ namespace FSO.Client.UI.Panels
             AdvanceFlashing(UserListFlashing, ref UserListFlashTime, BudgetButton);
 
             var keys = state.NewKeys;
-            var nofocus = state.InputManager.GetFocus() == null;
+            var focus = state.InputManager.GetFocus();
+            //the camera hold buttons take input focus while pressed, which must not block the
+            //hold-to-rotate/zoom handling below that reads their IsDown state.
+            var nofocus = focus == null || focus == RotateClockwiseButton || focus == RotateCounterClockwiseButton
+                || focus == ZoomInButton || focus == ZoomOutButton;
             base.Update(state);
             if (Game.InLot && state.WindowFocused)
             {

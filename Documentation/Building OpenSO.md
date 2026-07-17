@@ -24,7 +24,7 @@ referenced directly by the client projects) — no separate MonoGame install or 
 generation step is needed.
 
 One exception: `FSO.TAALab`, a standalone TAA-tuning dev harness (not part of the shipped client or
-server), still targets `net9.0-windows` — it's an experimental tool per the maintainer, not a production
+server), still targets `net9.0-windows` — it's an experimental tool, not a production
 project, so it doesn't need to factor into your SDK choice. See
 [`TSOClient/FSO.TAALab/README.md`](../TSOClient/FSO.TAALab/README.md) for what it does, what production
 TAA code it mirrors, and how to build/run it.

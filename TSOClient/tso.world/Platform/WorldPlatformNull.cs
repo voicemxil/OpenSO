@@ -36,6 +36,12 @@ namespace FSO.LotView.Platform
             return 0;
         }
 
+        public short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, WorldState state, out float distance)
+        {
+            distance = float.MaxValue;
+            return 0;
+        }
+
         public Texture2D GetObjectThumb(ObjectComponent[] objects, Vector3[] positions, GraphicsDevice gd, WorldState state)
         {
             return null;

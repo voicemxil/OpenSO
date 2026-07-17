@@ -195,57 +195,7 @@ namespace FSO.SimAntics.Engine
                 case VMSuitScope.Person:
                     //get outfit from person
                     if (context.VM.TS1) return GetPersonSuitTS1((VMAvatar)context.Caller, id);
-
-                    var type = (VMPersonSuits)id;
-                    bool male = (avatar.GetPersonData(VMPersonDataVariable.Gender) == 0);
-                    switch (type)
-                    {
-                        //todo: (tail etc), cockroach head
-
-                        case VMPersonSuits.DefaultDaywear:
-                            return avatar.DefaultSuits.Daywear.ID;
-                        case VMPersonSuits.Naked:
-                            return (ulong)(male ? 0x24E0000000D : 0x10000000D);
-                        case VMPersonSuits.DefaultSwimwear:
-                            return avatar.DefaultSuits.Swimwear.ID;
-                        case VMPersonSuits.JobOutfit:
-                            if (context.VM.TS1) return null;
-                            var job = avatar.GetPersonData(VMPersonDataVariable.OnlineJobID);
-                            if (job < 1 || job > 5) return null;
-                            var level = Math.Max(0, Math.Min(2, ((int)avatar.GetPersonData(VMPersonDataVariable.OnlineJobGrade) + 1) / 4));
-                            return (ulong)(JobOutfits[male?0:1][job-1][level]);
-                        case VMPersonSuits.DefaultSleepwear:
-                            return avatar.DefaultSuits.Sleepwear.ID;
-                        case VMPersonSuits.SkeletonPlus:
-                            return (ulong)(0x5750000000D);
-                        case VMPersonSuits.SkeletonMinus:
-                            return (ulong)(0x5740000000D);
-                        case VMPersonSuits.TeleporterMishap:
-                          return (ulong)(male ? 0x2900000000D : 0x4A0000000D);
-                        case VMPersonSuits.FSOInvisible:
-                            return (ulong)0x00000000000;
-
-
-                        case VMPersonSuits.DynamicDaywear:
-                            return avatar.DynamicSuits.Daywear;
-                        case VMPersonSuits.DynamicSleepwear:
-                            return avatar.DynamicSuits.Sleepwear;
-                        case VMPersonSuits.DynamicSwimwear:
-                            return avatar.DynamicSuits.Swimwear;
-                        case VMPersonSuits.DynamicCostume:
-                            return avatar.DynamicSuits.Costume;
-
-                        case VMPersonSuits.DecorationHead:
-                            return avatar.Decoration.Head;
-                        case VMPersonSuits.DecorationBack:
-                            return avatar.Decoration.Back;
-                        case VMPersonSuits.DecorationShoes:
-                            return avatar.Decoration.Shoes;
-                        case VMPersonSuits.DecorationTail:
-                            return avatar.Decoration.Tail;
-                    }
-
-                    return null;
+                    return GetPersonSuit((VMAvatar)context.Caller, id);
             }
 
             if (suitTable != null)
@@ -256,6 +206,65 @@ namespace FSO.SimAntics.Engine
                 //var apr = FSO.Content.Content.Get().AvatarAppearances.Get(suitFile);
                 //return apr;
             }
+            return null;
+        }
+
+        /// <summary>
+        /// Person scope suit lookup (TSO). Only needs the avatar itself, so it is safe to call
+        /// outside BHAV execution — eg. SetPersonData(CurrentOutfit) while the avatar's own stack
+        /// is empty (an init tree running as a check when the avatar has just been created, like
+        /// job lot NPC stand-ins).
+        /// </summary>
+        public static object GetPersonSuit(VMAvatar avatar, ushort id)
+        {
+            var type = (VMPersonSuits)id;
+            bool male = (avatar.GetPersonData(VMPersonDataVariable.Gender) == 0);
+            switch (type)
+            {
+                //todo: (tail etc), cockroach head
+
+                case VMPersonSuits.DefaultDaywear:
+                    return avatar.DefaultSuits.Daywear.ID;
+                case VMPersonSuits.Naked:
+                    return (ulong)(male ? 0x24E0000000D : 0x10000000D);
+                case VMPersonSuits.DefaultSwimwear:
+                    return avatar.DefaultSuits.Swimwear.ID;
+                case VMPersonSuits.JobOutfit:
+                    var job = avatar.GetPersonData(VMPersonDataVariable.OnlineJobID);
+                    if (job < 1 || job > 5) return null;
+                    var level = Math.Max(0, Math.Min(2, ((int)avatar.GetPersonData(VMPersonDataVariable.OnlineJobGrade) + 1) / 4));
+                    return (ulong)(JobOutfits[male?0:1][job-1][level]);
+                case VMPersonSuits.DefaultSleepwear:
+                    return avatar.DefaultSuits.Sleepwear.ID;
+                case VMPersonSuits.SkeletonPlus:
+                    return (ulong)(0x5750000000D);
+                case VMPersonSuits.SkeletonMinus:
+                    return (ulong)(0x5740000000D);
+                case VMPersonSuits.TeleporterMishap:
+                    return (ulong)(male ? 0x2900000000D : 0x4A0000000D);
+                case VMPersonSuits.FSOInvisible:
+                    return (ulong)0x00000000000;
+
+
+                case VMPersonSuits.DynamicDaywear:
+                    return avatar.DynamicSuits.Daywear;
+                case VMPersonSuits.DynamicSleepwear:
+                    return avatar.DynamicSuits.Sleepwear;
+                case VMPersonSuits.DynamicSwimwear:
+                    return avatar.DynamicSuits.Swimwear;
+                case VMPersonSuits.DynamicCostume:
+                    return avatar.DynamicSuits.Costume;
+
+                case VMPersonSuits.DecorationHead:
+                    return avatar.Decoration.Head;
+                case VMPersonSuits.DecorationBack:
+                    return avatar.Decoration.Back;
+                case VMPersonSuits.DecorationShoes:
+                    return avatar.Decoration.Shoes;
+                case VMPersonSuits.DecorationTail:
+                    return avatar.Decoration.Tail;
+            }
+
             return null;
         }
     }

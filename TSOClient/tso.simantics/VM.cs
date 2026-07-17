@@ -795,36 +795,61 @@ namespace FSO.SimAntics
             FSOVObjTotal = input.Entities.Length;
             foreach (var ent in input.Entities)
             {
-                VMEntity realEnt;
+                VMEntity realEnt = null;
                 var objDefinition = FSO.Content.Content.Get().WorldObjects.Get(ent.GUID);
                 if (objDefinition == null)
                 {
-                    LoadErrors.Add(new VMLoadError(VMLoadErrorCode.MISSING_OBJECT, 
+                    LoadErrors.Add(new VMLoadError(VMLoadErrorCode.MISSING_OBJECT,
                         "0x" + ent.GUID.ToString("X8") + " " + input.MultitileGroups.FirstOrDefault(x => x.Objects.Contains(ent.ObjectID))?.Name ?? "(unknown name)", (ushort)ent.ObjectID));
                     ent.LoadFailed = true;
                     continue;
                 }
-                if (ent is VMAvatarMarshal)
+                try
                 {
-                    var avatar = new VMAvatar(objDefinition);
-                    avatar.Load((VMAvatarMarshal)ent);
-                    if (UseWorld) Context.Blueprint.AddAvatar((AvatarComponent)avatar.WorldUI);
-                    realEnt = avatar;
-                }
-                else
-                {
-                    var worldObject = Context.MakeObjectComponent(objDefinition);
-                    var obj = new VMGameObject(objDefinition, worldObject);
-                    obj.Load((VMGameObjectMarshal)ent);
-                    if (UseWorld)
+                    // Per-object restore is fallible: corrupt saved state (bad graphic, invalid
+                    // slots, broken trees) or a duplicate object ID must drop THIS object from the
+                    // lot, not fail the whole load — a bad item exists in every ring backup, so an
+                    // escaped exception here makes the lot permanently unopenable.
+                    if (ObjectsById.ContainsKey(ent.ObjectID))
+                        throw new Exception("duplicate object id " + ent.ObjectID);
+                    if (ent is VMAvatarMarshal)
                     {
-                        Context.Blueprint.AddObject((ObjectComponent)obj.WorldUI);
-                        Context.Blueprint.ChangeObjectLocation((ObjectComponent)obj.WorldUI, obj.Position);
+                        var avatar = new VMAvatar(objDefinition);
+                        realEnt = avatar;
+                        avatar.Load((VMAvatarMarshal)ent);
+                        if (UseWorld) Context.Blueprint.AddAvatar((AvatarComponent)avatar.WorldUI);
                     }
-                    obj.Position = obj.Position;
-                    realEnt = obj;
+                    else
+                    {
+                        var worldObject = Context.MakeObjectComponent(objDefinition);
+                        var obj = new VMGameObject(objDefinition, worldObject);
+                        realEnt = obj;
+                        obj.Load((VMGameObjectMarshal)ent);
+                        if (UseWorld)
+                        {
+                            Context.Blueprint.AddObject((ObjectComponent)obj.WorldUI);
+                            Context.Blueprint.ChangeObjectLocation((ObjectComponent)obj.WorldUI, obj.Position);
+                        }
+                        obj.Position = obj.Position;
+                    }
+                    realEnt.FetchTreeByName(Context);
                 }
-                realEnt.FetchTreeByName(Context);
+                catch (Exception e)
+                {
+                    LoadErrors.Add(new VMLoadError(VMLoadErrorCode.UNKNOWN_ERROR,
+                        "0x" + ent.GUID.ToString("X8") + " failed to restore (" + e.Message + ")", (ushort)ent.ObjectID));
+                    ent.LoadFailed = true;
+                    if (UseWorld && realEnt?.WorldUI != null)
+                    {
+                        try
+                        {
+                            if (realEnt.WorldUI is ObjectComponent oc) Context.Blueprint.RemoveObject(oc);
+                            else if (realEnt.WorldUI is AvatarComponent ac) Context.Blueprint.RemoveAvatar(ac);
+                        }
+                        catch (Exception) { }
+                    }
+                    continue;
+                }
                 Entities.Add(realEnt);
                 Context.ObjectQueries.NewObject(realEnt);
                 ObjectsById.Add(ent.ObjectID, realEnt);
@@ -844,18 +869,51 @@ namespace FSO.SimAntics
                 var realEnt = Entities[j++];
                 i++;
 
-                realEnt.Thread = new VMThread(threadMarsh, Context, realEnt);
+                try
+                {
+                    realEnt.Thread = new VMThread(threadMarsh, Context, realEnt);
+                }
+                catch (Exception e)
+                {
+                    // Corrupt interaction/thread state: keep the object (it may be a player's
+                    // furniture) but give it a fresh idle thread instead of crashing the load.
+                    LoadErrors.Add(new VMLoadError(VMLoadErrorCode.INVALID_SCRIPT_STATE,
+                        "0x" + ent.GUID.ToString("X8") + " thread reset (" + e.Message + ")", (ushort)ent.ObjectID));
+                    realEnt.Thread = new VMThread(Context, realEnt, realEnt.Object.OBJ.StackSize);
+                }
                 Scheduler.ScheduleTickIn(realEnt, 1);
 
-                if (realEnt is VMAvatar)
-                    ((VMAvatar)realEnt).LoadCrossRef((VMAvatarMarshal)ent, Context);
-                else
-                    ((VMGameObject)realEnt).LoadCrossRef((VMGameObjectMarshal)ent, Context);
+                try
+                {
+                    if (realEnt is VMAvatar)
+                        ((VMAvatar)realEnt).LoadCrossRef((VMAvatarMarshal)ent, Context);
+                    else
+                        ((VMGameObject)realEnt).LoadCrossRef((VMGameObjectMarshal)ent, Context);
+                }
+                catch (Exception e)
+                {
+                    // Cross-references point at objects that failed to load — survivable; the
+                    // object keeps whatever references resolved before the failure.
+                    LoadErrors.Add(new VMLoadError(VMLoadErrorCode.INVALID_SCRIPT_STATE,
+                        "0x" + ent.GUID.ToString("X8") + " crossref failed (" + e.Message + ")", (ushort)ent.ObjectID));
+                }
             }
 
             foreach (var multi in input.MultitileGroups)
             {
-                var grp = new VMMultitileGroup(multi, Context); //should self register
+                VMMultitileGroup grp;
+                try
+                {
+                    grp = new VMMultitileGroup(multi, Context); //should self register
+                }
+                catch (Exception e)
+                {
+                    // Corrupt group data (e.g. mismatched object/offset arrays): the members that
+                    // loaded stay on the lot as loose parts rather than failing the whole load.
+                    LoadErrors.Add(new VMLoadError(VMLoadErrorCode.UNKNOWN_ERROR,
+                        (multi.Name ?? "multitile group") + " failed to restore (" + e.Message + ")", 0));
+                    continue;
+                }
                 if (VM.UseWorld)
                 {
                     var b = grp.BaseObject;
@@ -879,7 +937,17 @@ namespace FSO.SimAntics
 
             foreach (var ent in Entities)
             {
-                if (ent.Container == null) ent.PositionChange(Context, true); //called recursively for contained objects.
+                try
+                {
+                    if (ent.Container == null) ent.PositionChange(Context, true); //called recursively for contained objects.
+                }
+                catch (Exception e)
+                {
+                    // An invalid position must not fail the whole load; the object stays where its
+                    // raw state put it and can be moved/deleted in game.
+                    LoadErrors.Add(new VMLoadError(VMLoadErrorCode.UNKNOWN_ERROR,
+                        "0x" + ent.Object.OBJ.GUID.ToString("X8") + " position restore failed (" + e.Message + ")", (ushort)ent.ObjectID));
+                }
             }
 
             GlobalState = input.GlobalState;
@@ -1049,6 +1117,7 @@ namespace FSO.SimAntics
         TS1LotChange,
         TS1BuildBuyChange,
         TSOUpgraded,
-        TSOUserLeaveBuildBuy
+        TSOUserLeaveBuildBuy,
+        TSOFreeRoamDenied
     }
 }

@@ -63,6 +63,7 @@ namespace FSO.Server.Api.Core.Controllers.GameAPI
                         name = shard.Name,
                         status = shard.Status.ToString(),
                         version = shard.VersionName,
+                        map = shard.Map,
                         playersOnline = players,
                         lotsOnline = lotsOnline,
                         ownedLots = lots.Count
@@ -112,6 +113,9 @@ namespace FSO.Server.Api.Core.Controllers.GameAPI
         public string name;
         public string status;
         public string version;
+        /// <summary>The city map this shard runs (Content/Cities folder suffix, e.g. "0101") — the same
+        /// value the city selector hands the game. The launcher uses it to show the right map thumbnail.</summary>
+        public string map;
         public int playersOnline;
         public int lotsOnline;
         public int ownedLots;

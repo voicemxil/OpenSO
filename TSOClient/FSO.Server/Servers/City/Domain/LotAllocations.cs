@@ -43,6 +43,41 @@ namespace FSO.Server.Servers.City.Domain
             return TryFind(lotId, avatarId, true, security);
         }
 
+        /// <summary>The lot's admit rules for a single avatar: roommates, moderators, community lots
+        /// and open admit modes may enter; admit-list (1), ban-list (2) and ban-all (3) lots gate
+        /// everyone else. Unowned/synthetic lots are public. This must hold even when guest opening
+        /// (archive free-roam / AllOpenable) is enabled — free roam means every lot is WALKABLE, not
+        /// that closed doors stop existing.</summary>
+        private bool AvatarMayEnterLot(IDA db, DbLot lot, uint avatarId, ISecurityContext security)
+        {
+            if (lot == null || lot.lot_id == 0 || avatarId == 0) return true;
+            if (lot.admit_mode <= 0 || lot.admit_mode >= 4) return true;
+            if (lot.category == LotCategory.community) return true;
+
+            if (db.Avatars.GetModerationLevel(avatarId) > 0) return true;
+
+            var roomies = db.Roommates.GetLotRoommates(lot.lot_id);
+            var avatars = new List<uint>();
+            foreach (var roomie in roomies)
+            {
+                if (roomie.is_pending == 0) avatars.Add(roomie.avatar_id);
+            }
+            try
+            {
+                security.DemandAvatars(avatars, AvatarPermissions.WRITE);
+                return true; // roommates always enter
+            }
+            catch (Exception) { }
+
+            switch (lot.admit_mode)
+            {
+                case 1: return db.LotAdmit.GetLotAdmitDeny(lot.lot_id, 0).Contains(avatarId);  // admit list
+                case 2: return !db.LotAdmit.GetLotAdmitDeny(lot.lot_id, 1).Contains(avatarId); // ban list
+                case 3: return false;                                                          // ban all
+                default: return true;
+            }
+        }
+
         public Task<TryFindLotResult> TryFind(uint lotId, uint avatarId, ISecurityContext security)
         {
             return TryFind(lotId, avatarId, false, security);
@@ -256,6 +291,20 @@ namespace FSO.Server.Servers.City.Domain
                                             });
                                         }
                                     }
+                                    else if (avatarId != 0)
+                                    {
+                                        // Guest opening (archive free-roam): anyone may open an
+                                        // unrestricted lot by walking onto it, but a lot's admit
+                                        // rules still apply — a closed door is a closed door.
+                                        if (!AvatarMayEnterLot(db, lot, avatarId, security))
+                                        {
+                                            Remove(lotId);
+                                            return Immediate(new TryFindLotResult
+                                            {
+                                                Status = FindLotResponseStatus.NO_ADMIT
+                                            });
+                                        }
+                                    }
                                 }
                             }
 
@@ -313,40 +362,17 @@ namespace FSO.Server.Servers.City.Domain
                         if (!jobLot && avatarId != 0)
                         {
                             //check admit type (might be expensive?)
+                            //applies even with guest opening (archive free-roam): every lot is
+                            //walkable, but admit/ban rules still gate who may actually enter.
                             using (var db = DAFactory.Get())
                             {
                                 var lot = db.Lots.GetByLocation(Context.ShardId, lotId);
-                                if (lot != null)
+                                if (!AvatarMayEnterLot(db, lot, avatarId, security))
                                 {
-                                    if (lot.admit_mode > 0 && lot.admit_mode < 4 && !AllowGuestOpening)
+                                    return Immediate(new TryFindLotResult
                                     {
-                                        //special admit mode
-
-                                        var roomies = db.Roommates.GetLotRoommates(lot.lot_id);
-                                        var modState = db.Avatars.GetModerationLevel(avatarId);
-                                        var avatars = new List<uint>();
-                                        foreach (var roomie in roomies) avatars.Add(roomie.avatar_id);
-
-                                        try
-                                        {
-                                            if (modState == 0)
-                                                security.DemandAvatars(avatars, AvatarPermissions.WRITE);
-                                        }
-                                        catch (Exception)
-                                        {
-
-                                            //if we're not a roommate, check admit rules
-                                            if ((lot.admit_mode == 1 && !db.LotAdmit.GetLotAdmitDeny(lot.lot_id, 0).Contains(avatarId)) //admit list
-                                                || (lot.admit_mode == 2 && db.LotAdmit.GetLotAdmitDeny(lot.lot_id, 1).Contains(avatarId)) //ban list 
-                                                || (lot.admit_mode == 3)) //ban all
-                                            {
-                                                return Immediate(new TryFindLotResult
-                                                {
-                                                    Status = FindLotResponseStatus.NO_ADMIT
-                                                });
-                                            }
-                                        }
-                                    }
+                                        Status = FindLotResponseStatus.NO_ADMIT
+                                    });
                                 }
                             }
                         }

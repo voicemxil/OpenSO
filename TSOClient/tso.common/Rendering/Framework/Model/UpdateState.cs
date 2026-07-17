@@ -44,10 +44,13 @@ namespace FSO.Common.Rendering.Framework.Model
             get { return KeyboardState.IsKeyDown(Keys.LeftAlt) || KeyboardState.IsKeyDown(Keys.RightAlt); }
         }
         public bool ActivationKeyPressed => NewKeys.Contains(Keys.Enter) || NewKeys.Contains(Keys.Space);
-        public bool FocusNextPressed => (NewKeys.Contains(Keys.Tab) && !ShiftDown)
-            || NewKeys.Contains(Keys.Right) || NewKeys.Contains(Keys.Down);
-        public bool FocusPrevPressed => (NewKeys.Contains(Keys.Tab) && ShiftDown)
-            || NewKeys.Contains(Keys.Left) || NewKeys.Contains(Keys.Up);
+        // Focus cycling is Tab/Shift+Tab ONLY. Arrow keys deliberately do NOT move focus: the tab
+        // order is one-dimensional (TabIndex, then screen position), so arrows "cycling" through a
+        // 2D layout like CAS's tile grids reads as random jumps — and focusing grid tiles changes
+        // their selection in passing. Arrows belong to the focused control itself (text caret
+        // movement, UIListBox selection), which consumes them from NewKeys while focused.
+        public bool FocusNextPressed => NewKeys.Contains(Keys.Tab) && !ShiftDown;
+        public bool FocusPrevPressed => NewKeys.Contains(Keys.Tab) && ShiftDown;
 
         public UIState UIState = new UIState();
         public InputManager InputManager;

@@ -37,6 +37,8 @@ namespace FSO.Client.UI.Panels
 
         protected UIButton SearchButton;
         protected UICatalogSearchPanel SearchPanel;
+        protected UIButton SledgehammerButton;
+        protected UIButton EyedropperButton;
 
         protected bool UseSmall;
         public UIAbstractCatalogPanel(string mode, UILotControl lotController)
@@ -97,6 +99,62 @@ namespace FSO.Client.UI.Panels
             SearchButton.X = Background.Width - (6 + 13);
             SearchButton.OnButtonClick += (UIElement btn) => { SearchButton.Selected = SearchPanel.Toggle(); };
             this.Add(SearchButton);
+
+            EyedropperButton = new UIButton(ui.Get("eyedropper.png").Get(gd));
+            EyedropperButton.Y = 20;
+            EyedropperButton.X = 20;
+            EyedropperButton.Tooltip = "Eyedropper";
+            EyedropperButton.OnButtonClick += (UIElement btn) => ActivateTool(EyedropperButton, typeof(UIEyedropper));
+            this.Add(EyedropperButton);
+
+            SledgehammerButton = new UIButton(ui.Get("sledgehammer.png").Get(gd));
+            SledgehammerButton.X = EyedropperButton.X;
+            SledgehammerButton.Y = EyedropperButton.Y + 25;
+            SledgehammerButton.Tooltip = "Sledgehammer";
+            SledgehammerButton.OnButtonClick += (UIElement btn) => ActivateTool(SledgehammerButton, typeof(UISledgehammer));
+            this.Add(SledgehammerButton);
+
+            LotController.EyedropperNavigate = NavigateToItem;
+        }
+
+        /// <summary>Jumps the catalog to the category and page containing <paramref name="guid"/> and
+        /// selects it, exactly as if the player clicked the item — so an eyedropper pick shows where
+        /// the object lives in the catalog (and arms shift-to-place-another). Returns false when the
+        /// item isn't in this panel's catalog (e.g. a buy-mode object while the build panel is open);
+        /// the eyedropper then falls back to a plain ghost pickup.</summary>
+        public bool NavigateToItem(uint guid)
+        {
+            foreach (var pair in CategoryMap)
+            {
+                var index = UICatalog.Catalog[pair.Value].FindIndex(e => e.Special == null && e.Item.GUID == guid);
+                if (index == -1) continue;
+
+                ChangeCategory(pair.Key);
+                Catalog.SetSearchTerm(""); // a stale search filter could hide the item
+                var fIndex = Catalog.Filtered?.FindIndex(e => e.Special == null && e.Item.GUID == guid) ?? -1;
+                if (fIndex == -1) return false;
+                SetPage(fIndex / Catalog.PageSize);
+                Catalog_OnSelectionChange(fIndex);
+                EyedropperButton.Selected = false;
+                return true;
+            }
+            return false;
+        }
+
+        private void ActivateTool(UIButton sourceButton, Type toolType)
+        {
+            var toggleOff = sourceButton.Selected;
+
+            Holder.ClearSelected();
+            if (OldSelection != -1) { Catalog.SetActive(OldSelection, false); OldSelection = -1; }
+            LotController.CustomControl?.Release();
+            LotController.CustomControl = null;
+
+            if (toggleOff) return;
+
+            LotController.CustomControl = (UICustomLotControl)Activator.CreateInstance(
+                toolType, LotController.vm, LotController.World, LotController, new List<int>());
+            AnyChanges = true;
         }
 
         private void SearchUpdated(string term)
@@ -149,6 +207,9 @@ namespace FSO.Client.UI.Panels
             Holder.OnPickup -= HolderPickup;
             Holder.OnDelete -= HolderDelete;
             Holder.OnPutDown -= HolderPutDown;
+
+            if (LotController.EyedropperNavigate == (Func<uint, bool>)NavigateToItem)
+                LotController.EyedropperNavigate = null;
 
             if (LotController.CustomControl != null)
             {
@@ -307,6 +368,10 @@ namespace FSO.Client.UI.Panels
             {
                 SearchPanel.SetParent(this.Parent);
             }
+
+            var active = LotController?.CustomControl;
+            if (SledgehammerButton != null) SledgehammerButton.Selected = active is UISledgehammer;
+            if (EyedropperButton != null) EyedropperButton.Selected = active is UIEyedropper;
 
             base.Update(state);
         }

@@ -63,6 +63,11 @@ namespace FSO.Client.UI.Screens
         public AppearanceType AppearanceType { get; internal set; } = AppearanceType.Light;
         private UIButton SelectedAppearanceButton;
         public Gender Gender { get; internal set; } = Gender.Female;
+        /// <summary>
+        /// Set when this screen is editing an existing avatar rather than creating a new one.
+        /// The name is locked in this mode — changing it requires contacting moderation.
+        /// </summary>
+        public bool EditMode { get; private set; }
         
         public UISim SimBox;
 
@@ -70,6 +75,36 @@ namespace FSO.Client.UI.Screens
         public string ProgressDialogTitle { get; set; }
         public string ProgressDialogMessage { get; set; }
         public string DefaultAvatarDescription { get; set; }
+
+        /// <summary>Reduce a username to a valid default sim name: keep letters and spaces (the only
+        /// characters sim names allow), collapse runs of whitespace, and give up (empty field) if
+        /// fewer than 3 characters survive — the accept button then stays disabled until a name is
+        /// typed, instead of offering a default the server would reject.</summary>
+        private static string SanitizeDefaultName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (var c in name)
+            {
+                if (c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z') sb.Append(c);
+                else if (c == ' ' && sb.Length > 0 && sb[sb.Length - 1] != ' ') sb.Append(' ');
+            }
+            var result = sb.ToString().TrimEnd(' ');
+            if (result.Length > 24) result = result.Substring(0, 24).TrimEnd(' ');
+            return NAME_VALIDATION.IsMatch(result) ? result : "";
+        }
+
+        /// <summary>The original TSO string table (UIText 170, entry 23) is sloppy: a stray leading
+        /// space on its "Quote:" line, and trailing spaces after "Fav. music:" and "Quote:" that the
+        /// other lines don't have. The table ships in the TSO assets every install downloads, so
+        /// clean the template client-side: trim spaces from both ends of each line.</summary>
+        private static string SanitizeDefaultDescription(string desc)
+        {
+            if (string.IsNullOrEmpty(desc)) return desc ?? "";
+            var lines = desc.Split('\n');
+            for (int i = 0; i < lines.Length; i++) lines[i] = lines[i].Trim(' ', '\r');
+            return string.Join("\n", lines);
+        }
 
         public PersonSelectionEdit() : base()
         {
@@ -98,17 +133,22 @@ namespace FSO.Client.UI.Screens
             CancelButton.OnButtonClick += new ButtonClickDelegate(CancelButton_OnButtonClick);
             //CancelButton.Disabled = true;
 
-            DescriptionTextEdit.CurrentText = ui.GetString("DefaultAvatarDescription");
+            DescriptionTextEdit.CurrentText = SanitizeDefaultDescription(ui.GetString("DefaultAvatarDescription"));
             DescriptionSlider.AttachButtons(DescriptionScrollUpButton, DescriptionScrollDownButton, 1);
             DescriptionTextEdit.AttachSlider(DescriptionSlider);
-            DescriptionTextEdit.CurrentText = DefaultAvatarDescription;
+            DescriptionTextEdit.CurrentText = SanitizeDefaultDescription(DefaultAvatarDescription);
             DescriptionTextEdit.OnChange += DescriptionTextEdit_OnChange;
 
             NameTextEdit.OnChange += new ChangeDelegate(NameTextEdit_OnChange);
-            NameTextEdit.CurrentText = GlobalSettings.Default.LastUser;
+            // Default the sim name to the username, sanitized to what sim names ALLOW (letters and
+            // spaces only) — usernames may contain digits, and an unsubmittable default that LOOKS
+            // fine just round-trips to a server error.
+            NameTextEdit.CurrentText = SanitizeDefaultName(GlobalSettings.Default.LastUser);
             GameFacade.Screens.inputManager.SetFocus(NameTextEdit);
 
-            AcceptButton.Disabled = NameTextEdit.CurrentText.Length == 0;
+            // Gate on full validation from the start: the default value must pass the same rules as
+            // typed input, or Accept submits a name the server is guaranteed to reject.
+            UpdateAcceptButtonState();
             AcceptButton.OnButtonClick += new ButtonClickDelegate(AcceptButton_OnButtonClick);
 
             /** Appearance **/
@@ -205,6 +245,51 @@ namespace FSO.Client.UI.Screens
             {
                 FSOFacade.Hints.TriggerHint("screen:cas");
             });
+        }
+
+        /// <summary>
+        /// Switches the screen to edit an existing avatar: preselects their current gender, skin tone,
+        /// head and body, and locks the name field (name changes go through moderation).
+        /// </summary>
+        public void SetEditMode(Server.Protocol.CitySelector.AvatarData avatar)
+        {
+            EditMode = true;
+
+            Gender = avatar.Gender == Server.Protocol.CitySelector.AvatarGender.Male ? Gender.Male : Gender.Female;
+            MaleButton.Selected = Gender == Gender.Male;
+            FemaleButton.Selected = Gender == Gender.Female;
+
+            AppearanceType = (AppearanceType)Enum.Parse(typeof(AppearanceType), avatar.AppearanceType.ToString());
+            SelectedAppearanceButton.Selected = false;
+            switch (AppearanceType)
+            {
+                case AppearanceType.Light:
+                    SelectedAppearanceButton = SkinLightButton; break;
+                case AppearanceType.Medium:
+                    SelectedAppearanceButton = SkinMediumButton; break;
+                case AppearanceType.Dark:
+                    SelectedAppearanceButton = SkinDarkButton; break;
+            }
+            SelectedAppearanceButton.Selected = true;
+
+            NameTextEdit.CurrentText = avatar.Name;
+            NameTextEdit.Mode = UITextEditMode.ReadOnly;
+            NameTextEdit.Tooltip = "Name changes require contacting moderation.";
+            DescriptionTextEdit.CurrentText = avatar.Description ?? "";
+
+            RefreshCollections();
+            SearchCollectionForInitID(avatar.HeadOutfitID, avatar.BodyOutfitID);
+            UpdateAcceptButtonState();
+
+            FSO.UI.Model.DiscordRpcEngine.SendFSOPresence("In Edit A Sim");
+            OnEditModeApplied();
+        }
+
+        /// <summary>
+        /// Hook for subclasses (CASScreenV2) to restyle themselves for edit mode.
+        /// </summary>
+        protected virtual void OnEditModeApplied()
+        {
         }
 
         protected UIImage Background;
@@ -366,7 +451,8 @@ namespace FSO.Client.UI.Screens
         private void UpdateAcceptButtonState()
         {
             var enabled = true;
-            if (!NAME_VALIDATION.IsMatch(NameTextEdit.CurrentText))
+            //in edit mode the name is server-provided and locked, so it must not gate the accept button
+            if (!EditMode && !NAME_VALIDATION.IsMatch(NameTextEdit.CurrentText))
             {
                 enabled = false;
             }

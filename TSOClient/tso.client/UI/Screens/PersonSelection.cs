@@ -270,6 +270,7 @@ namespace FSO.Client.UI.Screens
         public UIButton DescTabButton { get; set; }
         public UIButton NewAvatarButton { get; set; }
         public UIButton DeleteAvatarButton { get; set; }
+        public UIButton EditAvatarButton { get; set; }
 
         public UIImage TabBackground { get; set; }
         public UIImage TabEnterBackground { get; set; }
@@ -318,6 +319,20 @@ namespace FSO.Client.UI.Screens
             NewAvatarButton.OnButtonClick += new ButtonClickDelegate(OnSelect);
             DeleteAvatarButton.OnButtonClick += new ButtonClickDelegate(DeleteAvatarButton_OnButtonClick);
 
+            //not part of the original uis layout — a standard button beside the retire button on the
+            //description tab, opening the CAS screen in edit mode for this avatar. The pair is
+            //centered where the retire button sat alone: edit goes 36px left of it, retire 36px right.
+            EditAvatarButton = new UIButton
+            {
+                Caption = "Edit",
+                Tooltip = "Edit this Sim's appearance",
+                Position = DeleteAvatarButton.Position - new Vector2(36, 0)
+            };
+            EditAvatarButton.Width = 64;
+            DeleteAvatarButton.X += 36;
+            EditAvatarButton.OnButtonClick += new ButtonClickDelegate(EditAvatarButton_OnButtonClick);
+            Screen.Add(EditAvatarButton);
+
             PersonDescriptionSlider.AttachButtons(PersonDescriptionScrollUpButton, PersonDescriptionScrollDownButton, 1);
             PersonDescriptionText.AttachSlider(PersonDescriptionSlider);
 
@@ -361,6 +376,19 @@ namespace FSO.Client.UI.Screens
             {
                 ((PersonSelectionController)Screen.Controller).CreateAvatar();
             }
+        }
+
+        /// <summary>
+        /// User clicked the "Edit Sim" button.
+        /// </summary>
+        private void EditAvatarButton_OnButtonClick(UIElement button)
+        {
+            if (Avatar == null)
+            {
+                return;
+            }
+
+            ((PersonSelectionController)Screen.Controller).EditAvatar(Avatar);
         }
 
         /// <summary>
@@ -464,6 +492,7 @@ namespace FSO.Client.UI.Screens
 
             NewAvatarButton.Visible = isAvailable;
             DeleteAvatarButton.Visible = !isAvailable;
+            EditAvatarButton.Visible = !isAvailable;
 
             if (isAvailable)
             {
@@ -510,6 +539,7 @@ namespace FSO.Client.UI.Screens
 
             PersonDescriptionSlider.Visible = !isEnter;
             DeleteAvatarButton.Visible = !isEnter;
+            EditAvatarButton.Visible = !isEnter;
             PersonDescriptionText.Visible = !isEnter;
             DescriptionTabBackgroundImage.Visible = !isEnter;
 

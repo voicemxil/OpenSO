@@ -1029,7 +1029,16 @@ namespace FSO.SimAntics.Utils
             uint baseX = baseLocation >> 16;
             uint baseY = baseLocation & 0xFFFF;
 
-            if (lotsMode == 0) return;
+            if (lotsMode == 0)
+            {
+                // A fresh load on the lowest setting never runs InitSubWorlds, leaving SkyBounds
+                // null — and DrawBg treats null as "background always visible". Switching DOWN to
+                // this setting mid-lot would otherwise leave the perimeter boxes from the previous
+                // mode behind, and with no subworlds left to cover the ground those stale bounds
+                // cull the entire city backdrop at steep camera angles. Match the fresh-load state.
+                vm.Context.World.SkyBounds = null;
+                return;
+            }
             for (int y=0; y<3; y++)
             {
                 for (int x=0; x<3; x++)

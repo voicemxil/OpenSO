@@ -101,6 +101,13 @@ docker/config.json
 docker/.env
 # docker/docker-compose.override.yml: box-specific compose tweaks (port remaps, resource limits, extra mounts)
 docker/docker-compose.override.yml
+# docker/tso/: the box's copy of the original game files (copyrighted, 1.6G) mounted into the server
+docker/tso/
+# docker/deploy-trigger/: runtime flag directory watched by the openso-deploy systemd path unit
+docker/deploy-trigger/
+# Box-local extras that live next to the compose stack but are not part of OpenSO
+docker/oracle/
+docker/*.bak.*
 
 TSOClient/Mario
 
