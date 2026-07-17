@@ -454,6 +454,16 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float thinEps = TuneThinLineEps * max(thinDC, DepthRejectParams.w); // relative step, floored denominator
     float thinLine = max(step(thinEps, plusD.x - thinDC) * step(thinEps, plusD.y - thinDC),
                          step(thinEps, plusD.z - thinDC) * step(thinEps, plusD.w - thinDC));
+    // LUMA THIN-FEATURE TEST (FSR2.2 lock-creation, hand-ported): a 1-px luma feature — the center
+    // separated from BOTH opposite neighbours which are themselves mutually coherent — is same-frame
+    // spatial proof of thin detail with NO depth ridge required (dark trim, texture lines, pattern
+    // strokes). The background-coherence factor is the edge discriminator: a step edge has dissimilar
+    // sides and never qualifies. Complements the depth ridge above; both grant the instant lock share.
+    float lumaThinH = step(0.08, abs(cboxC.x - cboxW.x)) * step(0.08, abs(cboxC.x - cboxE.x))
+                    * step(abs(cboxW.x - cboxE.x), 0.06);
+    float lumaThinV = step(0.08, abs(cboxC.x - cboxN.x)) * step(0.08, abs(cboxC.x - cboxS.x))
+                    * step(abs(cboxN.x - cboxS.x), 0.06);
+    float spatialThin = max(thinLine, max(lumaThinH, lumaThinV));
     // Thin-coverage fallback: with the output-sized kernel, some frames leave an output pixel with almost
     // no in-support sample (wsum ~ 0). Divide-guard + smooth fallback to the NEAREST RAW TEXEL (crawC,
     // point sample) — single-surface by construction. A bilinear fallback would mix the mover's color a
@@ -992,7 +1002,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float lockGates = stillGate
                     * (1.0 - depthReject) * (1.0 - ghostReject) * (1.0 - reactive) * (1.0 - foreign)
                     * (1.0 - featReject) * (1.0 - noVel);
-    float oscLock = smoothstep(lockLo, 0.7, osc) * lockGates;
+    // INSTANT SPATIAL LOCK SHARE (FSR2.2 semantics: spatial detection CREATES the lock in one frame;
+    // temporal evidence maintains and deepens it): proven thin features skip the witnessed-flip entry
+    // window — seconds of pre-lock fizzle at 0.33x — at half strength; every kill-gate and the
+    // stillness gate apply unchanged, and full strength still requires the alternation evidence.
+    float oscLock = max(smoothstep(lockLo, 0.7, osc), 0.5 * spatialThin) * lockGates;
     // Locks do NOT widen the box (no reference does — FSR2's locks lerp toward unclamped history instead;
     // see the lock escape after the clamp below, bounded by its endpoints and unable to compound).
     float gammaEff = GAMMA;
