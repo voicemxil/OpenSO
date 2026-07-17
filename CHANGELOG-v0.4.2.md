@@ -4,17 +4,16 @@
 - **Eyedropper** — pick up any object, wall pattern, or floor (including diagonal
   floor triangles) straight from the lot. Picking an object jumps the catalog to its
   exact category and page with the item selected, ready to place another.
-  (based on SegerEnd's upstream FreeSO work, with depth/diagonal fixes)
 - **Sledgehammer** — quickly delete objects, walls, and floors, with drag support.
+- Both tools are based on SegerEnd's upstream FreeSO PR, with our fixes on top:
+  exact-depth picking of whatever is under the cursor, and full support for both
+  diagonal wall orientations and diagonal floor triangles.
 
 ## Lot & Building Fixes
 - Wall tools now reliably target **diagonal walls** from every camera angle
   (including the snapped rotate-button views), pick the **correct face** of
   diagonals and straight walls, and register clicks on the **top half** of walls.
 - Painting diagonal walls applies to the face you're pointing at.
-- The eyedropper and sledgehammer land with our fixes on top of SegerEnd's upstream
-  PR: exact-depth picking of whatever is under the cursor, and full support for both
-  diagonal wall orientations and diagonal floor triangles.
 - Flood-filling floors now fills the triangles on **both sides** of a diagonal wall
   when the fill reaches both (e.g. around a free-standing wall line) — one triangle
   no longer stays bare.
