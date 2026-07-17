@@ -31,8 +31,6 @@
 - Fixed the city backdrop around the lot **vanishing into the void** at steep,
   straight-down camera angles after lowering the Surrounding Lots setting while in
   a lot.
-- Fixed the surroundings rendering as a **white void** after free-roaming into a
-  neighbouring lot.
 - The surroundings cut-out now resizes correctly when changing the Surrounding
   Lots setting mid-lot.
 
