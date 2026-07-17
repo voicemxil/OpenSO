@@ -504,6 +504,11 @@ namespace FSO.Client.UI.Controls
                      */
                     foreach (var key in inputResult.UnhandledKeys)
                     {
+                        // A focused text box owns the arrow keys (caret/selection movement) — consume
+                        // them so UILayer's focus navigation doesn't ALSO treat them as Tab and yank
+                        // focus to the next control mid-edit (same pattern as UIListBox).
+                        if (key == Keys.Left || key == Keys.Right || key == Keys.Up || key == Keys.Down)
+                            state.NewKeys.Remove(key);
                         switch (key)
                         {
                             case Keys.Left:
