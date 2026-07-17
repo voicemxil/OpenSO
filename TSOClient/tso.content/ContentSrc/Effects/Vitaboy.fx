@@ -20,10 +20,11 @@ bool depthOutMode;
 
 Texture MeshTex;
 sampler TexSampler = sampler_state {
-	texture = <MeshTex> ; 
-	MinFilter = Linear;
-	MagFilter = Linear;
+	texture = <MeshTex> ;
+	MinFilter = Anisotropic;
+	MagFilter = Anisotropic;
 	MipFilter = Linear;
+	MaxAnisotropy = 16;
 	AddressU = Wrap;
 	AddressV = Wrap;
 };
