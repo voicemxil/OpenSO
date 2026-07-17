@@ -25,7 +25,12 @@
   start of the next line; clicking empty space below the text goes to the end.
 - Cleaned up the default bio template (stray spaces around "Quote:"/"Fav. music:").
 - Naming your sim the same as your username no longer falsely reports "a sim with
-  that name already exists", and name validation errors show the real reason.
+  that name already exists", and the sim name rules are now spelled out under the
+  Bio tab instead of the accept button silently refusing.
+- Fixed glasses on the prefab heads rendering as **shiny white blobs** in the sim
+  preview.
+- Preview polish: slightly brighter lighting, closer head framing, and a deeper
+  zoom-in limit.
 
 ## Graphics
 - Fixed the city backdrop around the lot **vanishing into the void** at steep,
@@ -33,6 +38,11 @@
   a lot.
 - The surroundings cut-out now resizes correctly when changing the Surrounding
   Lots setting mid-lot.
+- Sims are rendered with **16x anisotropic texture filtering** — sharper skin and
+  clothing detail at glancing camera angles.
+- Quitting from the login screen or CAS is no longer mistaken for a crash — your
+  graphics settings survive, and the "closed before you entered the game" reset
+  warning only appears after an actual crash.
 
 ## Server
 - **Lot permissions are now enforced in free roam**: walking across a lot boundary or
