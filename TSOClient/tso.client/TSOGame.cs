@@ -411,6 +411,17 @@ namespace FSO.Client
             GameThread.SetKilled();
 
             args.Cancel = !(FSOFacade.Controller?.CloseAttempt() ?? true);
+
+            // CompatState below target normally means "crashed before a lot rendered", which the
+            // next boot answers by flooring all graphics settings and warning the user. Reaching a
+            // clean exit (closing from login/CAS without ever entering a lot) proves the current
+            // configuration boots fine — mark it verified so quitting early isn't treated as a crash.
+            if (!args.Cancel && GlobalSettings.Default.CompatState >= 0 &&
+                GlobalSettings.Default.CompatState < GlobalSettings.TARGET_COMPAT_STATE)
+            {
+                GlobalSettings.Default.CompatState = GlobalSettings.TARGET_COMPAT_STATE;
+                GlobalSettings.Default.Save();
+            }
         }
 
         /// <summary>
