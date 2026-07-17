@@ -69,9 +69,20 @@ namespace FSO.Client.UI.Panels.LotControls
 
         private void PickObject(uint guid)
         {
+            Mouse.SetCursor(MouseCursor.Arrow);
+            Parent.CustomControl = null;
+
+            // Preferred: jump the open catalog panel to the item's category/page and select it there —
+            // the player both gets the object in hand AND sees where it lives in the catalog.
+            if (Parent.EyedropperNavigate?.Invoke(guid) == true)
+            {
+                HITVM.Get().PlaySoundEvent(UISounds.BuyPlace);
+                return;
+            }
+
+            // Fallback (item not in the open panel's catalog): plain ghost pickup as before.
             var ghost = vm.Context.CreateObjectInstance(guid, LotTilePos.OUT_OF_WORLD, Direction.NORTH, true);
             if (ghost?.BaseObject == null) return;
-            Parent.CustomControl = null;
             Parent.ObjectHolder.SetSelected(ghost);
             HITVM.Get().PlaySoundEvent(UISounds.BuyPlace);
         }

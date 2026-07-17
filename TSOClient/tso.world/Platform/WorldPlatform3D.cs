@@ -164,6 +164,9 @@ namespace FSO.LotView.Platform
         }
 
         public short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, WorldState state)
+            => GetObjectIDAtScreenPos(x, y, gd, state, out _);
+
+        public short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, WorldState state, out float distance)
         {
             //var sPos = new Vector3(((float)x / state.WorldSpace.WorldPxWidth) * 2 - 1, 1 - ((float)y / state.WorldSpace.WorldPxHeight) * 2, 0);
             var sPos = new Vector3(x, y, 0);
@@ -221,6 +224,9 @@ namespace FSO.LotView.Platform
                     }
                 }
             }
+            // Exact mesh/box hit distance along the pick ray (same construction as WorldState
+            // .CameraRayAtScreenPos level 1), so callers can depth-compare against wall raycasts.
+            distance = bestDistance;
             return bestObj;
         }
 

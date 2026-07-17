@@ -132,6 +132,9 @@ namespace FSO.LotView.Platform
         }
 
         public short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, WorldState state)
+            => GetObjectIDAtScreenPos(x, y, gd, state, out _);
+
+        public short GetObjectIDAtScreenPos(int x, int y, GraphicsDevice gd, WorldState state, out float distance)
         {
             var ray = state.CameraRayAtScreenPos(new Vector2(x, y));
 
@@ -205,7 +208,28 @@ namespace FSO.LotView.Platform
 
             gd.DepthStencilState = oldDS;
 
-            return specialResult != 0 ? specialResult : (short)Math.Round(f * 65535f);
+            var id = specialResult != 0 ? specialResult : (short)Math.Round(f * 65535f);
+
+            // The ID buffer is pixel-accurate but carries no depth. For depth arbitration against
+            // other raycasts (walls), project the picked component's actual world position onto the
+            // unshifted camera ray — exact for ordering against a wall plane at this click point.
+            distance = float.MaxValue;
+            if (id != 0)
+            {
+                Vector3? tilePos = null;
+                foreach (var obj in bp.Objects) { if (obj.ObjectID == id) { tilePos = obj.Position; break; } }
+                if (tilePos == null)
+                {
+                    foreach (var av in bp.Avatars) { if (av.ObjectID == id) { tilePos = av.Position; break; } }
+                }
+                if (tilePos != null)
+                {
+                    var baseRay = state.CameraRayAtScreenPos(new Vector2(x, y), 1);
+                    var world = new Vector3(tilePos.Value.X * 3, tilePos.Value.Z * 3, tilePos.Value.Y * 3);
+                    distance = Vector3.Dot(world - baseRay.Position, baseRay.Direction);
+                }
+            }
+            return id;
         }
 
         public Texture2D GetObjectThumb(ObjectComponent[] objects, Vector3[] positions, GraphicsDevice gd, WorldState state)

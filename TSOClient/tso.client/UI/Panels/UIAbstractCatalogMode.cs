@@ -113,6 +113,32 @@ namespace FSO.Client.UI.Panels
             SledgehammerButton.Tooltip = "Sledgehammer";
             SledgehammerButton.OnButtonClick += (UIElement btn) => ActivateTool(SledgehammerButton, typeof(UISledgehammer));
             this.Add(SledgehammerButton);
+
+            LotController.EyedropperNavigate = NavigateToItem;
+        }
+
+        /// <summary>Jumps the catalog to the category and page containing <paramref name="guid"/> and
+        /// selects it, exactly as if the player clicked the item — so an eyedropper pick shows where
+        /// the object lives in the catalog (and arms shift-to-place-another). Returns false when the
+        /// item isn't in this panel's catalog (e.g. a buy-mode object while the build panel is open);
+        /// the eyedropper then falls back to a plain ghost pickup.</summary>
+        public bool NavigateToItem(uint guid)
+        {
+            foreach (var pair in CategoryMap)
+            {
+                var index = UICatalog.Catalog[pair.Value].FindIndex(e => e.Special == null && e.Item.GUID == guid);
+                if (index == -1) continue;
+
+                ChangeCategory(pair.Key);
+                Catalog.SetSearchTerm(""); // a stale search filter could hide the item
+                var fIndex = Catalog.Filtered?.FindIndex(e => e.Special == null && e.Item.GUID == guid) ?? -1;
+                if (fIndex == -1) return false;
+                SetPage(fIndex / Catalog.PageSize);
+                Catalog_OnSelectionChange(fIndex);
+                EyedropperButton.Selected = false;
+                return true;
+            }
+            return false;
         }
 
         private void ActivateTool(UIButton sourceButton, Type toolType)
@@ -181,6 +207,9 @@ namespace FSO.Client.UI.Panels
             Holder.OnPickup -= HolderPickup;
             Holder.OnDelete -= HolderDelete;
             Holder.OnPutDown -= HolderPutDown;
+
+            if (LotController.EyedropperNavigate == (Func<uint, bool>)NavigateToItem)
+                LotController.EyedropperNavigate = null;
 
             if (LotController.CustomControl != null)
             {

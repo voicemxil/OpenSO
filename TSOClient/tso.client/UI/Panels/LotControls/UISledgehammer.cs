@@ -117,6 +117,9 @@ namespace FSO.Client.UI.Panels.LotControls
         {
             Type = VMArchitectureCommandType.FLOOR_RECT,
             level = hit.Level, pattern = 0,
+            // style carries the tile-quadrant direction: on a diagonal tile FloorPatternRect uses it
+            // to erase the specific floor TRIANGLE that was clicked (ignored for full tiles).
+            style = (ushort)hit.PaintDir.Primary,
             x = hit.Tile.X, y = hit.Tile.Y, x2 = 0, y2 = 0
         };
 
@@ -127,7 +130,8 @@ namespace FSO.Client.UI.Panels.LotControls
         }
 
         private static bool SameDragTarget(ArchitectureHit a, ArchitectureHit b) =>
-            a.Type == b.Type && a.Level == b.Level && a.Tile == b.Tile && a.WallSegment == b.WallSegment;
+            a.Type == b.Type && a.Level == b.Level && a.Tile == b.Tile && a.WallSegment == b.WallSegment
+            && a.PaintDir == b.PaintDir; // a diagonal tile's two floor triangles are distinct targets
 
         private bool CanDelete(ArchitectureHit s) => s.Type switch
         {

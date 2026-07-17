@@ -204,4 +204,159 @@ namespace FSO.LotView.Utils
     {
 
     }
+
+    /// <summary>
+    /// Exact wall picking: tests the ray against every wall segment on a floor as a bounded quad and
+    /// returns the nearest hit. Replaces the tile-DDA + infinite-plane approach for wall picks, which
+    /// missed diagonals whenever the view direction was near-parallel to the diagonal's plane (the
+    /// game's snap camera angles sit EXACTLY there) and was fragile at grazing tile steps.
+    ///
+    /// Two subtleties this handles that a naive quad test does not:
+    /// - A physical wall is stored twice (a tile's TopLeft is its -X neighbour's BottomRight on the
+    ///   same plane), and the two representations name the wall's two FACES. The hit must report the
+    ///   face the camera can see, chosen from the ray direction — otherwise pattern reads/paints land
+    ///   on the far side.
+    /// - Rendered walls have thickness; the math plane does not. Viewed edge-on (the 45-degree snap
+    ///   rotations are edge-on to every vertical diagonal) the plane is invisible to the ray even
+    ///   though the player sees and clicks a thick band. Near-parallel rays therefore fall back to a
+    ///   slab test: if the ray runs within the wall's half-thickness, it hits where it first enters
+    ///   the wall's bounds.
+    ///
+    /// A full-grid scan is a few tens of thousands of cheap tests — nothing at click/hover rates.
+    /// </summary>
+    internal static class WallQuadPicker
+    {
+        // Wall height in world units: 2.95 floors * 3 units/floor (matches WallTileRaycastTarget).
+        private const float WallHeight = 8.85f;
+        // Half-thickness of the edge-on slab, world units (1 tile = 3). Forgiving on purpose: at
+        // edge-on angles the rendered band is only a few pixels wide.
+        private const float HalfThick = 0.5f;
+        // Below this |cos| between the view direction and the wall normal (ground-projected), the
+        // plane test is numerically/visually edge-on and the slab fallback takes over.
+        private const float EdgeOnCos = 0.05f;
+
+        public static (float Dist, WallRayHit Hit)? Raycast(Ray ray, sbyte level, Blueprint bp, float maxDist)
+        {
+            if (bp?.Altitude == null || level < 1 || level > bp.Stories) return null;
+            var walls = bp.Walls[level - 1];
+            int width = bp.Width, height = bp.Height;
+
+            (float, WallRayHit)? best = null;
+            float bestDist = maxDist;
+            for (short y = 0; y < height; y++)
+            {
+                int rowBase = y * width;
+                for (short x = 0; x < width; x++)
+                {
+                    var segs = walls[rowBase + x].Segments;
+                    if (segs == 0) continue;
+                    float bottom = bp.GetAltitude(x, y) * 3;
+                    float x0 = x * 3, x1 = x0 + 3, z0 = y * 3, z1 = z0 + 3;
+
+                    if ((segs & WallSegments.VerticalDiag) != 0)
+                        TestQuad(ray, new Vector2(x0, z0), new Vector2(x1, z1), bottom,
+                            new Point(x, y), WallSegments.VerticalDiag, new Point(x, y), WallSegments.VerticalDiag, ref best, ref bestDist);
+                    else if ((segs & WallSegments.HorizontalDiag) != 0)
+                        TestQuad(ray, new Vector2(x0, z1), new Vector2(x1, z0), bottom,
+                            new Point(x, y), WallSegments.HorizontalDiag, new Point(x, y), WallSegments.HorizontalDiag, ref best, ref bestDist);
+                    else
+                    {
+                        // Test each physical wall ONCE via its Top representation; report the face the
+                        // camera sees. (faceA = the face whose ground normal is n = (-edge.Z, edge.X),
+                        // visible when dot(dir, n) < 0; faceB = the opposite face.)
+                        if ((segs & WallSegments.TopLeft) != 0)
+                            TestQuad(ray, new Vector2(x0, z0), new Vector2(x0, z1), bottom,
+                                new Point(x - 1, y), WallSegments.BottomRight,   // faceA: -X-facing, into tile x-1
+                                new Point(x, y), WallSegments.TopLeft,           // faceB: +X-facing, into tile x
+                                ref best, ref bestDist);
+                        if ((segs & WallSegments.TopRight) != 0)
+                            TestQuad(ray, new Vector2(x0, z0), new Vector2(x1, z0), bottom,
+                                new Point(x, y), WallSegments.TopRight,          // faceA: +Z-facing, into tile y
+                                new Point(x, y - 1), WallSegments.BottomLeft,    // faceB: -Z-facing, into tile y-1
+                                ref best, ref bestDist);
+                        // Bottom segments normally mirror a neighbour's Top and would double-test the
+                        // same plane; only test them when the mirroring Top is absent (lot borders).
+                        if ((segs & WallSegments.BottomRight) != 0 && (x + 1 >= width || (walls[rowBase + x + 1].Segments & WallSegments.TopLeft) == 0))
+                            TestQuad(ray, new Vector2(x1, z0), new Vector2(x1, z1), bottom,
+                                new Point(x, y), WallSegments.BottomRight, new Point(x, y), WallSegments.BottomRight, ref best, ref bestDist);
+                        if ((segs & WallSegments.BottomLeft) != 0 && (y + 1 >= height || (walls[rowBase + width + x].Segments & WallSegments.TopRight) == 0))
+                            TestQuad(ray, new Vector2(x0, z1), new Vector2(x1, z1), bottom,
+                                new Point(x, y), WallSegments.BottomLeft, new Point(x, y), WallSegments.BottomLeft, ref best, ref bestDist);
+                    }
+                }
+            }
+            return best;
+        }
+
+        private static void TestQuad(Ray ray, Vector2 g0, Vector2 g1, float bottom,
+            Point tileA, WallSegments segA, Point tileB, WallSegments segB,
+            ref (float, WallRayHit)? best, ref float bestDist)
+        {
+            var edge = g1 - g0;                       // ground direction of the wall
+            var n = new Vector2(-edge.Y, edge.X);     // ground normal (faceA's side)
+            var posG = new Vector2(ray.Position.X, ray.Position.Z);
+            var dirG = new Vector2(ray.Direction.X, ray.Direction.Z);
+            float denom = Vector2.Dot(dirG, n);
+            float edgeLen = edge.Length();
+
+            float t;
+            if (Math.Abs(denom) >= EdgeOnCos * n.Length() * Math.Max(dirG.Length(), 1e-3f))
+            {
+                // Normal case: plane intersection.
+                t = Vector2.Dot(g0 - posG, n) / denom;
+                if (t < 0 || t >= bestDist) return;
+
+                var hitG = posG + dirG * t;
+                float u = Vector2.Dot(hitG - g0, edge) / (edgeLen * edgeLen);
+                if (u < 0 || u > 1) return;
+            }
+            else
+            {
+                // Edge-on: the ray runs (near-)parallel to the wall plane. The rendered wall is a
+                // thick band, so treat it as a slab: while inside the wall's along-edge span, the ray
+                // must pass within half-thickness of the plane (checked AT the wall, not at the
+                // camera); it hits where it first enters that span.
+                var e = edge / edgeLen;
+                float s0 = Vector2.Dot(posG - g0, e);
+                float sd = Vector2.Dot(dirG, e);
+                if (Math.Abs(sd) < 1e-6f) return;     // no ground motion along the wall (straight-down ray)
+
+                float tA = (0 - s0) / sd, tB = (edgeLen - s0) / sd;
+                float tEnter = Math.Max(Math.Min(tA, tB), 0);
+                float tExit = Math.Max(tA, tB);
+
+                // Constrain to where the ray is also inside the height window, so the reported hit
+                // is a point actually ON the wall (not the span entry at some other altitude).
+                if (Math.Abs(ray.Direction.Y) > 1e-6f)
+                {
+                    float th1 = (bottom + 1e-3f - ray.Position.Y) / ray.Direction.Y;
+                    float th2 = (bottom + WallHeight - 1e-3f - ray.Position.Y) / ray.Direction.Y;
+                    tEnter = Math.Max(tEnter, Math.Min(th1, th2));
+                    tExit = Math.Min(tExit, Math.Max(th1, th2));
+                }
+                else if (ray.Position.Y < bottom || ray.Position.Y >= bottom + WallHeight) return;
+
+                if (tEnter >= tExit || tEnter >= bestDist) return;   // span behind the ray or too far
+
+                var nn = n / n.Length();
+                float pEnter = Vector2.Dot(posG + dirG * tEnter - g0, nn);
+                float pExit = Vector2.Dot(posG + dirG * tExit - g0, nn);
+                bool within = Math.Abs(pEnter) <= HalfThick || Math.Abs(pExit) <= HalfThick
+                    || (pEnter > 0) != (pExit > 0);   // crosses the plane inside the span
+                if (!within) return;
+                t = tEnter;
+            }
+
+            var hitY = ray.Position.Y + ray.Direction.Y * t;
+            if (hitY < bottom || hitY >= bottom + WallHeight) return;
+
+            // Report the FACE the camera sees: faceA's normal is n, visible when the ray runs against
+            // it. Edge-on ties (denom ~ 0) resolve arbitrarily to faceA — both faces are slivers then.
+            var (tile, seg) = denom < 0 ? (tileA, segA) : (tileB, segB);
+            if (tile.X < 0 || tile.Y < 0) (tile, seg) = denom < 0 ? (tileB, segB) : (tileA, segA);
+
+            bestDist = t;
+            best = (t, new WallRayHit { Segment = seg, Tile = tile });
+        }
+    }
 }

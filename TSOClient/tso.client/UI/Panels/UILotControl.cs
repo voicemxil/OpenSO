@@ -94,6 +94,11 @@ namespace FSO.Client.UI.Panels
         public UIDonatorDialog DonatorDialog;
 
         public UICustomLotControl CustomControl;
+        /// <summary>Set by the open catalog panel (buy/build mode). The eyedropper calls it with a
+        /// picked object's GUID so the catalog jumps to that item's category/page and selects it;
+        /// returns false when the item isn't in the open panel's catalog (the eyedropper then falls
+        /// back to a plain ghost pickup).</summary>
+        public Func<uint, bool> EyedropperNavigate;
         public UIEODController EODs;
 
         public int WallsMode = 1;
