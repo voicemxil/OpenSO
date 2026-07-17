@@ -33,7 +33,6 @@
   a lot.
 - Fixed the surroundings rendering as a **white void** after free-roaming into a
   neighbouring lot.
-- City backdrop fog now matches the lot's weather intensity in rain.
 - The surroundings cut-out now resizes correctly when changing the Surrounding
   Lots setting mid-lot.
 
