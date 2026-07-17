@@ -11,11 +11,10 @@
 - Wall tools now reliably target **diagonal walls** from every camera angle
   (including the snapped rotate-button views), pick the **correct face** of
   diagonals and straight walls, and register clicks on the **top half** of walls.
-- Eyedropper/sledgehammer pick exactly what's under your cursor — no more grabbing
-  objects behind walls or walls behind objects.
-- Sledgehammer works on **both diagonal wall orientations** and on **diagonal floor
-  triangles** (each triangle deletes independently).
 - Painting diagonal walls applies to the face you're pointing at.
+- The eyedropper and sledgehammer land with our fixes on top of SegerEnd's upstream
+  PR: exact-depth picking of whatever is under the cursor, and full support for both
+  diagonal wall orientations and diagonal floor triangles.
 - Flood-filling floors now fills the triangles on **both sides** of a diagonal wall
   when the fill reaches both (e.g. around a free-standing wall line) — one triangle
   no longer stays bare.
