@@ -51,12 +51,17 @@ namespace FSO.Client.Controllers
                             var casr = (CreateASimResponse)data;
                             if (casr.Reason == CreateASimFailureReason.NAME_TAKEN)
                             {
-                                ShowError(ErrorMessage.FromUIText("222", "4", "5"));
+                                ShowError(ErrorMessage.FromUIText("222", "4", "5")); //name already in use
+                            }
+                            else if (casr.Reason == CreateASimFailureReason.NAME_VALIDATION_ERROR)
+                            {
+                                //don't claim the name is in use when it was actually INVALID (e.g.
+                                //digits — usernames allow them, sim names don't).
+                                ShowError(ErrorMessage.FromUIText("222", "4", "14")); //name is invalid
                             }
                             else
                             {
-                                //name validation error... just say its in use for now (unless client validation incorrect, should not appear.
-                                ShowError(ErrorMessage.FromUIText("222", "4", "5"));
+                                ShowError(ErrorMessage.FromUIText("222", "4", "7")); //could not create character
                             }
                         }
                         View.ShowCreationProgressBar(false);
