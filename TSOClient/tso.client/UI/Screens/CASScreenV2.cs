@@ -33,6 +33,7 @@ namespace FSO.Client.UI.Screens
         private const float GridFitW = GridCols * (HeadCellW + GridMargin) + GridMargin;
         private const int ArrowSize = 36;                  // page prev/next chevron buttons
         private static readonly Color Accent = new Color(46, 196, 150); // teal (dark-studio accent)
+        private static readonly Vector4 CASAmbient = new Vector4(1.15f, 1.15f, 1.15f, 1f);
 
         private int _Tab;
         private readonly List<UIImage> _TabBg = new List<UIImage>();
@@ -41,7 +42,7 @@ namespace FSO.Client.UI.Screens
         private TextStyle _LightText, _DarkText;
         private UIButton _PgLeft, _PgRight;
         private UIImage _NameBox, _BioBox;
-        private UILabel _NameLabel, _BioLabel;
+        private UILabel _NameLabel, _BioLabel, _NameReqLabel;
 
         public CASScreenV2() : base()
         {
@@ -75,8 +76,10 @@ namespace FSO.Client.UI.Screens
                 new Color(104, 118, 140, 120), 2));
             this.AddAt(3, _Panel);
 
-            // keep AmbientLight neutral so it doesn't rescale/clip UISim's studio directional result
-            if (SimBox.Avatar != null) SimBox.Avatar.AmbientLight = Vector4.One;
+            // slight lift over neutral: the flat techniques have no key light, so a plain 1.0
+            // ambient reads dim against the dark studio backdrop. LayoutGeometry re-applies this —
+            // keep both sites on CASAmbient or the first layout pass silently resets it.
+            if (SimBox.Avatar != null) SimBox.Avatar.AmbientLight = CASAmbient;
 
             _TabActive = RoundedRect(gd, 150, 40, 11, Accent);
             _TabInactive = RoundedRect(gd, 150, 40, 11, new Color(38, 44, 56, 210));
@@ -143,6 +146,16 @@ namespace FSO.Client.UI.Screens
                 this.AddAt(4, _NameBox); // above the panel, below the legacy text controls
                 _NameLabel = new UILabel { Caption = "Name:", CaptionStyle = _LightText };
                 this.Add(_NameLabel);
+                // the accept button silently disables on an invalid name, so spell the rules out
+                _NameReqLabel = new UILabel
+                {
+                    Caption = "Name requirements:\n* Letters and spaces only\n* Starts with a letter\n* 3-24 characters",
+                    CaptionStyle = TextStyle.Create(new Color(140, 152, 170), 10),
+                    Wrapped = true,
+                    Alignment = TextAlignment.Left | TextAlignment.Top,
+                    Size = new Vector2(360, 64)
+                };
+                this.Add(_NameReqLabel);
             }
             if (DescriptionTextEdit != null)
             {
@@ -188,7 +201,7 @@ namespace FSO.Client.UI.Screens
             if (!SimBox.Perspective)
             {
                 SimBox.SetPerspective(true, regionW, gh);
-                if (SimBox.Avatar != null) SimBox.Avatar.AmbientLight = Vector4.One;
+                if (SimBox.Avatar != null) SimBox.Avatar.AmbientLight = CASAmbient;
             }
             else SimBox.SetPerspectiveSize(regionW, gh);
 
@@ -222,19 +235,21 @@ namespace FSO.Client.UI.Screens
 
             // Bio tab: labelled fields over darkened boxes, on the same content edge
             float nameY = _PY + 116;
-            Place(_NameLabel,   contentX + 4, nameY - 26);
+            Place(_NameLabel,   contentX + 4, nameY - 32);
             Place(_NameBox,     contentX,     nameY - 7);
             Place(NameTextEdit, contentX + 10, nameY);
 
             float descY = _PY + 196;
             float descW = (DescriptionTextEdit != null) ? DescriptionTextEdit.Size.X : 0;
             float sliderX = contentX + 10 + descW + 14;
-            Place(_BioLabel,           contentX + 4, descY - 26);
+            Place(_BioLabel,           contentX + 4, descY - 32);
             Place(_BioBox,             contentX,     descY - 7);
             Place(DescriptionTextEdit, contentX + 10, descY);
             Place(DescriptionSlider,   sliderX,     descY);
             Place(DescriptionScrollUpButton,   sliderX - 2, descY - 6);
             Place(DescriptionScrollDownButton, sliderX - 2, descY + 260);
+            // in the open space between the bio box (ends ~descY+291) and the buttons (_PY+600)
+            Place(_NameReqLabel, contentX + 4, descY + 310);
 
             Place(AcceptButton,        _PX + 330, _PY + 600);
             Place(CancelButton,        _PX + 170, _PY + 600);
@@ -288,6 +303,8 @@ namespace FSO.Client.UI.Screens
                                                       DescriptionScrollUpButton, DescriptionScrollDownButton,
                                                       _NameLabel, _NameBox, _BioLabel, _BioBox })
                 if (b != null) b.Visible = bio;
+            // requirements only matter while the name is editable
+            if (_NameReqLabel != null) _NameReqLabel.Visible = bio && !EditMode;
 
             if (head) SimBox.FocusHead();
             else if (body) SimBox.FocusBody();
