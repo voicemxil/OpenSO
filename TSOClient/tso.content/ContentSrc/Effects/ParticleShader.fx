@@ -292,15 +292,20 @@ PSOutputV RainVelocityPS(ParticleOutput input)
 	float indoorsLevel = round(dpth(tex2D(IndoorsSampler, input.ModelPos.xz / BpSize))*Stories);
 	if (level >= ClipLevel || indoorsLevel > max(0.0, level)) discard;
 	float shape = (1 - cos(input.TexCoord.y*3.1415 * 2)) * (1 - cos(input.TexCoord.x*3.1415 * 2)) / 4;
-	if (shape * input.Color.a < 0.2) discard; // velocity only where the streak visibly covers
+	// Low threshold ON PURPOSE: any visibly-covering part of a drop must declare itself, or the TAA
+	// treats it as one-frame flicker and averages it into the converged history — small/distant
+	// drops vanished and the rain read sparser than without TAA. Writing velocity/depth on these
+	// faint pixels is harmless: the resolve treats the reactive band as structurally unwritten
+	// (no dilation/range/thin-line participation), so only the reactive mask has effect.
+	if (shape * input.Color.a < 0.05) discard;
 	float cw = max(input.CurrClip.w, 1e-4);
 	float pw = max(input.PrevClip.w, 1e-4);
 	float2 v = clamp((input.CurrClip.xy / cw - input.PrevClip.xy / pw) * float2(0.5, -0.5), -0.5, 0.5);
 	o.color = float4(0, 0, 0, 0);
-	// Mask 0.6 = valid + REACTIVE 0.8 in the a = 1 - 0.5*r band (FSR's particle reactive mask): the
-	// resolve caps trust harder and drops the Karis dark-bias on drop pixels, so streaks render at
-	// full presence instead of a two-frame half-intensity average.
-	o.velocity = float4(v, saturate(input.CurrClip.w / 800.0), 0.6);
+	// Mask 0.5 = valid + FULL reactivity in the a = 1 - 0.5*r band (FSR's particle reactive mask):
+	// the resolve caps trust to near-raw and drops the Karis dark-bias on drop pixels, so streaks
+	// render at full presence instead of a two-frame half-intensity average.
+	o.velocity = float4(v, saturate(input.CurrClip.w / 800.0), 0.5);
 	return o;
 }
 
