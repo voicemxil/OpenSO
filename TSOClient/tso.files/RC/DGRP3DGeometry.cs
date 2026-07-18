@@ -108,19 +108,67 @@ namespace FSO.Files.RC
 
         /// <summary>
         /// Ray-triangle intersection against the retained collision mesh, in the same local space the
-        /// mesh vertices are authored in. Returns the closest hit distance along the ray, or null if the
-        /// ray misses every triangle (or no collision data is available).
+        /// mesh vertices are authored in. A ray passing within <paramref name="tolerance"/> (local units)
+        /// of a triangle also counts as a hit, giving small mesh islands (roaches, individual firefly
+        /// lights) a click buffer around their silhouette. Returns the closest hit distance along the
+        /// ray, or null if the ray misses every triangle (or no collision data is available).
         /// </summary>
-        public float? IntersectsRay(Ray ray)
+        public float? IntersectsRay(Ray ray, float tolerance)
         {
             if (ColVerts == null || ColIndices == null) return null;
             float? best = null;
             for (int i = 0; i < ColIndices.Length - 2; i += 3)
             {
-                var t = RayIntersectsTriangle(ray, ColVerts[ColIndices[i]], ColVerts[ColIndices[i + 1]], ColVerts[ColIndices[i + 2]]);
+                var v0 = ColVerts[ColIndices[i]];
+                var v1 = ColVerts[ColIndices[i + 1]];
+                var v2 = ColVerts[ColIndices[i + 2]];
+                var t = RayIntersectsTriangle(ray, v0, v1, v2);
+                if (t == null && tolerance > 0) t = RayNearTriangle(ray, v0, v1, v2, tolerance);
                 if (t != null && (best == null || t < best)) best = t;
             }
             return best;
+        }
+
+        // Near-miss test: closest approach between the ray and the triangle's boundary edges (when a ray
+        // doesn't pierce a triangle, its closest point on the triangle lies on the boundary). Returns the
+        // ray parameter at closest approach if within tolerance, else null.
+        private static float? RayNearTriangle(Ray ray, Vector3 v0, Vector3 v1, Vector3 v2, float tolerance)
+        {
+            float? best = null;
+            var bestDist = tolerance;
+            for (int e = 0; e < 3; e++)
+            {
+                Vector3 a = (e == 0) ? v0 : (e == 1) ? v1 : v2;
+                Vector3 b = (e == 0) ? v1 : (e == 1) ? v2 : v0;
+                var dist = RaySegmentDistance(ray, a, b, out var rayT);
+                if (rayT > 0 && dist <= bestDist)
+                {
+                    bestDist = dist;
+                    best = rayT;
+                }
+            }
+            return best;
+        }
+
+        // Closest distance between a ray (t >= 0, direction not necessarily normalized) and segment ab;
+        // rayT is the ray parameter at the closest approach.
+        private static float RaySegmentDistance(Ray ray, Vector3 a, Vector3 b, out float rayT)
+        {
+            var d1 = ray.Direction;
+            var d2 = b - a;
+            var w0 = ray.Position - a;
+            var a11 = Vector3.Dot(d1, d1);
+            var a22 = Vector3.Dot(d2, d2);
+            var a12 = Vector3.Dot(d1, d2);
+            var c1 = Vector3.Dot(w0, d1);
+            var c2 = Vector3.Dot(w0, d2);
+            var denom = a11 * a22 - a12 * a12;
+
+            float s = (denom > 1e-9f) ? (a11 * c2 - a12 * c1) / denom : 0f;
+            s = MathHelper.Clamp(s, 0f, 1f);
+            rayT = (a11 > 1e-9f) ? Math.Max(0f, (s * a12 - c1) / a11) : 0f;
+
+            return (w0 + d1 * rayT - d2 * s).Length();
         }
 
         // Moller-Trumbore ray-triangle intersection. Not backface culled, since reconstructed sprite

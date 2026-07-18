@@ -65,11 +65,11 @@ namespace FSO.Client.UI.Panels
         private bool InternalChange;
 
         // --- Anti-aliasing / resolution controls (merged in from the former separate dialog) ---
-        private UICombobox AACombo, MotionBlurCombo, BloomCombo, UpscalerCombo, TAADebugCombo;
-        private object[] _aaObjs, _mblurObjs, _bloomObjs, _upscalerObjs, _taaDbgObjs;
+        private UICombobox AACombo, MotionBlurCombo, BloomCombo, AOCombo, UpscalerCombo, TAADebugCombo;
+        private object[] _aaObjs, _mblurObjs, _bloomObjs, _aoObjs, _upscalerObjs, _taaDbgObjs;
         private UILabel TAADebugRowLabel; // row hides when Cosmic TAA isn't the AA mode
-        private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider;
-        private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel;
+        private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
+        private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
         // Min 1/3 = the DLSS/FSR2 "Ultra Performance" ratio (1080p output from 360p render at 0.33x).
         private const float RENDER_SCALE_MIN = 1f / 3f, RENDER_SCALE_MAX = 2f;
         private const int AAX = 460; // x origin of the right-hand AA column
@@ -514,10 +514,14 @@ namespace FSO.Client.UI.Panels
             var msaa = FSOEnvironment.MSAASupport;
 
             // Rows are added BOTTOM-to-TOP so each combo's drop-down renders over the rows beneath it.
-            // AO rows stay hidden (AO path disabled in World.cs); velocity debug lives in the
-            // Motion-blur dropdown.
+            // Velocity debug lives in the Motion-blur dropdown.
 
             // --- Effects ---
+            AddAOIntensityRow("AO intensity", 486);
+            AddAORadiusRow("AO radius", 454);
+            AOCombo = AddRow("Ambient occlusion (3D)", 422,
+                new[] { "Off", "On" }, new[] { 0, 1 }, out _aoObjs,
+                v => { GlobalSettings.Default.AO = v == 1; ApplyAndRefresh(true); });
             AddMotionBlurRow("Motion blur strength", 390);
             MotionBlurCombo = AddRow("Motion blur (3D)", 358,
                 new[] { "Off", "On", "Debug (velocity)", "Debug (depth)" }, new[] { 0, 2, MBLUR_DEBUG, MBLUR_DEBUG_DEPTH }, out _mblurObjs,  // 2 = per-pixel 3D
@@ -764,6 +768,56 @@ namespace FSO.Client.UI.Panels
             if (BloomIntensitySlider != null) { BloomIntensitySlider.Value = intensity; if (BloomIntensityLabel != null) BloomIntensityLabel.Caption = intensity.ToString("0.0#"); }
         }
 
+        private void AddAORadiusRow(string label, int y)
+        {
+            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
+            DynamicOverlay.Add(lbl);
+            AORadiusSlider = new UISlider()
+            {
+                Orientation = 0, Texture = GetTexture(0x42500000001),
+                MinValue = 0.1f, MaxValue = 2f, AllowDecimals = true,
+                Position = new Vector2(AAX + 175, y + 8)
+            };
+            AORadiusSlider.SetSize(150f, 0f);
+            DynamicOverlay.Add(AORadiusSlider);
+            AORadiusLabel = new UILabel() { Caption = "0.5", Position = new Vector2(AAX + 335, y + 2) };
+            DynamicOverlay.Add(AORadiusLabel);
+            AORadiusSlider.OnChange += (elem) =>
+            {
+                if (InternalChange) return;
+                GlobalSettings.Default.AORadius = (float)(System.Math.Round(AORadiusSlider.Value * 20.0) / 20.0);
+                ApplyAndRefresh(true);
+            };
+        }
+
+        private void AddAOIntensityRow(string label, int y)
+        {
+            var lbl = new UILabel() { Caption = label, Position = new Vector2(AAX + 25, y + 2) };
+            DynamicOverlay.Add(lbl);
+            AOIntensitySlider = new UISlider()
+            {
+                Orientation = 0, Texture = GetTexture(0x42500000001),
+                MinValue = 0f, MaxValue = 2f, AllowDecimals = true,
+                Position = new Vector2(AAX + 175, y + 8)
+            };
+            AOIntensitySlider.SetSize(150f, 0f);
+            DynamicOverlay.Add(AOIntensitySlider);
+            AOIntensityLabel = new UILabel() { Caption = "1.0", Position = new Vector2(AAX + 335, y + 2) };
+            DynamicOverlay.Add(AOIntensityLabel);
+            AOIntensitySlider.OnChange += (elem) =>
+            {
+                if (InternalChange) return;
+                GlobalSettings.Default.AOIntensity = (float)(System.Math.Round(AOIntensitySlider.Value * 20.0) / 20.0);
+                ApplyAndRefresh(true);
+            };
+        }
+
+        private void SetAOSliders(float radius, float intensity)
+        {
+            if (AORadiusSlider != null) { AORadiusSlider.Value = radius; if (AORadiusLabel != null) AORadiusLabel.Caption = radius.ToString("0.0#"); }
+            if (AOIntensitySlider != null) { AOIntensitySlider.Value = intensity; if (AOIntensityLabel != null) AOIntensityLabel.Caption = intensity.ToString("0.0#"); }
+        }
+
         private void SelectValue(UICombobox combo, object[] objs, int value)
         {
             if (combo == null || objs == null) return;
@@ -891,7 +945,8 @@ namespace FSO.Client.UI.Panels
             SetMotionBlurSlider(s.MotionBlurAmount);
             SelectValue(BloomCombo, _bloomObjs, s.Bloom ? 1 : 0);
             SetBloomSliders(s.BloomThreshold, s.BloomIntensity);
-            // AO combo + sliders hidden (AO path disabled); nothing to refresh.
+            SelectValue(AOCombo, _aoObjs, s.AO ? 1 : 0);
+            SetAOSliders(s.AORadius, s.AOIntensity);
             SetSharpenSlider(s.SharpenAmount);
             InternalChange = false;
         }

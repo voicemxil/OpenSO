@@ -76,7 +76,7 @@ PSOut SkyPS(VSOut input, float2 ditherPx : VPOS)
     o.color = c;
     // depth = 1 (FAR): the sky is at infinity / background. velocity.a = 1 marks it valid.
     o.velocity = float4(ComputeVelocity(input.currClip, input.prevClip), 1.0, 1.0);
-    // Sky has no meaningful normal; mark invalid (.a=0) so GTAO skips it (treats as no-geometry).
+    // Sky has no meaningful normal; mark invalid (.a=0) so SSAO skips it (treats as no-geometry).
     o.normal = float4(0, 1, 0, 0);
     return o;
 }

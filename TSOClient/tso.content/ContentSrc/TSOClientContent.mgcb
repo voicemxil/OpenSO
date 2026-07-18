@@ -122,11 +122,11 @@
 /processorParam:DebugMode=Auto
 /build:Effects/Bloom.fx
 
-#begin Effects/GTAO.fx
+#begin Effects/SSAO.fx
 /importer:EffectImporter
 /processor:EffectProcessor
 /processorParam:DebugMode=Auto
-/build:Effects/GTAO.fx
+/build:Effects/SSAO.fx
 
 #begin Effects/ParticleShader.fx
 /importer:EffectImporter

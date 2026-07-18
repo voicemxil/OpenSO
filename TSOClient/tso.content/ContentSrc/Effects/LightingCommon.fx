@@ -140,7 +140,10 @@ float4 lightInterpClamp(float4 inPosition, float lightBleed) {
 	return lightColorIAvg(lTex, clamp((inPosition.y % 1) * 3, 0, 1), avg);
 }
 
-float4 lightProcessDirectionLevel(float4 inPosition, float3 normal, float level) {
+// Core directional lighting, exposing the light's ambient fraction (1 = fully non-directional).
+// Velocity/G-buffer shaders pass it through to the SSAO composite so occlusion applies to the
+// ambient part of the light and not (fully) to sun/lamp-lit surfaces.
+float4 lightProcessDirectionAmbient(float4 inPosition, float3 normal, float level, out float pctAmbientOut) {
 	float2 orig = inPosition.x;
 	inPosition.xyz *= WorldToLightFactor;
 	inPosition.xz += LightOffset;
@@ -153,6 +156,7 @@ float4 lightProcessDirectionLevel(float4 inPosition, float3 normal, float level)
 
 	float dirIntensity = length(direction.xyz) + 0.0001;
 	float pctAmbient = 1 - (dirIntensity / (direction.w + 0.0001));
+	pctAmbientOut = saturate(pctAmbient);
 
 	//((pow((dot(normal, normalize(direction.xyz)) + 1) / 2, 2) - 0.25) / 0.75) * (1-pctAmbient) + pctAmbient;
 	//pow((dot(normal, -normalize(direction.xyz)) + 1) / 2, 2);
@@ -160,6 +164,11 @@ float4 lightProcessDirectionLevel(float4 inPosition, float3 normal, float level)
 	lightIntensity = lightIntensity *(1 - pctAmbient) + pctAmbient;
 	color.rgb = lerp(OutsideDark.rgb, color.rgb, lightIntensity*1.40f - 0.2f);
 	return color;
+}
+
+float4 lightProcessDirectionLevel(float4 inPosition, float3 normal, float level) {
+	float pctAmbient;
+	return lightProcessDirectionAmbient(inPosition, normal, level, pctAmbient);
 }
 
 float4 lightProcessDirection(float4 inPosition, float3 normal) {

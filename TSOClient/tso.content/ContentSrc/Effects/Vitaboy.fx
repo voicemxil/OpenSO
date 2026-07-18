@@ -533,11 +533,13 @@ PSOutputV psVitaboyDirV(VitaVertexOutV v)
 #if SIMPLE
     if (SoftwareDepth == true && depthOutMode == false && unpackDepth(tex2D(depthMapSampler, v.screenPos.xy)) < depth) discard;
 #endif
-    float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirection(v.modelPos, normalize(v.normal)) * AmbientLight);
+    float pctAmbient;
+    float4 color = gammaMul(tex2D(TexSampler, v.texCoord), lightProcessDirectionAmbient(v.modelPos, normalize(v.normal), Level, pctAmbient) * AmbientLight);
     if (color.a < 0.01) discard; // see psVitaboyV
     o.color = color;
     o.velocity = float4(ComputeVitaboyVelocity(v.currClip, v.prevClip), saturate(v.currClip.w / 800.0), 1);
-    o.normal = float4(normalize(v.normal), 1);
+    // normal.a: 0 = no geometry; else 0.5 + 0.5 * ambient light fraction (SSAO composite decodes it)
+    o.normal = float4(normalize(v.normal), 0.5 + 0.5 * pctAmbient);
     return o;
 }
 technique DrawWithVelocityDirection

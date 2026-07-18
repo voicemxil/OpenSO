@@ -11,8 +11,8 @@ namespace FSO.Common.Utils
         private static RenderTarget2D ResolveTarget;  //screen-res intermediate for multi-pass resolves
         private static RenderTarget2D ResolveTarget2; //2nd ping-pong target (scale -> FXAA -> sharpen needs two)
         private static RenderTarget2D RenderPostTarget; //RENDER-res intermediate: spatial AA before the upscaler (SSAA<1 only)
-        private static RenderTarget2D VelocityTarget; //3D-mode per-pixel screen-space velocity (HalfVector4), MRT1 for TAA / motion blur
-        private static RenderTarget2D NormalTarget; //world-space normal MRT2 (HalfVector4: .xyz normal, .a validity), for GTAO
+        private static RenderTarget2D VelocityTarget; //3D-mode per-pixel screen-space velocity, MRT1 for TAA / motion blur / AO depth
+        private static RenderTarget2D NormalTarget; //world-space normal MRT2 (HalfVector4: .xyz normal, .a = 0 invalid else 0.5+0.5*ambient light fraction), for SSAO
         // motion blur tile intermediates (McGuire 2012), at velocity-res / MB_TILE_SIZE
         private static RenderTarget2D MBTileMax, MBNeighborMax;
         public const int MB_TILE_SIZE = 20;
@@ -53,7 +53,11 @@ namespace FSO.Common.Utils
         public static RenderTarget2D GetBloomMip(int i) => (BloomMip != null && i < BloomMip.Length) ? BloomMip[i] : null;
         public static int BloomMipCount => (BloomMip != null) ? BloomMip.Length : 0;
 
-        // GTAO: noisy AO buffer, blur destination, temporal history ping-pong. Color format (R8 isn't universal).
+        // SSAO: noisy AO buffer, blur ping-pong, temporal history ping-pong. Color format (R8 isn't
+        // universal): .r = AO, .gb = SAO packed depth key for the bilateral blur.
+        // while true, EnableVelocityTarget allocates the velocity/depth MRT as fp32 (Vector4) so SSAO
+        // reads a full-precision linear depth buffer. Set by World.ChangeAAMode BEFORE EnableVelocityTarget.
+        public static bool AOPreciseDepth;
         private static RenderTarget2D AOTarget, AOTarget2;
         private static RenderTarget2D AOHistoryA, AOHistoryB;
         private static bool _AOHistoryAIsPrev;
@@ -100,7 +104,7 @@ namespace FSO.Common.Utils
             if (SSAA < 0.999f)
                 RenderPostTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, w, h, DepthFormat.None);
 
-            // Bloom mip chain and GTAO targets are allocated on demand (EnableBloomTargets / EnableAOTargets,
+            // Bloom mip chain and SSAO targets are allocated on demand (EnableBloomTargets / EnableAOTargets,
             // driven by World.ChangeAAMode / ConfigureCityAA) so they cost nothing when bloom is off / AO is
             // disabled. Resize is handled inside those methods (size-checked, called after InitScreenTargets).
 
@@ -156,10 +160,9 @@ namespace FSO.Common.Utils
             }
         }
 
-        // GTAO targets (four screen-res Color buffers, ~32MB at 1080p). Allocated only when AO is actually
-        // enabled — currently never (const AOEnabled=false in World.ChangeAAMode), so this frees/leaves them
-        // null. Both consumers null-check: AOPass.Draw passes through and DrawBackbuffer's doAO gates off.
-        // Flip AOEnabled to re-enable and these allocate again on the next config apply.
+        // SSAO targets (four screen-res Color buffers, ~32MB at 1080p). Allocated only while AO is
+        // enabled (World.ChangeAAMode passes the AO predicate). Both consumers null-check: AOPass.Draw
+        // passes through and DrawBackbuffer's doAO gates off while any target is missing.
         public static void EnableAOTargets(bool enable)
         {
             if (!enable)
@@ -171,7 +174,18 @@ namespace FSO.Common.Utils
                 return;
             }
             if (GD == null) return;
+            // AO computes on the depth/velocity G-buffer's grid when upscaling (render scale < 1): the
+            // SAO pass derives face normals from screen-space derivatives of reconstructed position, and
+            // a depth source coarser than the compute grid duplicates texels -> zero derivatives ->
+            // broken normals. Capped at viewport res when supersampling (SSAA > 1): subsampled depth
+            // still yields valid derivatives, and native-res AO avoids the supersample cost. The
+            // composite upsamples the (low-frequency) AO buffer bilinearly to the output grid.
             int rw = System.Math.Max(1, GD.Viewport.Width), rh = System.Math.Max(1, GD.Viewport.Height);
+            if (Backbuffer != null)
+            {
+                rw = System.Math.Min(rw, Backbuffer.Width);
+                rh = System.Math.Min(rh, Backbuffer.Height);
+            }
             if (AOTarget != null && AOTarget.Width == rw && AOTarget.Height == rh) return; //already correct size
             AOTarget?.Dispose(); AOTarget2?.Dispose(); AOHistoryA?.Dispose(); AOHistoryB?.Dispose();
             AOTarget = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
@@ -195,12 +209,14 @@ namespace FSO.Common.Utils
                 return null;
             }
             if (Backbuffer == null) return null;
-            if (VelocityTarget == null || VelocityTarget.Width != Backbuffer.Width || VelocityTarget.Height != Backbuffer.Height)
+            // fp16 velocity halves the biggest bandwidth cost of the TAA path (its .b depth quantization
+            // is covered by TAAResolve's disocclusion dead-zone). SSAO needs better: its estimator and
+            // packed blur key read .b as a true linear depth buffer, so AO upgrades the target to fp32.
+            var velFormat = AOPreciseDepth ? SurfaceFormat.Vector4 : SurfaceFormat.HalfVector4;
+            if (VelocityTarget == null || VelocityTarget.Width != Backbuffer.Width || VelocityTarget.Height != Backbuffer.Height || VelocityTarget.Format != velFormat)
             {
                 VelocityTarget?.Dispose();
-                // fp16 halves the biggest bandwidth cost of the TAA path; the .b depth quantization is
-                // covered by TAAResolve's disocclusion dead-zone. Restore Vector4 if AO is ever revived.
-                VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
+                VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, velFormat, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 NormalTarget?.Dispose();
                 // NormalTarget (world-space normals, MRT2). The velocity shaders all declare 3 outputs
                 // (color/velocity/normal). D3D11 silently DROPS the COLOR2 write when only 2 targets are
@@ -208,8 +224,8 @@ namespace FSO.Common.Utils
                 // corrupts the COLOR1 (velocity) write, which silently broke every temporal effect on GL
                 // (TAA warble, FSR, and the packed-depth debug view showing raw velocity) while DirectX was
                 // fine. Bind the real 3rd target so the output/target counts always match. Costs 8 bytes/px
-                // of bandwidth; its only past consumer (GTAO) is gone, but keeping it bound both fixes GL
-                // and leaves world-space normals available should AO/GTAO be revived.
+                // of bandwidth; consumed by SSAO (validity mask + debug view) and required for GL correctness
+                // even when AO is off.
                 NormalTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, SurfaceFormat.HalfVector4, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 // Tile targets: ceil(res / K). Reallocated here whenever the velocity target is (re)sized.
                 int tw = System.Math.Max(1, (Backbuffer.Width + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
@@ -370,7 +386,7 @@ namespace FSO.Common.Utils
                     if (NormalTarget != null)
                     {
                         gd.SetRenderTarget(NormalTarget);
-                        // up-vector default + invalid mask (GTAO treats alpha<0.5 as no-geometry)
+                        // up-vector default + invalid mask (SSAO treats alpha<0.5 as no-geometry)
                         gd.Clear(new Color(0.5f, 1f, 0.5f, 0f));
                     }
                     gd.SetRenderTarget(color);
@@ -478,7 +494,7 @@ namespace FSO.Common.Utils
         public static float TAAMipBias;
         // true only while DrawBackbuffer invokes TAAFunc as the upscaler stage (TAAResolve binds native history)
         public static bool TAAUpscaleMode;
-        // ambient occlusion (GTAO); runs before bloom. null = off
+        // ambient occlusion (SSAO); runs before bloom. null = off
         public static Action<GraphicsDevice, RenderTarget2D> AOFunc;
         // bloom; runs after post-AA, before sharpen. null = off
         public static Action<GraphicsDevice, RenderTarget2D> BloomFunc;
