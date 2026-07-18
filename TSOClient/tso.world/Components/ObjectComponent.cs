@@ -152,15 +152,23 @@ namespace FSO.LotView.Components
             return GetBounds().Intersects(ray);
         }
 
+        // Click buffer around the collision mesh, in world units (3 = 1 tile). Rays passing within this
+        // distance of a triangle still count as hits, so objects made of tiny mesh islands (roaches,
+        // individual firefly lights) stay comfortably clickable under exact triangle picking.
+        private const float PICK_PAD = 3f / 24f;
+
         /// <summary>
-        /// Picking test against the reconstructed collision mesh, falling back to the AABB when none is
-        /// retained. Returns the hit distance along the world ray, or null on miss.
+        /// Picking test against the reconstructed collision mesh (with a small click buffer around it),
+        /// falling back to the AABB when none is retained. Returns the hit distance along the world ray,
+        /// or null on miss.
         /// </summary>
         public float? IntersectsPrecise(Ray ray)
         {
-            var boxHit = IntersectsBounds(ray);
+            var bounds = GetBounds();
+            var pad = new Vector3(PICK_PAD);
+            var boxHit = new BoundingBox(bounds.Min - pad, bounds.Max + pad).Intersects(ray);
             if (boxHit == null) return null;
-            if (!dgrp.HasCollisionMesh) return boxHit;
+            if (!dgrp.HasCollisionMesh) return bounds.Intersects(ray);
 
             var world = World3D;
             var invWorld = Matrix.Invert(world);
@@ -168,7 +176,8 @@ namespace FSO.LotView.Components
             var localTarget = Vector3.Transform(ray.Position + ray.Direction, invWorld);
             var localRay = new Ray(localPos, localTarget - localPos);
 
-            var localT = dgrp.IntersectsRay(localRay);
+            // ray.Direction is world-unit length, so |localRay.Direction| converts the pad to local units.
+            var localT = dgrp.IntersectsRay(localRay, PICK_PAD * localRay.Direction.Length());
             if (localT == null) return null; // AABB hit, but the real geometry was missed
 
             var worldHit = Vector3.Transform(localPos + localRay.Direction * localT.Value, world);

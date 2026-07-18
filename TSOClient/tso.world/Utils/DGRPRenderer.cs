@@ -160,7 +160,7 @@ namespace FSO.LotView.Utils
 
         public bool HasCollisionMesh => Mesh?.HasCollisionMesh ?? false;
 
-        public float? IntersectsRay(Ray ray) => Mesh?.IntersectsRay(ray);
+        public float? IntersectsRay(Ray ray, float tolerance) => Mesh?.IntersectsRay(ray, tolerance);
 
         public virtual void ValidateSprite(WorldState world)
         {

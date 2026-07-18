@@ -154,15 +154,16 @@ namespace FSO.Files.RC
         }
 
         /// <summary>
-        /// Closest ray hit distance against the retained collision meshes (mesh-local space), or null.
+        /// Closest ray hit distance against the retained collision meshes (mesh-local space), counting
+        /// near-misses within <paramref name="tolerance"/> local units as hits, or null.
         /// </summary>
-        public float? IntersectsRay(Ray ray)
+        public float? IntersectsRay(Ray ray, float tolerance)
         {
             float? best = null;
             foreach (var g in Geoms)
                 foreach (var e in g)
                 {
-                    var t = e.Value.IntersectsRay(ray);
+                    var t = e.Value.IntersectsRay(ray, tolerance);
                     if (t != null && (best == null || t < best)) best = t;
                 }
             return best;
