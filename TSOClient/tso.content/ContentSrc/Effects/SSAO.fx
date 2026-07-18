@@ -181,14 +181,26 @@ float4 Blur_PS(VSOut input) : COLOR0
     float totalWeight = 0.3 + 0.153170;
     static const float w[3] = { 0.144893, 0.122649, 0.092902 }; // static const: SM3 must fold the indexing at unroll
 
+    // PLANE-AWARE bilateral (replaces the reference's flat 1/2000-of-far cutoff): on grazing ground
+    // the per-tap depth step grows ~quadratically with distance (perspective compresses more ground
+    // into each pixel), so ANY fixed or depth-proportional cutoff has a distance where flat ground
+    // stops blurring — the unblurred spiral noise then starts along iso-depth contours and reads as
+    // banding. Instead, estimate the local depth slope from the innermost tap pair and weight every
+    // tap by its deviation from that PLANE at the tight reference cutoff: flat surfaces blur fully
+    // at any distance and angle (their deviation is curvature, ~0), while true discontinuities
+    // deviate by whole objects and stay crisp. The slope clamp bounds extrapolation at edges, where
+    // the pair estimate is corrupted anyway and small weights are the correct outcome.
+    float slope = clamp((UnpackKey(tex2D(aoSampler, uv + BlurAxis * 2.0 * InvScreenSize).gb)
+                       - UnpackKey(tex2D(aoSampler, uv - BlurAxis * 2.0 * InvScreenSize).gb)) * 0.5,
+                        -0.005, 0.005);
+
     [unroll] for (int r = 1; r <= 3; r++)
     {
         float2 o = BlurAxis * (r * 2.0) * InvScreenSize;
         float4 tapA = tex2D(aoSampler, uv + o);
         float4 tapB = tex2D(aoSampler, uv - o);
-        // EDGE_SHARPNESS = 1: weight collapses across ~1/2000 key difference (reference constant)
-        float wA = w[r - 1] * max(0.0, 1.0 - 2000.0 * abs(UnpackKey(tapA.gb) - key));
-        float wB = w[r - 1] * max(0.0, 1.0 - 2000.0 * abs(UnpackKey(tapB.gb) - key));
+        float wA = w[r - 1] * max(0.0, 1.0 - 2000.0 * abs(UnpackKey(tapA.gb) - (key + slope * r)));
+        float wB = w[r - 1] * max(0.0, 1.0 - 2000.0 * abs(UnpackKey(tapB.gb) - (key - slope * r)));
         sum += tapA.r * wA + tapB.r * wB;
         totalWeight += wA + wB;
     }
@@ -204,10 +216,23 @@ float4 Temporal_PS(VSOut input) : COLOR0
     float4 c = tex2D(aoSampler, uv);
     float current = c.r;
     float4 vel = tex2D(velocitySampler, uv);
+    // Velocity is already un-jittered at the writers (ComputeVelocity subtracts JitterNDC), so this
+    // reprojection needs no jitter correction — and at rest it is exactly identity.
     float2 histUV = uv - vel.rg;
     bool valid = (vel.a >= 0.5) && (histUV.x >= 0.0) && (histUV.x <= 1.0) && (histUV.y >= 0.0) && (histUV.y <= 1.0);
     if (!valid) return float4(current, c.gb, 1);
     float history = tex2D(aoHistorySampler, histUV).r;
+    // Same-surface validity, MOTION-GATED (the TAA's oldest law): under TAA the depth buffer is
+    // rasterized on a jittered projection, so at rest a depth-key mismatch at edges and fine
+    // geometry is pure jitter sampling noise — ungated, accumulation died exactly there and the
+    // spiral noise showed raw. A real trail needs motion, and the un-jittered velocity buffer means
+    // jitter cannot arm the gate. The key fetch is POINT-SNAPPED through the same LINEAR sampler
+    // (GL sampler-aliasing law): the packed two-channel key decodes to garbage if bilinearly mixed.
+    float movePx = length(vel.rg / InvScreenSize);
+    float moveGate = smoothstep(0.35, 1.5, movePx);
+    float2 snapped = (floor(histUV / InvScreenSize) + 0.5) * InvScreenSize;
+    float keyH = UnpackKey(tex2D(aoHistorySampler, snapped).gb);
+    float depthValid = max(1.0 - moveGate * smoothstep(0.02, 0.06, abs(keyH - vel.b) / max(vel.b, 1e-3)), 0.25);
     float ao_min = current, ao_max = current;
     [unroll] for (int dy = -1; dy <= 1; dy++)
     [unroll] for (int dx = -1; dx <= 1; dx++)
@@ -217,7 +242,7 @@ float4 Temporal_PS(VSOut input) : COLOR0
         ao_max = max(ao_max, s);
     }
     history = clamp(history, ao_min, ao_max);
-    return float4(lerp(current, history, TemporalBlend), c.gb, 1);
+    return float4(lerp(current, history, TemporalBlend * depthValid), c.gb, 1);
 }
 
 // ============================================================================ Pass 5: Composite
