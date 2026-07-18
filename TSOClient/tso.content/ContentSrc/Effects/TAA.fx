@@ -6,12 +6,15 @@
 //   metaHistoryTex — previous frame's meta: R = accumulation count N (N/MaxAccum), GB = previous dilated
 //                    velocity (v*10+0.5), A = packed oscillation state (sign 1 + osc 4 + amp 3 bits).
 //   velocityTex    — per-pixel screen-space velocity (.rg) + normalized linear depth (.b) + valid mask (.a).
+//   auxHistoryTex  — previous frame's aux: R = recent-nearest depth (occluder memory), GBA = 3-frame
+//                    input-luma recurrence ring.
 //
-// Outputs to TWO render targets:
+// Outputs to THREE render targets:
 //   COLOR0 — displayed frame + next frame's history (RGB) with this pixel's dilated depth packed in A
 //            (fp16 target when available — see PPXDepthEngine.HistoryIsFP16 / DepthRejectParams).
 //   COLOR1 — next frame's meta: R = new N, GB = dilated velocity encode, A = oscillation pack (TAADebug
 //            technique repurposes GB for diagnostics and disables their consumers).
+//   COLOR2 — next frame's aux (same format as the history target).
 //
 // Structure of the resolve:
 //   1. Velocity dilation: reproject with the nearest-depth motion vector in a 3x3 neighbourhood.
@@ -122,6 +125,16 @@ sampler metaHistorySampler = sampler_state {
 texture velocityTex;
 sampler velocitySampler = sampler_state {
     texture = <velocityTex>;
+    AddressU = CLAMP; AddressV = CLAMP;
+    MIPFILTER = NONE; MINFILTER = POINT; MAGFILTER = POINT;
+};
+
+// Previous frame's aux state (COLOR2 ping-pong): R = recent-nearest depth (decayed-min occluder
+// memory), GBA = the last three frames of input luma (recurrence ring). Depth memory and discrete
+// luma records must never cross-fade between texels.
+texture auxHistoryTex;
+sampler auxHistorySampler = sampler_state {
+    texture = <auxHistoryTex>;
     AddressU = CLAMP; AddressV = CLAMP;
     MIPFILTER = NONE; MINFILTER = POINT; MAGFILTER = POINT;
 };
@@ -264,6 +277,10 @@ struct TAAOut
     // A = packed oscillation state (sign 1 + osc 4 + amp 3 bits; 0 on non-reprojectable / meta clear).
     // The TAADebug technique repurposes GB+A for diagnostics and disables their consuming logic.
     float4 meta  : COLOR1;
+    // Aux layout: R = recent-nearest depth (min of the current dilated depth and the reprojected
+    // memory decayed toward far), GBA = input luma of the last three frames (G newest). TAALite
+    // maintains only the depth channel; the ring re-seeds from zero on a tier switch.
+    float4 aux   : COLOR2;
 };
 
 // Shared TAA core. debugMeta is a compile-time uniform bool (folded per-technique): when true, meta.GB
@@ -570,6 +587,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float4 pm = tex2Dlod(metaHistorySampler, float4(histUV, 0, 0));
     float prevN = pm.r * MaxAccum;
 
+    // Reprojected aux state, OWN-velocity anchor like every structural test: R = recent-nearest depth
+    // (occluder memory), GBA = the three-frame input-luma ring (consumed by the oscillation detector).
+    // SM3 (ps_3_0 temp-register budget) runs without both aux consumers and writes depth-only aux.
+#if SM4
+    float4 aux = tex2Dlod(auxHistorySampler, float4(histUVDepth, 0, 0));
+    float rnPrev = aux.r;
+#endif
+
     // META.A DECODE — byte-exact layout sign(1) + osc(4) + amp(3): bit 7 = the last real luma delta's
     // sign, bits 3-6 = oscillation EMA (16 levels), bits 0-2 = witnessed alternating amplitude
     // (8 levels spanning 0.35 luma). Mirrors the pack at the bottom of the resolve; RESOLVE_VERSION
@@ -780,6 +805,26 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth;
     ghostReject = max(ghostReject, staticGhost);
 
+    // OCCLUDER-MEMORY GHOST PATH (multi-frame reveal evidence): every depth test above compares against
+    // LAST frame only — the evidence lives one frame while a contaminated trail takes several frames to
+    // scrub. aux.r remembers the nearest RECENT depth (decayed-min, ~0.001/frame back toward far), so
+    // "the remembered occluder is nearer than the entire current valid range" stays true for as long as
+    // the memory takes to decay across the occluder-to-background gap. Static-edge immune by
+    // construction: the memory is refreshed from the current dilated depth every frame, so at a static
+    // edge it equals dmin and the evidence is zero. Shields mirror the static path (osc for resting
+    // foliage whose remembered fragment depth outlives the fragment's jitter phase, unwritten-center
+    // bar, staticAuth proportionality); deliberately NO motion gate — the trail window after a mover
+    // leaves the 3x3 is exactly where the motion gates close. Feeds the kernel modulation below too,
+    // so trail pixels are re-born spatially anti-aliased for the whole memory window. SM4-only.
+#if SM4
+    float nearerM = max(dmin - rnPrev - DepthRejectParams.x * 2.0, 0.0);
+    float memGhost = (dmax < dmin) ? 0.0 :
+        smoothstep(0.02, 0.08, nearerM / max(rnPrev, DepthRejectParams.w))
+        * (1.0 - oscShield)
+        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth * 0.85;
+    ghostReject = max(ghostReject, memGhost);
+#endif
+
     // FSR3 KERNEL-WIDTH MODULATION (ffx_fsr2_upsample fKernelBias, hand-ported): the reconstruction
     // kernel widens from output-sized (sharp) toward INPUT-sized (smooth) on structural evidence —
     // disocclusion at quarter weight, fresh pixels (no accumulated history) at full — so rejected and
@@ -856,7 +901,24 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // texture sampling noise, so a lower admission would protect ghosts.
         float mag  = step(0.03, abs(dl));
         float sgn  = step(0.0, dl);
-        float flip = mag * abs(sgn - prevSgn); // 1 only when a real-amplitude delta reversed sign
+        // LUMA-RECURRENCE RING (FSR2.2 luma instability, 3-frame form): aux.gba holds the last three
+        // frames of input luma. Recurrence = the luma CHANGED since last frame but EXACTLY revisits an
+        // older entry — a period-2/3 limit cycle the sign bit alone cannot always witness (period-3
+        // emits same-sign consecutive deltas that never flip). The match band is deliberately far
+        // tighter than the change band: geometry flicker is BIMODAL (a thin line's on/off values recur
+        // exactly), while moire/texture shimmer is quasi-periodic — its luma drifts a little every
+        // cycle, and a loose band let it build osc evidence whose amp slack + Karis fade then showed
+        // the shimmer instead of clamping it. Ghost-safe by the same structure as the sign test: a
+        // repairing ghost has constant input (changed = 0) and a monotonic fade never revisits an old
+        // value (match = 0).
+        float flipSign = mag * abs(sgn - prevSgn); // 1 only when a real-amplitude delta reversed sign
+#if SM4
+        float ringChanged = smoothstep(0.03, 0.05, abs(cboxC.x - aux.g));
+        float ringMatch = 1.0 - smoothstep(0.005, 0.011, min(abs(cboxC.x - aux.b), abs(cboxC.x - aux.a)));
+        float flip = max(flipSign, mag * ringChanged * ringMatch);
+#else
+        float flip = flipSign;
+#endif
         // WITNESS RULE on the EMA: off-phase frames' interpolation error is biased (no sign flip), so an
         // ungated EMA decays the alternation evidence between real samples — the update rate is scaled by
         // testify so off-frames neither build nor decay evidence.
@@ -884,7 +946,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // luma (~0.05/level). Consumed as clamp-box slack at the box below.
         float obsQ = saturate(abs(dl) * (1.0 / 0.35)) * 7.0;
         float prevAmpQ = prevAmp * 7.0;
-        float ampDir = flip * (step(prevAmpQ + 0.5, obsQ) - step(obsQ, prevAmpQ - 0.5)) - (1.0 - flip) * mag;
+        // Amp builds on WITNESSED SIGN FLIPS only (not ring recurrence): the slack this feeds widens
+        // the clamp box, and near-miss recurrences are exactly the shimmer the clamp must keep owning.
+        float ampDir = flipSign * (step(prevAmpQ + 0.5, obsQ) - step(obsQ, prevAmpQ - 0.5)) - (1.0 - flipSign) * mag;
         oscAmp = saturate(prevAmp + ampDir * (1.0 / 7.0) * testify);
         // EVIDENCE WIPE: alternation evidence must not survive history invalidation, or locks re-engage on
         // contaminated history the moment motion stops (bypassing the warmup floor). Locks are RE-EARNED
@@ -1280,6 +1344,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // values would compound through the feedback loop.
     o.color = float4(saturate(YCoCg_to_RGB(outYCoCg)), depthForHistory);
 
+    // AUX WRITE: refresh the occluder memory with this frame's dilated depth (min) while the remembered
+    // value decays toward far, and shift the luma ring one slot. Off-screen = fresh seed (no memory,
+    // zeroed ring — zeros can only "match" near-black luma, and the amplitude gate owns that regime).
+#if SM4
+    o.aux = reprojectable
+        ? float4(min(depthForHistory, rnPrev + 0.001), cboxC.x, aux.g, aux.b)
+        : float4(depthForHistory, cboxC.x, 0.0, 0.0);
+#else
+    o.aux = float4(depthForHistory, cboxC.x, 0.0, 0.0); // no aux consumers on SM3
+#endif
+
     if (debugMeta)
     {
         // Diagnostic encode. R MUST stay the ACCUMULATION COUNTER even in debug — the next frame's
@@ -1489,6 +1564,7 @@ TAAOut TAALite_PS(VSOut input)
     // misdecodes; A unused here (no oscillation state in the lite path).
     o.color = float4(saturate(YCoCg_to_RGB(outYCoCg)), min(closestDepth, 1.0));
     o.meta  = float4(newN / MaxAccum, 0.5, 0.5, 0.0);
+    o.aux   = float4(min(closestDepth, 1.0), 0.0, 0.0, 0.0); // depth memory only — no ring in the lite path
     return o;
 }
 

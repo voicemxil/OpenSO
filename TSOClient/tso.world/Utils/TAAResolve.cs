@@ -18,7 +18,7 @@ namespace FSO.LotView.Utils
         // Part of the history layout signature: bump when the history/meta ENCODING or the
         // accumulation semantics change (shader meta layout, depth packing, N decode), so a new
         // resolve can never interpret bytes accumulated by an old one.
-        private const int RESOLVE_VERSION = 2; // v2: meta.A re-packed sign(1) + osc(4) + amp(3)
+        private const int RESOLVE_VERSION = 3; // v3: aux target added (occluder memory + luma ring)
 
         // stable-area current-frame weight; 0.06 = ~16-frame accumulation window at native
         private const float BLEND_FACTOR = 0.06f;
@@ -163,14 +163,15 @@ namespace FSO.LotView.Utils
             var historyCurr = c.History.Curr;
             var metaCurr = c.History.MetaCurr;
 
-            // blend into the current history (COLOR0) + meta (COLOR1)
+            // blend into the current history (COLOR0) + meta (COLOR1) + aux (COLOR2)
             var finalTarget = gd.GetRenderTargets();
-            gd.SetRenderTargets(historyCurr, metaCurr);
+            gd.SetRenderTargets(historyCurr, metaCurr, c.History.AuxCurr);
 
             gd.BlendState = BlendState.Opaque;
             effect.Parameters["colorTex"]?.SetValue(c.Color);
             effect.Parameters["historyTex"]?.SetValue(historyPrev);
             effect.Parameters["metaHistoryTex"]?.SetValue(metaPrev);
+            effect.Parameters["auxHistoryTex"]?.SetValue(c.History.AuxPrev);
             effect.Parameters["velocityTex"]?.SetValue(c.Velocity);
             // InvScreenSize = output/history grid; InvColorSize = input color grid (differ under TAAU)
             effect.Parameters["InvScreenSize"]?.SetValue(new Vector2(1f / historyPrev.Width, 1f / historyPrev.Height));

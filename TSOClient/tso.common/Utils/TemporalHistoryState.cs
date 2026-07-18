@@ -38,6 +38,10 @@ namespace FSO.Common.Utils
 
         private RenderTarget2D HistoryA, HistoryB; // RGB color, A packed depth
         private RenderTarget2D MetaA, MetaB;
+        // Aux state (RGBA8): R = recent-nearest depth (decayed-min occluder memory — multi-frame
+        // disocclusion evidence instead of the one-frame history-alpha window), GBA = the last three
+        // frames of input luma (period-2..4 flicker recurrence detection, FSR2.2's luma instability).
+        private RenderTarget2D AuxA, AuxB;
         private bool _AIsPrev;
         public bool IsFP16 { get; private set; }
 
@@ -75,6 +79,8 @@ namespace FSO.Common.Utils
         public RenderTarget2D Curr => _AIsPrev ? HistoryB : HistoryA;
         public RenderTarget2D MetaPrev => _AIsPrev ? MetaA : MetaB;
         public RenderTarget2D MetaCurr => _AIsPrev ? MetaB : MetaA;
+        public RenderTarget2D AuxPrev => _AIsPrev ? AuxA : AuxB;
+        public RenderTarget2D AuxCurr => _AIsPrev ? AuxB : AuxA;
         private void Swap() { _AIsPrev = !_AIsPrev; }
 
         /// <summary>
@@ -168,6 +174,11 @@ namespace FSO.Common.Utils
             gd.SetRenderTarget(HistoryB); gd.Clear(Color.Transparent);
             gd.SetRenderTarget(MetaA); gd.Clear(MetaClear);
             gd.SetRenderTarget(MetaB); gd.Clear(MetaClear);
+            // Aux clear: occluder memory = far (no remembered occluder), luma ring = 0 (matches are
+            // additionally amplitude-gated in the resolve, so a zeroed ring cannot fake recurrence).
+            var auxClear = new Color(255, 0, 0, 0);
+            if (AuxA != null) { gd.SetRenderTarget(AuxA); gd.Clear(auxClear); }
+            if (AuxB != null) { gd.SetRenderTarget(AuxB); gd.Clear(auxClear); }
             if (prevRTs != null && prevRTs.Length > 0) gd.SetRenderTargets(prevRTs); else gd.SetRenderTarget(null);
             System.Diagnostics.Debug.WriteLine($"[TAA] history reset: {LastResetReason}");
         }
@@ -187,6 +198,8 @@ namespace FSO.Common.Utils
                 if (HistoryB != null) { HistoryB.Dispose(); HistoryB = null; }
                 if (MetaA != null) { MetaA.Dispose(); MetaA = null; }
                 if (MetaB != null) { MetaB.Dispose(); MetaB = null; }
+                if (AuxA != null) { AuxA.Dispose(); AuxA = null; }
+                if (AuxB != null) { AuxB.Dispose(); AuxB = null; }
                 _HasContents = false;
                 return;
             }
@@ -196,17 +209,28 @@ namespace FSO.Common.Utils
             HistoryB?.Dispose();
             MetaA?.Dispose();
             MetaB?.Dispose();
+            AuxA?.Dispose();
+            AuxB?.Dispose();
+            // Aux shares the history's format choice: the occluder-memory depth needs sub-LSB precision
+            // an RGBA8 channel doesn't have (1/255 of the depth range is the size of a typical
+            // mover-to-floor gap); on the Color fallback the memory just gets coarser, and the resolve's
+            // color-proportional shields absorb the extra quantization noise.
             try
             {
                 HistoryA = new RenderTarget2D(gd, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
                 HistoryB = new RenderTarget2D(gd, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                AuxA = new RenderTarget2D(gd, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                AuxB = new RenderTarget2D(gd, w, h, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
                 IsFP16 = true;
             }
             catch
             {
                 HistoryA?.Dispose(); HistoryB?.Dispose();
+                AuxA?.Dispose(); AuxB?.Dispose();
                 HistoryA = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
                 HistoryB = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                AuxA = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                AuxB = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
                 IsFP16 = false;
             }
             MetaA = new RenderTarget2D(gd, w, h, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
