@@ -1,6 +1,9 @@
 // MotionBlur.fx — McGuire et al. 2012 reconstruction-filter motion blur (TileMax -> NeighborMax -> reconstruction).
 // Velocity buffer (HalfVector4, MRT1): .rg = per-frame screen-space velocity (UV units), .b = normalized
 // linear view distance (clip.w / far=800), .a = valid mask. Unwritten pixels clear to (0,0,1,0) = static far bg.
+// The a = 1 - 0.5*r reactive band (a in [0.5, 0.75], e.g. rain streaks) is SELF-DEPICTING content: it
+// already draws its own motion trail, so motion blur must treat it as static — reconstruction-smearing
+// it along its (very fast) fall velocity double-blurs the streak and drags whole tiles with it.
 
 #define TILEK 20          // tile size in velocity-buffer texels
 #define SAMPLES 15        // reconstruction taps along the dominant velocity
@@ -11,6 +14,8 @@ float2 SourceTexel;       // 1 / velocity-buffer resolution      (TileMax)
 float2 TileTexel;         // 1 / TileMax resolution              (NeighborMax)
 float2 ScreenSizePx;      // reconstruction output resolution in px
 float  ShutterScale;      // shutter fraction (0..1): velocity is per-frame, * this = exposure motion
+float  SubPx;             // "sub" dead zone: per-frame motion below this many output px produces no blur
+float  TileJitter;        // NeighborMax lookup dither in tiles (hides the tile-grid seams on fast rotation)
 
 texture colorTex;
 sampler colorSampler = sampler_state {
@@ -64,7 +69,7 @@ float4 TileMax_PS(VSOut input) : COLOR0
         {
             float2 off = (float2(x, y) - (TILEK * 0.5)) * SourceTexel;
             float4 s = tex2Dlod(velocitySampler, float4(input.Coord + off, 0, 0));
-            if (s.a < 0.5) continue;            // unwritten = zero velocity, skip
+            if (s.a < 0.9) continue;            // unwritten OR reactive-band (self-depicting) = skip
             float m2 = dot(s.rg, s.rg);
             if (m2 > bestMag2) { bestMag2 = m2; best = s.rg; }
         }
@@ -102,24 +107,38 @@ float SoftDepth(float za, float zb) { return saturate(1.0 - (za - zb) / SOFT_Z);
 float Cone(float distPx, float magPx) { return saturate(1.0 - distPx / magPx); }
 // Cylinder: ~1 inside the blur extent — for two mutually-blurry samples.
 float Cylinder(float distPx, float magPx) { return 1.0 - smoothstep(0.95 * magPx, 1.05 * magPx + 1e-3, distPx); }
+// "Sub" dead zone: shrink a per-frame velocity's magnitude by SubPx output pixels, clamping at zero —
+// idle/micro motion produces NO blur instead of a faint smear, and real motion loses only the sub
+// amount. Applied at every velocity read in reconstruction; TileMax/NeighborMax only select the
+// max-magnitude vector and the shrink preserves that ordering, so they stay untouched.
+float2 SubVel(float2 v)
+{
+    float magPx = length(v * ScreenSizePx);
+    return v * (max(magPx - SubPx, 0.0) / max(magPx, 1e-4));
+}
 
 float4 Reconstruction_PS(VSOut input) : COLOR0
 {
     float2 uv = input.Coord;
     float4 centerColor = tex2D(colorSampler, uv);
 
-    float4 nm = tex2Dlod(neighborMaxSampler, float4(uv, 0, 0));
-    float2 nmVel = nm.rg * ShutterScale;
+    float jitter = IGN(uv * ScreenSizePx) - 0.5;
+
+    // Jittered NeighborMax lookup (McGuire): the tile grid's dominant-velocity discontinuities read
+    // as blocky seams where adjacent tiles disagree — visible on fast rotations. Dithering the
+    // lookup by up to +/-TileJitter tiles per pixel turns the seam into noise the reconstruction
+    // filter absorbs. Second IGN decorrelates the axes so the dither isn't a diagonal streak.
+    float2 tileOfs = float2(jitter, IGN(uv * ScreenSizePx + 59.0) - 0.5) * (2.0 * TileJitter) * TileTexel;
+    float4 nm = tex2Dlod(neighborMaxSampler, float4(uv + tileOfs, 0, 0));
+    float2 nmVel = SubVel(nm.rg) * ShutterScale;
     float nmMagPx = length(nmVel * ScreenSizePx);
 
     if (nmMagPx < 0.5) return centerColor;
 
     float4 cVel4 = tex2Dlod(velocitySampler, float4(uv, 0, 0));
-    float2 cVel = cVel4.rg * ShutterScale;
+    float2 cVel = SubVel((cVel4.a < 0.9) ? float2(0.0, 0.0) : cVel4.rg) * ShutterScale; // reactive band = static
     float cDepth = (cVel4.a < 0.5) ? 1.0 : cVel4.b;          // unwritten center = far bg
     float cMagPx = max(length(cVel * ScreenSizePx), 0.5);
-
-    float jitter = IGN(uv * ScreenSizePx) - 0.5;
 
     // McGuire center-tap weighting: 1/velocity keeps slow/static pixels crisp.
     float weight = 1.0 / cMagPx;
@@ -132,7 +151,7 @@ float4 Reconstruction_PS(VSOut input) : COLOR0
         float2 sampUV = uv + nmVel * t;
 
         float4 sVel4 = tex2Dlod(velocitySampler, float4(sampUV, 0, 0));
-        float2 sVel = sVel4.rg * ShutterScale;
+        float2 sVel = SubVel((sVel4.a < 0.9) ? float2(0.0, 0.0) : sVel4.rg) * ShutterScale; // reactive band = static
         float sDepth = (sVel4.a < 0.5) ? 1.0 : sVel4.b;     // unwritten sample = far bg
         float sMagPx = max(length(sVel * ScreenSizePx), 0.5);
 

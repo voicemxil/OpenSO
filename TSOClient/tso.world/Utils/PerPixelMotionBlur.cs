@@ -11,6 +11,16 @@ namespace FSO.LotView.Utils
     /// </summary>
     public static class PerPixelMotionBlur
     {
+        // Code tunables (deliberately not in the graphics menu).
+        // "Sub" dead zone (Xenoblade-style): per-frame motion below this many output px produces no
+        // blur at all — idle animations and micro camera drift stay crisp; larger motions lose only
+        // the sub amount off their blur length.
+        public static float SubPx = 0.5f;
+        // NeighborMax lookup dither, in tiles (0 = off, 0.5 = up to half a tile): the velocity tile
+        // grid's discontinuities read as blocky seams during fast rotation; dithering the lookup
+        // turns the seam into noise the reconstruction filter absorbs.
+        public static float TileJitter = 0.5f;
+
         public static void Draw(GraphicsDevice gd, RenderTarget2D src)
         {
             var effect = WorldContent.MotionBlur;
@@ -52,6 +62,8 @@ namespace FSO.LotView.Utils
             effect.Parameters["ScreenSizePx"]?.SetValue(new Vector2(gd.Viewport.Width, gd.Viewport.Height));
             // shutter fraction 0..1; velocity is per-frame, so blur length tracks frame time
             effect.Parameters["ShutterScale"]?.SetValue(WorldConfig.Current.MotionBlurAmount);
+            effect.Parameters["SubPx"]?.SetValue(SubPx);
+            effect.Parameters["TileJitter"]?.SetValue(TileJitter);
             ApplyAndDraw(gd, effect, "Reconstruction", verts);
         }
 
