@@ -279,18 +279,28 @@ namespace FSO.Client.UI.Controls
             if (state.ActivationKeyPressed)
             {
                 if (!open) ToggleOpen();
-                else SelectComboboxElement(this);
+                // never commit a disabled (grayed) item — mouse can't reach them, keys must not either
+                else if (MenuListBox.SelectedIndex < 0 || !_items[MenuListBox.SelectedIndex].Disabled)
+                    SelectComboboxElement(this);
             }
             if (state.NewKeys.Contains(Keys.Escape) && open)
                 ToggleOpen();
             if (state.NewKeys.Contains(Keys.Up) && open && MenuListBox.SelectedIndex > 0)
-                MenuListBox.SelectedIndex--;
+                MenuListBox.SelectedIndex = StepSelectable(MenuListBox.SelectedIndex, -1);
             if (state.NewKeys.Contains(Keys.Down))
             {
                 if (!open) ToggleOpen();
                 else if (MenuListBox.SelectedIndex < _items.Count - 1)
-                    MenuListBox.SelectedIndex++;
+                    MenuListBox.SelectedIndex = StepSelectable(MenuListBox.SelectedIndex, 1);
             }
+        }
+
+        // Next selectable index in the given direction, skipping Disabled items; stays put if none.
+        private int StepSelectable(int from, int dir)
+        {
+            for (int i = from + dir; i >= 0 && i < _items.Count; i += dir)
+                if (!_items[i].Disabled) return i;
+            return from;
         }
     }
 }

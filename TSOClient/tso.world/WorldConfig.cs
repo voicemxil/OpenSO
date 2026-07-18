@@ -69,7 +69,7 @@ namespace FSO.LotView
         public bool VelocityDebug = false;  //diagnostic: visualize MRT1 velocity buffer to screen (3D only)
         public bool VelocityDebugDepth = false; //diagnostic: velocity debug shows packed DEPTH (v.b) instead of hue
         public bool TAADebug = false;       //diagnostic: TAA meta/trust debug view (TAA dropdown "On + Debug")
-        public int Upscaler = 1;            //render scale < 1 upscaler: 0 = FSR 1 (EASU), 1 = Cosmic TAAU (needs TAA on)
+        public int Upscaler = 1;            //render scale < 1 upscaler: 0 = FSR 1 (EASU), 1 = Cosmic TAAU (needs TAA on), 2 = sharp bilinear
 
         public bool Directional = true;
         public bool Complex = false;

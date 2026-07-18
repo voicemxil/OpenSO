@@ -757,7 +757,12 @@ void BasePS3D(GrassPSVTX input, out float4 color:COLOR0)
 		if (a > 0) {
 			a = min(1, a);
 			//blade mipmaps
-			float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias)).xy;
+			// STOCHASTIC-CONTENT bias at HALF strength (MipBias * 0.5): the full TAA render-scale
+			// bias is right for structured textures (jitter accumulation reconstructs real detail),
+			// but grain noise sampled sharper than the render grid decorrelates per jitter phase —
+			// the resolve can neither lock nor converge it, reading as flicker that averages into
+			// mush. Half bias keeps grain near the stable footprint the non-temporal AA modes use.
+			float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias * 0.5)).xy;
 			float multex = rand.x;
 			multex *= ((2.0 - input.GrassInfo.x) / 2);
 			multex = (multex - 0.5) * 2.5 + 0.5;
@@ -875,7 +880,7 @@ GrassPSOutputV BasePS3DV(GrassPSVTXv input)
         if (a > 0) {
             a = min(1, a);
             //blade mipmaps
-            float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias)).xy;
+            float2 rand = tex2Dbias(TerrainNoiseMipSampler, float4(input.GrassInfo.yz * 100 / 1024.0, 0, MipBias * 0.5)).xy; // half bias — see the grain-noise comment above
             float multex = rand.x;
             multex *= ((2.0 - input.GrassInfo.x) / 2);
             multex = (multex - 0.5) * 2.5 + 0.5;

@@ -214,3 +214,33 @@ technique RCAS
 #endif
     }
 }
+
+// ---------------------------------------------------------------------------- Sharp bilinear
+// Emulator-style sharp bilinear: each source texel renders as a crisp block, with bilinear filtering
+// confined to a thin transition band at texel seams — the interpolation fraction is remapped through
+// a slope equal to the upscale ratio. Crisp like nearest-neighbour but without its crawling seams
+// under motion (the band anti-aliases texel boundaries at exactly output-pixel width).
+float SharpScale; // output/source size ratio (>= 1); at 1 this degenerates to plain bilinear
+
+float4 SharpBilinear_PS(VSOut input) : COLOR0
+{
+    float2 texel = input.Coord / SourceSize;                   // source texel coordinates
+    float2 b = floor(texel - 0.5) + 0.5;                       // base texel centre
+    float2 f = texel - b;                                      // [0,1) interpolation fraction
+    float2 s = clamp((f - 0.5) * SharpScale + 0.5, 0.0, 1.0);  // sharpened fraction
+    return float4(tex2D(texSampler, (b + s) * SourceSize).rgb, 1.0);
+}
+
+technique SharpBilinear
+{
+    pass MainPass
+    {
+#if SM4
+        VertexShader = compile vs_4_0 VS();
+        PixelShader  = compile ps_4_0 SharpBilinear_PS();
+#else
+        VertexShader = compile vs_3_0 VS();
+        PixelShader  = compile ps_3_0 SharpBilinear_PS();
+#endif
+    }
+}

@@ -544,8 +544,14 @@ namespace FSO.Client.UI.Panels
             // Upscaler for render scale < 1: FSR 1 (spatial) vs Cosmic TAAU. TAAU needs TAA's
             // history/velocity, so its entry is only selectable while TAA is on.
             UpscalerCombo = AddRow("Upscaler", 200,
-                new[] { "FSR 1", "Cosmic TAAU" }, new[] { 0, 1 }, out _upscalerObjs,
-                v => { GlobalSettings.Default.Upscaler = v; ApplyAndRefresh(); });
+                new[] { "FSR 1", "Sharp Bilinear", "Cosmic TAAU" }, new[] { 0, 2, 1 }, out _upscalerObjs,
+                v =>
+                {
+                    // TAAU is unselectable while TAA is off; coerce if it slips through (e.g. keys)
+                    if (v == 1 && !GlobalSettings.Default.TAA) v = 0;
+                    GlobalSettings.Default.Upscaler = v;
+                    ApplyAndRefresh();
+                });
             AddSharpenRow("Sharpening", 168); // FSR RCAS post-pass; applies at any render scale
             SharpenLabel.Tooltip = "FSR RCAS sharpening — applies at any render scale.";
             AddRenderScaleRow("Render scale", 136);
@@ -936,9 +942,12 @@ namespace FSO.Client.UI.Panels
             UpscalerCombo.Items = new List<UIComboboxItem>
             {
                 new UIComboboxItem { Name = "FSR 1", Value = _upscalerObjs[0] },
-                new UIComboboxItem { Name = "Cosmic TAAU", Value = _upscalerObjs[1], Disabled = !s.TAA },
+                new UIComboboxItem { Name = "Sharp Bilinear", Value = _upscalerObjs[1] },
+                new UIComboboxItem { Name = "Cosmic TAAU", Value = _upscalerObjs[2], Disabled = !s.TAA },
             };
-            SelectValue(UpscalerCombo, _upscalerObjs, (s.TAA && s.Upscaler == 1) ? 1 : 0);
+            // SelectValue takes the stored VALUE (not a list index); TAAU displays as FSR 1 while TAA
+            // is off (the render path falls back to EASU in that state too)
+            SelectValue(UpscalerCombo, _upscalerObjs, (s.Upscaler == 1 && !s.TAA) ? 0 : s.Upscaler);
             SelectValue(TAADebugCombo, _taaDbgObjs, s.TAADebug ? 1 : 0);
             TAADebugCombo.Visible = s.TAA;
             if (TAADebugRowLabel != null) TAADebugRowLabel.Visible = s.TAA;
