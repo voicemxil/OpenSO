@@ -101,6 +101,17 @@ namespace FSO.Server.Database.DA.Lots
             return Context.Connection.Execute("DELETE FROM fso_lots WHERE lot_id = @id", new { id = id }) > 0;
         }
 
+        public int DeleteAbandoned()
+        {
+            //lots the last roommate moved out of are meant to be deleted by the cleanup open that
+            //follows the move-out. If that never completed, the dead row blocks its location from
+            //being bought forever - sweep them up, except lots a server currently has claimed.
+            //objects still on the lot return to their owners' inventories via the fso_objects FK.
+            return Context.Connection.Execute(
+                "DELETE FROM fso_lots WHERE owner_id IS NULL AND category != 'community' " +
+                "AND lot_id NOT IN (SELECT lot_id FROM fso_lot_claims)");
+        }
+
         public DbLot GetByOwner(uint owner_id)
         {
             return Context.Connection.Query<DbLot>("SELECT * FROM fso_lots WHERE owner_id = @id AND category != 'community'", new { id = owner_id }).FirstOrDefault();

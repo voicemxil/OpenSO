@@ -20,6 +20,7 @@ namespace FSO.Server.Database.DA.Lots
         List<DbLot> Get(IEnumerable<int> ids);
         uint Create(DbLot lot);
         bool Delete(int id);
+        int DeleteAbandoned();
 
         void RenameLot(int id, string newName);
         void SetDirty(int id, byte dirty);

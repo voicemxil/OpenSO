@@ -56,14 +56,28 @@ namespace FSO.Server.Servers.City.Handlers
 
             using (var db = DA.Get())
             {
-                if (db.Lots.GetByLocation(Context.ShardId, packedLocation) != null)
+                var existing = db.Lots.GetByLocation(Context.ShardId, packedLocation);
+                if (existing != null)
                 {
-                    session.Write(new PurchaseLotResponse()
+                    //an ownerless row is a dead lot whose move-out cleanup never completed; it would
+                    //block this location forever. Recycle it now (objects on it return to their
+                    //owners' inventories via the fso_objects FK) - unless a lot server still has it
+                    //claimed, e.g. the cleanup is genuinely running right this moment.
+                    if (existing.owner_id == null && existing.category != LotCategory.community
+                        && db.LotClaims.GetByLotID(existing.lot_id) == null)
                     {
-                        Status = PurchaseLotStatus.FAILED,
-                        Reason = PurchaseLotFailureReason.LOT_TAKEN,
-                    });
-                    return;
+                        db.Lots.Delete(existing.lot_id);
+                        DataService.Invalidate<FSO.Common.DataService.Model.Lot>(packedLocation);
+                    }
+                    else
+                    {
+                        session.Write(new PurchaseLotResponse()
+                        {
+                            Status = PurchaseLotStatus.FAILED,
+                            Reason = PurchaseLotFailureReason.LOT_TAKEN,
+                        });
+                        return;
+                    }
                 }
 
                 var targNhood = db.Neighborhoods.GetByLocation(packedLocation);
