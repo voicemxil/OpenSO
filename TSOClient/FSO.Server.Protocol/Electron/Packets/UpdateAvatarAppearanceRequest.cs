@@ -4,9 +4,8 @@ using FSO.Server.Protocol.Voltron.Model;
 namespace FSO.Server.Protocol.Electron.Packets
 {
     /// <summary>
-    /// Requests an appearance edit (gender, skin tone, head, body, description) for an avatar owned
-    /// by the session's account. Sent over the anonymous CAS connection, like RSGZWrapperPDU.
-    /// Deliberately carries no name field — name changes are moderation-only.
+    /// Requests an appearance edit (gender, skin tone, head, body, name, description) for an avatar
+    /// owned by the session's account. Sent over the anonymous CAS connection, like RSGZWrapperPDU.
     /// </summary>
     public class UpdateAvatarAppearanceRequest : AbstractElectronPacket
     {
@@ -16,6 +15,7 @@ namespace FSO.Server.Protocol.Electron.Packets
         //high dword of the 64-bit outfit asset ID, matching RSGZWrapperPDU / RegistrationHandler validation
         public uint HeadOutfitId { get; set; }
         public uint BodyOutfitId { get; set; }
+        public string Name { get; set; }
         public string Description { get; set; }
 
         public override ElectronPacketType GetPacketType()
@@ -43,6 +43,7 @@ namespace FSO.Server.Protocol.Electron.Packets
             }
             HeadOutfitId = input.GetUInt32();
             BodyOutfitId = input.GetUInt32();
+            Name = input.GetPascalVLCString();
             Description = input.GetPascalVLCString();
         }
 
@@ -64,6 +65,7 @@ namespace FSO.Server.Protocol.Electron.Packets
             }
             output.PutUInt32(HeadOutfitId);
             output.PutUInt32(BodyOutfitId);
+            output.PutPascalVLCString(Name);
             output.PutPascalVLCString(Description);
         }
     }

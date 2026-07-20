@@ -262,11 +262,6 @@ namespace FSO.Client.UI.Screens
             SetTab(_Tab); // Place() marks everything visible; restore tab visibility
         }
 
-        protected override void OnEditModeApplied()
-        {
-            if (_NameLabel != null) _NameLabel.Caption = "Name (locked — contact moderation to change):";
-        }
-
         private void Place(UIElement e, float x, float y)
         {
             if (e == null) return;
@@ -303,8 +298,7 @@ namespace FSO.Client.UI.Screens
                                                       DescriptionScrollUpButton, DescriptionScrollDownButton,
                                                       _NameLabel, _NameBox, _BioLabel, _BioBox })
                 if (b != null) b.Visible = bio;
-            // requirements only matter while the name is editable
-            if (_NameReqLabel != null) _NameReqLabel.Visible = bio && !EditMode;
+            if (_NameReqLabel != null) _NameReqLabel.Visible = bio;
 
             if (head) SimBox.FocusHead();
             else if (body) SimBox.FocusBody();

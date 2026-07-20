@@ -163,6 +163,19 @@ namespace FSO.Server.Database.DA.Avatars
                 });
         }
 
+        public bool UpdateName(uint id, string name)
+        {
+            try
+            {
+                return Context.Connection.Execute("UPDATE fso_avatars SET name = @name WHERE avatar_id = @id", new { id = id, name = name }) > 0;
+            }
+            catch (Exception)
+            {
+                //sim names are UNIQUE per shard - the only failing condition is the name being taken.
+                return false;
+            }
+        }
+
         public void UpdateDescription(uint id, string description)
         {
             Context.Connection.Query("UPDATE fso_avatars SET description = @desc WHERE avatar_id = @id", new { id = id, desc = description });
