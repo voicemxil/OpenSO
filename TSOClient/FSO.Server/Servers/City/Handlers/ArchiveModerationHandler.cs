@@ -25,6 +25,9 @@ namespace FSO.Server.Servers.City.Handlers
 
         public void Handle(IVoltronSession session, ArchiveModerationRequest packet)
         {
+            //archive-only feature: the in-session user list and its moderation actions (and the
+            //user-list broadcasts they trigger) must not run on a live dedicated server.
+            if (Context.Config.Archive == null) return;
             if (session.IsAnonymous) return;
             using (var da = DAFactory.Get())
             {
