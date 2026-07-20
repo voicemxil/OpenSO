@@ -32,6 +32,10 @@ namespace FSO.Server.Servers.Tasks.Domain
 
                 var days = (DateTime.UtcNow - new DateTime(1970, 1, 1)).TotalDays;
                 db.Transactions.Purge((int)days - 30);
+
+                //dead lots left behind when a move-out's cleanup never finished - these hold their
+                //location hostage (purchase says "lot taken" for a plot that looks empty).
+                db.Lots.DeleteAbandoned();
             }
         }
 

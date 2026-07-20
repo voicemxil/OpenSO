@@ -71,6 +71,9 @@ namespace FSO.Server.DataService.Providers
                 var all = db.Lots.All(ShardId);
                 var nhoods = db.Neighborhoods.All(ShardId);
                 foreach(var item in all){
+                    //an ownerless lot is dead and pending deletion - LoadOne already refuses these,
+                    //so don't resurrect them onto the city map across a server restart either
+                    if (item.owner_id == null && item.category != LotCategory.community) continue;
                     var roommates = db.Roommates.GetLotRoommates(item.lot_id);
                     var admit = db.LotAdmit.GetLotInfo(item.lot_id);
                     var converted = HydrateOne(item, roommates, admit, nhoods.FirstOrDefault(x => item.neighborhood_id == x.neighborhood_id));
