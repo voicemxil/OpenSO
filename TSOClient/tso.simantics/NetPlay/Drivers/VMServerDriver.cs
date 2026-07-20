@@ -552,7 +552,20 @@ namespace FSO.SimAntics.NetPlay.Drivers
                     ProblemTick = ((VMRequestResyncCmd)cmd.Command).TickID;
                     ResyncClients.Add(client); //under clientstosync lock
                 }
-            } else if (cmd.Type != VMCommandType.ChatParameters)
+            }
+            else if (cmd.Type == VMCommandType.DirectControl)
+            {
+                //direct control / first person streams one of these every tick even when the player
+                //touches nothing, which kept the AFK timeout from ever firing. Only count packets
+                //that carry actual movement input as activity, restoring the 15/20 minute idle
+                //warn/kick players expect from FreeSO.
+                var dc = (VMNetDirectControlCommand)cmd.Command;
+                if (!dc.Partial && (dc.Input.InputIntensity > 0 || dc.Input.Sprint))
+                {
+                    client.InactivityTicks = 0;
+                }
+            }
+            else if (cmd.Type != VMCommandType.ChatParameters)
             {
                 client.InactivityTicks = 0;
             }
