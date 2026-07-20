@@ -157,6 +157,37 @@ namespace FSO.Client.UI.Panels
             AnyChanges = true;
         }
 
+        /// <summary>
+        /// Whether the eyedropper/sledgehammer tools should be offered right now. They edit existing
+        /// lot objects and architecture, so they only make sense when the player can actually place or
+        /// edit here. Default: requires build/buy permission (build mode). Buy mode overrides this to
+        /// also hide them in inventory mode.
+        /// </summary>
+        protected virtual bool BuildToolsAllowed()
+        {
+            var perms = (LotController?.ActiveEntity?.TSOState as VMTSOAvatarState)?.Permissions;
+            return perms >= VMTSOAvatarPermissions.BuildBuyRoommate;
+        }
+
+        /// <summary>
+        /// Shows or hides the eyedropper + sledgehammer buttons together. When hiding them, an active
+        /// eyedropper/sledgehammer is cancelled so a now-unavailable tool can't keep operating (e.g.
+        /// switching to inventory mid-pick, or losing build/buy permission). Other custom controls
+        /// (wall/floor tools, object placement) are left untouched.
+        /// </summary>
+        protected void SetBuildToolsVisible(bool visible)
+        {
+            if (EyedropperButton != null) EyedropperButton.Visible = visible;
+            if (SledgehammerButton != null) SledgehammerButton.Visible = visible;
+
+            if (!visible && LotController != null
+                && (LotController.CustomControl is UIEyedropper || LotController.CustomControl is UISledgehammer))
+            {
+                LotController.CustomControl.Release();
+                LotController.CustomControl = null;
+            }
+        }
+
         private void SearchUpdated(string term)
         {
             Catalog.SetSearchTerm(term);
@@ -372,6 +403,11 @@ namespace FSO.Client.UI.Panels
             var active = LotController?.CustomControl;
             if (SledgehammerButton != null) SledgehammerButton.Selected = active is UISledgehammer;
             if (EyedropperButton != null) EyedropperButton.Selected = active is UIEyedropper;
+
+            // Keep tool availability in sync with the current mode/permissions every frame, so the
+            // buttons disappear (and any active tool is cancelled) the moment the player switches to
+            // inventory or no longer has placement permission.
+            SetBuildToolsVisible(BuildToolsAllowed());
 
             base.Update(state);
         }
