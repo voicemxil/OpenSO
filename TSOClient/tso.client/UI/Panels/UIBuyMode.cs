@@ -111,6 +111,18 @@ namespace FSO.Client.UI.Panels
             SetRoomCategories(false);
         }
 
+        /// <summary>
+        /// Buy mode hides the eyedropper/sledgehammer in inventory mode (Mode 2), and otherwise still
+        /// requires build/buy permission like build mode. A plain Roommate can browse the buy catalog
+        /// and their inventory but cannot place or delete objects, so they must not get the tools; only
+        /// BuildBuyRoommate and above do (see base BuildToolsAllowed). Visitors are forced into
+        /// inventory anyway, so they never see them.
+        /// </summary>
+        protected override bool BuildToolsAllowed()
+        {
+            return Mode != 2 && base.BuildToolsAllowed();
+        }
+
         public override void InitCategoryMap()
         {
             CategoryMap = new Dictionary<UIButton, int>
