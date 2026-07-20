@@ -8,6 +8,9 @@ using System.Collections.Generic;
 
 namespace FSO.Server.Api.Core.Controllers.Admin
 {
+    // Staff login endpoint: it issues the staff token, so it necessarily runs before the caller has
+    // one. Opt it out of the admin-area default-deny filter (it does its own credential + role check).
+    [AdminAllowAnonymous]
     [EnableCors("AdminAppPolicy")]
     [Route("admin/oauth/token")]
     [ApiController]
@@ -44,7 +47,24 @@ namespace FSO.Server.Api.Core.Controllers.Admin
                     }
 
                     var authSettings = da.Users.GetAuthenticationSettings(user.user_id);
-                    var isPasswordCorrect = (authSettings == null && ip == "127.0.0.1") || PasswordHasher.Verify(auth.password, new PasswordHash
+
+                    // Reject accounts with no password set instead of treating them as a passwordless
+                    // localhost login. The old `authSettings == null && ip == "127.0.0.1"` shortcut was a
+                    // box-console setup convenience, but the client IP here is derived from
+                    // X-Forwarded-For behind Caddy and isn't a trustworthy "this is really localhost"
+                    // signal — a misconfig (useProxy off behind the proxy, or a header edge case) could
+                    // turn "localhost" into "anyone". Staff accounts always have a password (registration
+                    // / admin user creation both set one), so there is no legitimate passwordless path.
+                    if (authSettings == null)
+                    {
+                        return ApiResponse.Json(System.Net.HttpStatusCode.OK, new OAuthError
+                        {
+                            error = "unauthorized_client",
+                            error_description = "user_credentials_invalid"
+                        });
+                    }
+
+                    var isPasswordCorrect = PasswordHasher.Verify(auth.password, new PasswordHash
                     {
                         data = authSettings.data,
                         scheme = authSettings.scheme_class
