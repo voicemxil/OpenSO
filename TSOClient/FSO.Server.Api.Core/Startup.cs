@@ -1,4 +1,5 @@
-﻿using FSO.Server.Common;
+﻿using FSO.Server.Api.Core.Utils;
+using FSO.Server.Common;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -40,6 +41,12 @@ namespace FSO.Server.Api.Core
             }).AddMvc(options =>
             {
                 options.EnableEndpointRouting = false;
+
+                // Default-deny backstop for the admin HTTP area: any controller under
+                // ...Controllers.Admin is staff-only at the framework level, independent of the
+                // per-action DemandModerator/DemandAdmin calls, so a future admin endpoint can't be
+                // left unprotected by a forgotten check. No-op for every non-admin route.
+                options.Filters.Add(new AdminAreaAuthorizationFilter());
             }).AddJsonOptions(options =>
             {
                 // The admin API's request DTOs (ShutdownModel, AnnouncementModel, etc.) use public FIELDS,
