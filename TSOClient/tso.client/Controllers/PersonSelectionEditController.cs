@@ -93,6 +93,16 @@ namespace FSO.Client.Controllers
                         break;
                     case "Error":
                         View.ShowCreationProgressBar(false);
+                        if (data != null && ((UpdateAvatarAppearanceResponse)data).Reason == UpdateAvatarAppearanceFailureReason.NAME_TAKEN)
+                        {
+                            ShowError(ErrorMessage.FromUIText("222", "4", "5")); //name already in use
+                            break;
+                        }
+                        if (data != null && ((UpdateAvatarAppearanceResponse)data).Reason == UpdateAvatarAppearanceFailureReason.NAME_VALIDATION_ERROR)
+                        {
+                            ShowError(ErrorMessage.FromUIText("222", "4", "14")); //name is invalid
+                            break;
+                        }
                         var message = "Your Sim could not be updated. Please try again later.";
                         if (data != null)
                         {
@@ -146,6 +156,7 @@ namespace FSO.Client.Controllers
                     AvatarId = EditTarget.ID,
                     BodyOutfitId = (uint)(View.BodyOutfitId >> 32),
                     HeadOutfitId = (uint)(View.HeadOutfitId >> 32),
+                    Name = View.Name,
                     Description = View.Description,
                     Gender = View.Gender == Gender.Male ? Server.Protocol.Voltron.Model.Gender.MALE : Server.Protocol.Voltron.Model.Gender.FEMALE,
                     SkinTone = skinTone

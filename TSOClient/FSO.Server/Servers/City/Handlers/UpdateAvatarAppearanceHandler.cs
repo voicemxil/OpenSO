@@ -1,3 +1,4 @@
+using FSO.Common.DataService;
 using FSO.Server.Database.DA;
 using FSO.Server.Protocol.Electron.Packets;
 using System;
@@ -12,14 +13,23 @@ using NLog;
 namespace FSO.Server.Servers.City.Handlers
 {
     /// <summary>
-    /// Applies an appearance edit (gender, skin tone, head, body, description) to an existing avatar
-    /// owned by the session's account. Arrives on the anonymous CAS connection, so the avatar itself
-    /// is offline and the database is the single source of truth — the next login picks the change up
-    /// everywhere. Name changes are intentionally not possible here (moderation only).
+    /// Applies an appearance edit (gender, skin tone, head, body, name, description) to an existing
+    /// avatar owned by the session's account. Arrives on the anonymous CAS connection, so the avatar
+    /// itself is offline and the database is the single source of truth — the next login picks the
+    /// change up everywhere. Renames revalidate like creation: same name rules, and the name must not
+    /// belong to another sim on the shard.
     /// </summary>
     public class UpdateAvatarAppearanceHandler
     {
         private static Logger LOG = LogManager.GetCurrentClassLogger();
+
+        /// <summary>
+        /// Must not start with whitespace
+        /// May not contain numbers or special characters
+        /// At least 3 characters
+        /// No more than 24 characters
+        /// </summary>
+        private static Regex NAME_VALIDATION = new Regex("^([a-zA-Z]){1}([a-zA-Z ]){2,23}$");
 
         /// <summary>
         /// Only printable ascii characters
@@ -30,6 +40,7 @@ namespace FSO.Server.Servers.City.Handlers
 
         private CityServerContext Context;
         private IDAFactory DAFactory;
+        private IDataService DataService;
 
         /// <summary>
         /// Used for validation, keyed by the high dword of the outfit asset ID (same as RegistrationHandler)
@@ -37,10 +48,11 @@ namespace FSO.Server.Servers.City.Handlers
         private Dictionary<uint, PurchasableOutfit> ValidFemaleOutfits = new Dictionary<uint, PurchasableOutfit>();
         private Dictionary<uint, PurchasableOutfit> ValidMaleOutfits = new Dictionary<uint, PurchasableOutfit>();
 
-        public UpdateAvatarAppearanceHandler(CityServerContext context, IDAFactory daFactory, Content.Content content)
+        public UpdateAvatarAppearanceHandler(CityServerContext context, IDAFactory daFactory, IDataService dataService, Content.Content content)
         {
             this.Context = context;
             this.DAFactory = daFactory;
+            this.DataService = dataService;
 
             content.AvatarCollections.Get("ea_female_heads.col")
                 .Select(x => content.AvatarPurchasables.Get(x.PurchasableOutfitId)).ToList()
@@ -116,6 +128,30 @@ namespace FSO.Server.Servers.City.Handlers
                     return;
                 }
 
+                //an empty name means "keep the current one". Only a CHANGED name is validated, so
+                //grandfathered names that predate the current rules can still edit their appearance.
+                var newName = (string.IsNullOrEmpty(packet.Name)) ? avatar.name : packet.Name;
+                var nameChanged = newName != avatar.name;
+
+                if (nameChanged)
+                {
+                    if (!NAME_VALIDATION.IsMatch(newName))
+                    {
+                        Fail(session, UpdateAvatarAppearanceFailureReason.NAME_VALIDATION_ERROR);
+                        return;
+                    }
+
+                    //friendly pre-check before we charge for the edit. The rename itself still
+                    //handles the race on the shard-unique name index below. The name column is
+                    //case-insensitive, so a case-only rename of our own sim matches here - by id.
+                    var existing = db.Avatars.SearchExact(Context.ShardId, newName, 1).FirstOrDefault();
+                    if (existing != null && existing.avatar_id != avatar.avatar_id)
+                    {
+                        Fail(session, UpdateAvatarAppearanceFailureReason.NAME_TAKEN);
+                        return;
+                    }
+                }
+
                 //edit price comes from the 'edit_sim' tuning entry (fso_tuning), free by default
                 var cost = (int)(db.Tuning.AllCategory("edit_sim", 0)
                     .FirstOrDefault(x => x.tuning_index == 0)?.value ?? 0);
@@ -158,6 +194,15 @@ namespace FSO.Server.Servers.City.Handlers
                     return;
                 }
 
+                if (nameChanged && !db.Avatars.UpdateName(avatar.avatar_id, newName))
+                {
+                    //someone claimed the name between the pre-check and the rename. The appearance
+                    //part of the edit has already applied - report the name specifically.
+                    DataService.Invalidate<FSO.Common.DataService.Model.Avatar>(avatar.avatar_id);
+                    Fail(session, UpdateAvatarAppearanceFailureReason.NAME_TAKEN);
+                    return;
+                }
+
                 if (packet.Description != avatar.description)
                 {
                     db.Avatars.UpdateDescription(avatar.avatar_id, packet.Description);
@@ -196,8 +241,13 @@ namespace FSO.Server.Servers.City.Handlers
                     LOG.Warn(e, "Failed to ensure dresser outfits after appearance edit for avatar " + avatar.avatar_id);
                 }
 
+                //drop any cached copy on the city data service, so person pages and searches pick up
+                //the new name/appearance without waiting for a server restart.
+                DataService.Invalidate<FSO.Common.DataService.Model.Avatar>(avatar.avatar_id);
+
                 LOG.Info("Avatar " + avatar.name + " (" + avatar.avatar_id + ") appearance edited by user " + session.UserId
-                    + (genderChanged ? " (gender changed)" : "") + (cost > 0 ? " for $" + cost : "") + ".");
+                    + (nameChanged ? " (renamed to " + newName + ")" : "") + (genderChanged ? " (gender changed)" : "")
+                    + (cost > 0 ? " for $" + cost : "") + ".");
             }
 
             session.Write(new UpdateAvatarAppearanceResponse
