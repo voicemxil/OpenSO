@@ -1296,16 +1296,6 @@ namespace FSO.LotView
 
             if (lastm != PPXDepthEngine.MSAA || lasts != PPXDepthEngine.SSAA) PPXDepthEngine.InitScreenTargets();
 
-            // hybrid-2D needs the packed-depth companion target the 2D sprite techniques write to
-            // (see Enable2DDepthTarget); sized after InitScreenTargets so it matches the backbuffer
-            PPXDepthEngine.Enable2DDepthTarget(State.CameraMode < CameraRenderMode._3D);
-
-            if (State.CameraMode < CameraRenderMode._3D)
-                FSO.Common.Utils.TwoDFingerprint.Log(
-                    $"world enable3D={FSOEnvironment.Enable3D} useMRT={FSOEnvironment.UseMRT} depthTarget={PPXDepthEngine.Has2DDepthTarget}" +
-                    $" msaa={PPXDepthEngine.MSAA} ssaa={PPXDepthEngine.SSAA} lightMode={cfg.LightingMode} advLight={cfg.AdvancedLighting}" +
-                    $" dir={cfg.Directional} camMode={State.CameraMode} texCompress={FSOEnvironment.TexCompress}");
-
             // SSAO (Scalable Ambient Obscurance, SSAO.fx/AOPass.cs): aoOn decided above (it strips MSAA).
             // The velocity predicate below includes it so the G-buffer allocates at the right precision
             // (fp32 depth, never multisampled) on the first pass.

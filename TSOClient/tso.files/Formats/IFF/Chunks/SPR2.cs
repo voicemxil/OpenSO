@@ -686,14 +686,8 @@ namespace FSO.Files.Formats.IFF.Chunks
                 var effectiveWidth = Parent.FloorCopy > 0 ? ((Width + 1) & ~1) : Width;
 
                 var tc = FSOEnvironment.TexCompress;
-                // Mip chains serve 3D billboard minification and are DirectX-only now: on the GL
-                // backend, mipped sprite textures only exist when launched 3D-enabled (never in the
-                // pure-2D client, which renders correctly) and are implicated in hybrid-2D sprite
-                // artifacts on GL. GL loses a little smoothness on far 3D billboards.
-                var mip = FSOEnvironment.Enable3D && FSOEnvironment.DirectX && (FSOEnvironment.EnableNPOTMip || (effectiveWidth == 128 && Height == 64));
+                var mip = FSOEnvironment.Enable3D && (FSOEnvironment.EnableNPOTMip || (effectiveWidth == 128 && Height == 64));
                 if (mip && TextureUtils.OverrideCompression(effectiveWidth, Height)) tc = false;
-                if (FSO.Common.Utils.TwoDFingerprint.CountOk(8))
-                    FSO.Common.Utils.TwoDFingerprint.Log($"spr2 {Width}x{Height} eff={effectiveWidth} tc={tc} mip={mip} enable3D={FSOEnvironment.Enable3D} dx={FSOEnvironment.DirectX}");
                 if (tc)
                 {
                     
@@ -798,10 +792,8 @@ namespace FSO.Files.Formats.IFF.Chunks
                 // old behavior) desynced the two grids for mipped/override sprites, shifting every
                 // per-pixel depth read near the right/bottom edges.
                 var zTc = FSOEnvironment.TexCompress;
-                var zMip = FSOEnvironment.Enable3D && FSOEnvironment.DirectX && (FSOEnvironment.EnableNPOTMip || (effectiveWidth == 128 && Height == 64));
+                var zMip = FSOEnvironment.Enable3D && (FSOEnvironment.EnableNPOTMip || (effectiveWidth == 128 && Height == 64));
                 if (zMip && TextureUtils.OverrideCompression(effectiveWidth, Height)) zTc = false;
-                if (FSO.Common.Utils.TwoDFingerprint.CountOk(8))
-                    FSO.Common.Utils.TwoDFingerprint.Log($"spr2z {Width}x{Height} eff={effectiveWidth} zPadded={zTc}");
                 if (zTc)
                 {
                     result = new CachableTexture2D(device, ((effectiveWidth+3)/4)*4, ((Height+3)/4)*4, false, SurfaceFormat.Alpha8);
