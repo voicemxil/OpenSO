@@ -34,6 +34,7 @@ namespace FSO.Server.Database.DA.Avatars
         void UpdateUser(uint id, uint user_id);
         int UpdateAvatarAppearance(DbAvatar avatar, int cost);
         bool UpdateName(uint id, string name);
+        bool UpdateNameRateLimited(uint id, string name);
         void UpdateDescription(uint id, string description);
         void UpdatePrivacyMode(uint id, byte privacy);
         void UpdateAvatarLotSave(uint id, DbAvatar avatar);

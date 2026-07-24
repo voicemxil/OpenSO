@@ -41,6 +41,8 @@ namespace FSO.Server.Protocol.Electron.Packets
         DESC_VALIDATION_ERROR = 0x05,
         INSUFFICIENT_FUNDS = 0x06,
         NAME_VALIDATION_ERROR = 0x07,
-        NAME_TAKEN = 0x08
+        NAME_TAKEN = 0x08,
+        /// <summary>Renamed within the last day. Renaming is free, so it is rate limited instead.</summary>
+        NAME_CHANGED_RECENTLY = 0x09
     }
 }

@@ -114,6 +114,9 @@ namespace FSO.Client.Controllers
                                 case UpdateAvatarAppearanceFailureReason.AVATAR_IN_USE:
                                     message = "This Sim is currently in use. Make sure they are fully logged out, then try again.";
                                     break;
+                                case UpdateAvatarAppearanceFailureReason.NAME_CHANGED_RECENTLY:
+                                    message = "This Sim was renamed within the last day. Names can only be changed once per day - you can still change their look.";
+                                    break;
                             }
                         }
                         ShowError(ErrorMessage.FromLiteral("Edit Sim", message));

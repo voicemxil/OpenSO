@@ -38,6 +38,10 @@ namespace FSO.Server.Servers.City.Handlers
         /// </summary>
         private static Regex DESC_VALIDATION = new Regex("^([a-zA-Z0-9\\s\\x20-\\x7F]){0,499}$");
 
+        /// <summary>How long a sim must wait between renames. Renaming costs nothing, so this is what
+        /// keeps names from being churned to evade reputation or impersonate another player.</summary>
+        private static readonly TimeSpan NAME_CHANGE_COOLDOWN = TimeSpan.FromDays(1);
+
         private CityServerContext Context;
         private IDAFactory DAFactory;
         private IDataService DataService;
@@ -141,6 +145,15 @@ namespace FSO.Server.Servers.City.Handlers
                         return;
                     }
 
+                    //Renaming is free, so a rate limit is the only thing stopping a player cycling names
+                    //to shed reputation or impersonate someone. One per day, per avatar.
+                    if (avatar.name_change_date != null
+                        && (DateTime.UtcNow - avatar.name_change_date.Value) < NAME_CHANGE_COOLDOWN)
+                    {
+                        Fail(session, UpdateAvatarAppearanceFailureReason.NAME_CHANGED_RECENTLY);
+                        return;
+                    }
+
                     //friendly pre-check before we charge for the edit. The rename itself still
                     //handles the race on the shard-unique name index below. The name column is
                     //case-insensitive, so a case-only rename of our own sim matches here - by id.
@@ -152,12 +165,23 @@ namespace FSO.Server.Servers.City.Handlers
                     }
                 }
 
-                //edit price comes from the 'edit_sim' tuning entry (fso_tuning), free by default
-                var cost = (int)(db.Tuning.AllCategory("edit_sim", 0)
-                    .FirstOrDefault(x => x.tuning_index == 0)?.value ?? 0);
-
                 var newGender = male ? Database.DA.Avatars.DbAvatarGender.male : Database.DA.Avatars.DbAvatarGender.female;
                 var genderChanged = avatar.gender != newGender;
+
+                //Only a change to the LOOK is charged. A rename on its own is free (it is rate limited
+                //instead), and so is a bio edit - otherwise a player would be billed $1000 for fixing a
+                //typo in their description. Comparing against the stored row is what makes that possible:
+                //the client sends the full state every time, changed or not.
+                var appearanceChanged = genderChanged
+                    || avatar.skin_tone != (byte)packet.SkinTone
+                    || avatar.head != head.OutfitID
+                    || avatar.body != body.OutfitID;
+
+                //price comes from the 'edit_sim' tuning entry (fso_tuning); free if the row is absent
+                var cost = appearanceChanged
+                    ? (int)(db.Tuning.AllCategory("edit_sim", 0)
+                        .FirstOrDefault(x => x.tuning_index == 0)?.value ?? 0)
+                    : 0;
 
                 var update = new Database.DA.Avatars.DbAvatar();
                 update.avatar_id = avatar.avatar_id;
@@ -194,7 +218,7 @@ namespace FSO.Server.Servers.City.Handlers
                     return;
                 }
 
-                if (nameChanged && !db.Avatars.UpdateName(avatar.avatar_id, newName))
+                if (nameChanged && !db.Avatars.UpdateNameRateLimited(avatar.avatar_id, newName))
                 {
                     //someone claimed the name between the pre-check and the rename. The appearance
                     //part of the edit has already applied - report the name specifically.

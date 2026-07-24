@@ -163,6 +163,23 @@ namespace FSO.Server.Database.DA.Avatars
                 });
         }
 
+        /// <summary>Rename and stamp name_change_date in one statement, so the rate-limit clock can never
+        /// be left unset by a rename that succeeded (which would make the limit trivially bypassable).</summary>
+        public bool UpdateNameRateLimited(uint id, string name)
+        {
+            try
+            {
+                return Context.Connection.Execute(
+                    "UPDATE fso_avatars SET name = @name, name_change_date = UTC_TIMESTAMP() WHERE avatar_id = @id",
+                    new { id = id, name = name }) > 0;
+            }
+            catch (Exception)
+            {
+                //duplicate name on the shard-unique index - the caller reports NAME_TAKEN
+                return false;
+            }
+        }
+
         public bool UpdateName(uint id, string name)
         {
             try

@@ -14,6 +14,9 @@
         public string description { get; set; }
         public int budget { get; set; }
         public byte privacy_mode { get; set; }
+        /// <summary>UTC time of the last Edit A Sim rename, or null if never renamed. Backs the
+        /// once-per-day rename limit (renaming is free, so it needs a limit rather than a price).</summary>
+        public System.DateTime? name_change_date { get; set; }
 
         //lot persist state beyond this point (very mutable)
 
