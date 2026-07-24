@@ -91,11 +91,35 @@ namespace FSO.Common.Utils
             return new Point(System.Math.Max(1, GD.Viewport.Width), System.Math.Max(1, GD.Viewport.Height));
         }
 
+        /// <summary>
+        /// Drop any render target still bound to the device, BEFORE the targets below are disposed.
+        ///
+        /// This is the fix for a hard crash to desktop (NullReferenceException inside MonoGame's
+        /// RenderTarget2D.ResolveSubresource). MonoGame resolves the OUTGOING binding when a new target is
+        /// set, so disposing a target while it is still bound leaves the device holding a corpse: the next
+        /// SetRenderTarget resolves it and dereferences a native texture that is already gone. Backbuffer is
+        /// created with MSAA, which is precisely the case MonoGame resolves. That is what the
+        /// "can have null subresource ... the texture is not disposed" note in SetPPXTarget is describing —
+        /// the target being handed IN is healthy, the dead one is the target being swapped OUT.
+        ///
+        /// Unbinding first is safe: the outgoing target is still alive at that moment, so its resolve
+        /// succeeds normally.
+        /// </summary>
+        private static void UnbindTargets()
+        {
+            if (GD == null) return;
+            // Never let teardown be the thing that crashes the game; a lost device throws here.
+            try { GD.SetRenderTarget(null); } catch { }
+            ActiveColor = null;
+            ActiveDepth = null;
+        }
+
         public static void InitScreenTargets()
         {
             if (GD == null) return;
             // clamp to hardware MSAA - a higher count than supported (e.g. 8x on Apple Silicon) black-screens
             if (MSAA > FSOEnvironment.MaxMSAA) MSAA = FSOEnvironment.MaxMSAA;
+            UnbindTargets(); // everything below is disposed and re-created - none of it may stay bound
             if (BackbufferDepth != null) BackbufferDepth.Dispose();
             BackbufferDepth = null;
             if (Backbuffer != null) Backbuffer.Dispose();
@@ -219,6 +243,9 @@ namespace FSO.Common.Utils
         {
             if (!enable)
             {
+                // These are bound as MRT1/MRT2 by SetVelocityTargets, so they carry the same
+                // disposed-while-bound hazard as the backbuffer (see UnbindTargets).
+                if (VelocityTarget != null || NormalTarget != null) UnbindTargets();
                 if (VelocityTarget != null) { VelocityTarget.Dispose(); VelocityTarget = null; }
                 if (NormalTarget != null) { NormalTarget.Dispose(); NormalTarget = null; }
                 if (MBTileMax != null) { MBTileMax.Dispose(); MBTileMax = null; }
@@ -232,6 +259,7 @@ namespace FSO.Common.Utils
             var velFormat = AOPreciseDepth ? SurfaceFormat.Vector4 : SurfaceFormat.HalfVector4;
             if (VelocityTarget == null || VelocityTarget.Width != Backbuffer.Width || VelocityTarget.Height != Backbuffer.Height || VelocityTarget.Format != velFormat)
             {
+                if (VelocityTarget != null || NormalTarget != null) UnbindTargets(); // never dispose a bound target
                 VelocityTarget?.Dispose();
                 VelocityTarget = new RenderTarget2D(GD, Backbuffer.Width, Backbuffer.Height, false, velFormat, DepthFormat.None, MSAA, RenderTargetUsage.PreserveContents);
                 NormalTarget?.Dispose();
@@ -382,7 +410,22 @@ namespace FSO.Common.Utils
 
             //if (color != null && depth != null) depth.InheritDepthStencil(color);
             var gd = GD;
-            gd.SetRenderTarget(color); //can have null subresource when switching to 2d with supersampling enabled, which is odd since the texture is not disposed
+            // The historical note here was "can have null subresource when switching to 2d with
+            // supersampling enabled, which is odd since the texture is not disposed". It isn't odd: the
+            // null belongs to the target being swapped OUT, which MonoGame resolves on this call, and which
+            // a re-create had disposed while it was still bound. UnbindTargets now prevents that at the
+            // source. This stays as a backstop because the failure was a crash to desktop on a stray
+            // keypress (reported 2026-07-22, never reproduced) - worst case here is one dropped frame.
+            try
+            {
+                gd.SetRenderTarget(color);
+            }
+            catch (System.NullReferenceException)
+            {
+                // Clear the stale binding, then retry once against a clean device.
+                try { gd.SetRenderTarget(null); gd.SetRenderTarget(color); }
+                catch (System.NullReferenceException) { return; } // skip this frame rather than take the process down
+            }
             if (clear)
             {
                 StencilValue = 1;
