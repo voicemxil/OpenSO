@@ -6,7 +6,7 @@
         <TargetFramework>net10.0</TargetFramework>
         <RootNamespace>FSO.Unix</RootNamespace>
         <AssemblyName>OpenSO</AssemblyName>
-        <ApplicationIcon>fso.ico</ApplicationIcon>
+        <ApplicationIcon>openso.ico</ApplicationIcon>
         <!-- R2R precompile for release publishes, matching the Windows client â€” linux/osx players
              otherwise pay full JIT warmup at launch. Per-push CI overrides this off for speed. -->
         <PublishReadyToRun>true</PublishReadyToRun>
@@ -16,7 +16,7 @@
     </PropertyGroup>
 
     <ItemGroup>
-        <Content Include="fso.ico" />
+        <Content Include="openso.ico" />
     </ItemGroup>
 
     <!-- MonoGame DesktopGL auto-loads an embedded "Icon.bmp" and calls SDL_SetWindowIcon at window
