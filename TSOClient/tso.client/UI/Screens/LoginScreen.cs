@@ -28,6 +28,13 @@ namespace FSO.Client.UI.Screens
         private UISetupBackground Background;
         public UILoginDialog LoginDialog;
         public UILoginProgress LoginProgress;
+        private UILabel VersionLabel;
+
+        /// <summary>Gap from the window edges for the version text, matching LoginProgress's inset.</summary>
+        private const int VersionMargin = 20;
+        /// <summary>Height reserved for the single-line version caption. UILabel only reports a Size when
+        /// one was explicitly assigned, so the bottom inset is measured from this instead.</summary>
+        private const int VersionLineHeight = 14;
 
         private UIAlert LastAlert;
 
@@ -62,14 +69,17 @@ namespace FSO.Client.UI.Screens
             }
 
             Background = new UISetupBackground();
-
-            /** Client version **/
-            var lbl = new UILabel();
-            lbl.Caption = "Version " + GlobalSettings.Default.ClientVersion;
-            lbl.X = 20;
-            lbl.Y = 558;
-            Background.BackgroundCtnr.Add(lbl);
             this.Add(Background);
+
+            /** Client version — pinned to the WINDOW's bottom-left, not to the background image.
+                The setup background is larger than the default window, so anchoring the caption inside
+                BackgroundCtnr (at a fixed y of 558) pushed it past the window edge and out of sight.
+                Anchoring to ScreenWidth/ScreenHeight is what LoginProgress already does. Added after the
+                background so it draws on top of it. **/
+            VersionLabel = new UILabel();
+            VersionLabel.Caption = "Version " + GlobalSettings.Default.ClientVersion;
+            this.Add(VersionLabel);
+            PositionVersionLabel();
 
             /** Progress bar **/
             LoginProgress = new UILoginProgress();
@@ -209,9 +219,18 @@ namespace FSO.Client.UI.Screens
             }
         }
 
+        /// <summary>Anchors the version caption to the window's bottom-left corner.</summary>
+        private void PositionVersionLabel()
+        {
+            if (VersionLabel == null) return;
+            VersionLabel.X = VersionMargin;
+            VersionLabel.Y = ScreenHeight - (VersionLineHeight + VersionMargin);
+        }
+
         public override void GameResized()
         {
             base.GameResized();
+            PositionVersionLabel(); // re-pin: the window edge just moved
             LoginProgress.X = (ScreenWidth - (LoginProgress.Width + 20));
             LoginProgress.Y = (ScreenHeight - (LoginProgress.Height + 20));
 
