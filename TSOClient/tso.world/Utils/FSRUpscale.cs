@@ -17,7 +17,11 @@ namespace FSO.LotView.Utils
             if (effect == null) { SSAADownsample.Draw(gd, targ); return; }
 
             gd.BlendState = BlendState.Opaque;
-            effect.CurrentTechnique = effect.Techniques["EASU"];
+            // Upscaler 2 = sharp bilinear (crisp texel blocks, bilinear seams); anything else on this
+            // path uses EASU. Null-guarded so a stale FSR.xnb without the technique still upscales.
+            var sharp = (WorldConfig.Current.Upscaler == 2) ? effect.Techniques["SharpBilinear"] : null;
+            effect.CurrentTechnique = sharp ?? effect.Techniques["EASU"];
+            if (sharp != null) effect.Parameters["SharpScale"]?.SetValue((float)gd.Viewport.Width / targ.Width);
             effect.Parameters["tex"].SetValue(targ);
             effect.Parameters["SourceSize"].SetValue(new Vector2(1f / targ.Width, 1f / targ.Height));
             effect.CurrentTechnique.Passes[0].Apply();

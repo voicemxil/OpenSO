@@ -378,6 +378,27 @@ namespace FSO.LotView.Components
                 device.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, Primitives);
             }
 
+            // Rain velocity pass: a second draw writing the streaks' TRUE velocity + depth + valid mask
+            // into MRT1 (RT0 fully write-masked — the additive colour blend cannot coexist with an
+            // opaque velocity overwrite in one pass since blend FUNCTIONS are shared across targets,
+            // only write masks are per-target). Gives the temporal resolve real motion for rain, so
+            // drops stop being averaged away against deeply-trusted background history.
+            if (useVelocity && Mode == ParticleType.RAIN)
+            {
+                var vtech = effect.Techniques["RainVelocity"]; // null with an old xnb — skip safely
+                if (vtech != null)
+                {
+                    device.BlendState = OpaqueVelWrite();
+                    effect.CurrentTechnique = vtech;
+                    for (int i = 0; i < scale; i++)
+                    {
+                        effect.Parameters["Time"].SetValue(Time + i);
+                        effect.CurrentTechnique.Passes[0].Apply();
+                        device.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, Primitives);
+                    }
+                }
+            }
+
             device.BlendState = BlendState.NonPremultiplied;
             device.DepthStencilState = DepthStencilState.Default;
             if (useVelocity)
@@ -389,7 +410,25 @@ namespace FSO.LotView.Components
         // Cached per-RT blend states. ColorWriteChannels1=Alpha means COLOR1 only writes the alpha
         // channel — particle PS outputs (0,0,0,0) → MRT1.a is multiplied down by (1-particleAlpha) under
         // the regular blend, invalidating the motion-blur alpha mask without corrupting MRT1.rg/.b.
-        private static BlendState _alphaBlendVelClear, _additiveVelClear;
+        private static BlendState _alphaBlendVelClear, _additiveVelClear, _opaqueVelWrite;
+        private static BlendState OpaqueVelWrite()
+        {
+            // The rain velocity pass: RT0 fully masked (colour was already drawn additively), MRT1
+            // overwritten opaquely with the streak's velocity/depth/mask.
+            if (_opaqueVelWrite == null)
+            {
+                _opaqueVelWrite = new BlendState
+                {
+                    ColorSourceBlend = Blend.One,
+                    ColorDestinationBlend = Blend.Zero,
+                    AlphaSourceBlend = Blend.One,
+                    AlphaDestinationBlend = Blend.Zero,
+                    ColorWriteChannels = ColorWriteChannels.None,
+                    ColorWriteChannels1 = ColorWriteChannels.All,
+                };
+            }
+            return _opaqueVelWrite;
+        }
         private static BlendState AlphaBlendVelClear()
         {
             if (_alphaBlendVelClear == null)

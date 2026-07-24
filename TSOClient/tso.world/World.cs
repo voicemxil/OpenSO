@@ -1286,10 +1286,13 @@ namespace FSO.LotView
                     : (PPXDepthEngine.GetBackbuffer()?.Height ?? gd.Viewport.Height);
                 // 0.25 at 1080p, ramping to 0.5 by 540p; floor 0.2 at high res
                 // A/B REVERT (2026-07-11): back to main's output-res-only ramp while the 07-10
-                // reference-alignment resolve is re-evaluated (user: softer + fizzle + ringing vs main).
-                // The upscale-ratio sharpen boost (x1.0 native -> x1.8 at 0.33x, ceiling 0.6) is the
-                // ringing suspect; recover it from 0a8e9901 if the resolve overhaul returns.
-                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)), 0.2f, 0.5f);
+                // Ratio-scaled: TAA's history-resample low-pass GROWS with the upscale ratio, so a flat
+                // display-keyed amount under-compensates heavy TAAU (sub-pixel stochastic detail — sand
+                // grains, raindrops — reads blurred-over at 0.33x). Boost kept moderate (x1.5 at 0.33x,
+                // ceiling 0.55): the stronger x1.8/0.6 variant drew highlight-ringing complaints.
+                float upsRatio = (PPXDepthEngine.SSAA > 0f && PPXDepthEngine.SSAA < 1f) ? 1f / PPXDepthEngine.SSAA : 1f;
+                float upsBoost = MathHelper.Lerp(1f, 1.5f, MathHelper.Clamp((upsRatio - 1f) / 2f, 0f, 1f));
+                RCASSharpen.OverrideAmount = MathHelper.Clamp(0.25f * (1080f / System.Math.Max(bbH, 1f)) * upsBoost, 0.2f, 0.55f);
             }
             else RCASSharpen.OverrideAmount = null;
             PPXDepthEngine.SharpenFunc = (sharpen || autoSharpen) ? RCASSharpen.Draw : null;
