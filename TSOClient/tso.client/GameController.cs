@@ -297,11 +297,13 @@ namespace FSO.Client
                 ChangeState<CASScreenV2, PersonSelectionEditController>((view, controller) => {
                     controller.EditTarget = avatar;
                     view.SetEditMode(avatar);
+                    controller.RequestEditPricing(); //price + balance for the makeover charge
                 });
             else
                 ChangeState<PersonSelectionEdit, PersonSelectionEditController>((view, controller) => {
                     controller.EditTarget = avatar;
                     view.SetEditMode(avatar);
+                    controller.RequestEditPricing();
                 });
         }
 

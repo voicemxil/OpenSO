@@ -531,6 +531,7 @@ namespace FSO.Server.Servers.City
                 typeof(SetPreferencesHandler),
                 typeof(RegistrationHandler),
                 typeof(UpdateAvatarAppearanceHandler),
+                typeof(EditSimInfoHandler),
                 typeof(DataServiceWrapperHandler),
                 typeof(DBRequestWrapperHandler),
                 typeof(VoltronConnectionLifecycleHandler),

@@ -39,8 +39,15 @@ namespace FSO.Server.Servers.City.Handlers
         private static Regex DESC_VALIDATION = new Regex("^([a-zA-Z0-9\\s\\x20-\\x7F]){0,499}$");
 
         /// <summary>How long a sim must wait between renames. Renaming costs nothing, so this is what
-        /// keeps names from being churned to evade reputation or impersonate another player.</summary>
-        private static readonly TimeSpan NAME_CHANGE_COOLDOWN = TimeSpan.FromDays(1);
+        /// keeps names from being churned to evade reputation or impersonate another player.
+        /// EditSimInfoHandler reads it too, so CAS can grey the name field before the player types.</summary>
+        public static readonly TimeSpan NAME_CHANGE_COOLDOWN = TimeSpan.FromDays(1);
+
+        /// <summary>fso_transactions type for the makeover charge. Deliberately above 50: JobBalanceTask
+        /// aggregates types 41-50 to rebalance money-object payouts, and a CAS charge in that window would
+        /// skew the daily rates. Must also be &gt; 7 or the ledger row is skipped entirely (see
+        /// SqlAvatars.Transaction).</summary>
+        private const int CAS_EDIT_TRANSACTION_TYPE = 51;
 
         private CityServerContext Context;
         private IDAFactory DAFactory;
@@ -216,6 +223,15 @@ namespace FSO.Server.Servers.City.Handlers
                     //avatar row exists, so the only failing condition is the budget guard
                     Fail(session, UpdateAvatarAppearanceFailureReason.INSUFFICIENT_FUNDS);
                     return;
+                }
+
+                if (cost > 0)
+                {
+                    //the debit above is its own guarded UPDATE rather than a Transaction(), so the ledger
+                    //row has to be written separately. Never let a reporting failure undo an edit that
+                    //already applied - the money has moved either way.
+                    try { db.Transactions.Log(avatar.avatar_id, uint.MaxValue, CAS_EDIT_TRANSACTION_TYPE, cost); }
+                    catch (Exception e) { LOG.Warn(e, "Failed to log the CAS edit charge for avatar " + avatar.avatar_id); }
                 }
 
                 if (nameChanged && !db.Avatars.UpdateNameRateLimited(avatar.avatar_id, newName))

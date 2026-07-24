@@ -42,6 +42,8 @@ namespace FSO.Server.Protocol.Electron
         FSOVMSurroundPuppets,
         UpdateAvatarAppearanceRequest,
         UpdateAvatarAppearanceResponse,
+        EditSimInfoRequest,
+        EditSimInfoResponse,
         Unknown = 0xFFFF
     }
 

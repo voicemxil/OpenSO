@@ -43,6 +43,18 @@ namespace FSO.Client.Regulators
             this.AsyncProcessMessage(packet);
         }
 
+        /// <summary>Raised when the server answers with the edit price / balance. Deliberately outside the
+        /// state machine: this is a read-only query that can arrive at any time and must not disturb an
+        /// edit in flight.</summary>
+        public event System.Action<EditSimInfoResponse> OnEditSimInfo;
+
+        /// <summary>Ask what an edit costs and what this sim can afford, so CAS can price the change up
+        /// front instead of failing on Accept.</summary>
+        public void RequestInfo(uint avatarId)
+        {
+            City.Write(new EditSimInfoRequest { AvatarId = avatarId });
+        }
+
         protected override void OnAfterTransition(RegulatorState oldState, RegulatorState newState, object data)
         {
         }
@@ -77,6 +89,10 @@ namespace FSO.Client.Regulators
         {
             if(message is UpdateAvatarAppearanceResponse){
                 AsyncProcessMessage(message);
+            }
+            else if (message is EditSimInfoResponse info)
+            {
+                OnEditSimInfo?.Invoke(info);
             }
         }
     }

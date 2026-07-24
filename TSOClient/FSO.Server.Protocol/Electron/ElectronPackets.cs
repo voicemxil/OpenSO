@@ -46,6 +46,8 @@ namespace FSO.Server.Protocol.Electron
             typeof(FSOVMSurroundPuppets),
             typeof(UpdateAvatarAppearanceRequest),
             typeof(UpdateAvatarAppearanceResponse),
+            typeof(EditSimInfoRequest),
+            typeof(EditSimInfoResponse),
         };
 
         static ElectronPackets()

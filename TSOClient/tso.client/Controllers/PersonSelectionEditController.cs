@@ -29,6 +29,24 @@ namespace FSO.Client.Controllers
 
             CASRegulator.OnTransition += CASRegulator_OnTransition;
             EditRegulator.OnTransition += EditRegulator_OnTransition;
+            EditRegulator.OnEditSimInfo += EditRegulator_OnEditSimInfo;
+        }
+
+        /// <summary>Server told us what a makeover costs and what this sim has. Hand it to the screen so
+        /// the price shows and Accept can refuse an unaffordable change up front.</summary>
+        private void EditRegulator_OnEditSimInfo(EditSimInfoResponse info)
+        {
+            Common.Utils.GameThread.NextUpdate(x =>
+            {
+                View?.SetEditPricing(info.AppearancePrice, info.Budget);
+            });
+        }
+
+        /// <summary>Ask the server for the edit price + balance. Called once the CAS connection is up and
+        /// the screen knows which avatar it is editing.</summary>
+        public void RequestEditPricing()
+        {
+            if (EditTarget != null) EditRegulator.RequestInfo(EditTarget.ID);
         }
 
         private void CASRegulator_OnTransition(string state, object data)

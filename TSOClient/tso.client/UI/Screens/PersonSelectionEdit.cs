@@ -251,6 +251,38 @@ namespace FSO.Client.UI.Screens
             });
         }
 
+        //The look the sim had when the screen opened. Changing any of these is what costs simoleons;
+        //renaming and editing the bio are free, so they must not be blocked by an unaffordable price.
+        protected Gender OriginalGender;
+        protected AppearanceType OriginalAppearanceType;
+        protected ulong OriginalHeadOutfitID;
+        protected ulong OriginalBodyOutfitID;
+
+        /// <summary>Price of an appearance change and what this sim can pay, from the server (see
+        /// EditSimInfoHandler). Price stays 0 until the answer arrives, so nothing is claimed before
+        /// it is known.</summary>
+        protected int AppearancePrice;
+        protected int AvatarBudget;
+
+        /// <summary>True when the sim's look differs from what it was when the screen opened - i.e. when
+        /// this edit would actually be charged.</summary>
+        public bool AppearanceChanged =>
+            EditMode && (Gender != OriginalGender
+                || AppearanceType != OriginalAppearanceType
+                || HeadOutfitId != OriginalHeadOutfitID
+                || BodyOutfitId != OriginalBodyOutfitID);
+
+        /// <summary>True when the look changed but the sim can't pay for it.</summary>
+        public bool CannotAffordChange => AppearanceChanged && AppearancePrice > 0 && AvatarBudget < AppearancePrice;
+
+        /// <summary>Server's answer to the edit-price query. Refreshes the price label and Accept.</summary>
+        public virtual void SetEditPricing(int price, int budget)
+        {
+            AppearancePrice = price;
+            AvatarBudget = budget;
+            UpdateAcceptButtonState();
+        }
+
         /// <summary>
         /// Switches the screen to edit an existing avatar: preselects their current gender, skin tone,
         /// head and body. The name stays editable — the server revalidates it like a new sim's name
@@ -280,6 +312,13 @@ namespace FSO.Client.UI.Screens
 
             NameTextEdit.CurrentText = avatar.Name;
             DescriptionTextEdit.CurrentText = avatar.Description ?? "";
+
+            //remember the look we started from: only a CHANGE to it is charged, so Accept can stay
+            //enabled for a free rename or bio edit even when the sim can't afford a makeover.
+            OriginalGender = Gender;
+            OriginalAppearanceType = AppearanceType;
+            OriginalHeadOutfitID = avatar.HeadOutfitID;
+            OriginalBodyOutfitID = avatar.BodyOutfitID;
 
             RefreshCollections();
             SearchCollectionForInitID(avatar.HeadOutfitID, avatar.BodyOutfitID);
@@ -456,6 +495,13 @@ namespace FSO.Client.UI.Screens
             }
 
             if (!DESC_VALIDATION.IsMatch(DescriptionTextEdit.CurrentText))
+            {
+                enabled = false;
+            }
+
+            //a look the sim can't pay for would be refused by the server anyway - block it here so the
+            //player finds out before filling in a whole new appearance, not after pressing Accept.
+            if (CannotAffordChange)
             {
                 enabled = false;
             }
