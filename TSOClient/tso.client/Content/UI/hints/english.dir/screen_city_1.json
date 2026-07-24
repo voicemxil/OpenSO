@@ -1,7 +1,7 @@
 {
     "guid": "f2c4cfad-9060-40ec-9958-a48c57b95023", 
     "trigger": "screen:city",
-    "title": "Welcome To FreeSO!",
+    "title": "Welcome To OpenSO!",
     "category": "Basics",
     "image": "hint_city.png",
     "order": -2,

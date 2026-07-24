@@ -30,7 +30,7 @@ namespace FSOiOS
             var g = new UITapGestureRecognizer(() => View.EndEditing(true));
             View.AddGestureRecognizer(g);
             
-            UIAlertView _error = new UIAlertView("Welcome!", "To run FreeSO on iOS, you must transfer the TSO game files into this app. For instructions, see the forums.", null, "Ok", null);
+            UIAlertView _error = new UIAlertView("Welcome!", "To run OpenSO on iOS, you must transfer the TSO game files into this app. For instructions, see the forums.", null, "Ok", null);
             _error.Show();
         }
 

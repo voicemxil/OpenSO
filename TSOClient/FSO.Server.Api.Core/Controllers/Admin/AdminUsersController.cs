@@ -132,7 +132,7 @@ namespace FSO.Server.Api.Core.Controllers.Admin
                     target_id = uint.Parse(mail.target_id),
                     subject = mail.subject,
                     body = mail.body,
-                    sender_name = "FreeSO Staff",
+                    sender_name = "OpenSO Staff",
                     time = DateTime.UtcNow,
                     msg_type = 4,
                     msg_subtype = 0,

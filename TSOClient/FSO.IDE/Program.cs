@@ -46,7 +46,7 @@ namespace FSO.IDE
                 }
                 catch (Exception e)
                 {
-                    MessageBox.Show("Failed to find FreeSO or Simitone. Ensure their binary files have the correct name! \r\n" + e.ToString());
+                    MessageBox.Show("Failed to find OpenSO or Simitone. Ensure their binary files have the correct name! \r\n" + e.ToString());
                     return;
                 }
             }

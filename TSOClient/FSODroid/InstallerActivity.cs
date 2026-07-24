@@ -12,7 +12,7 @@ using System.Threading;
 
 namespace FSODroid.Resources.Layout
 {
-    [Activity(Label = "FreeSO Installer"
+    [Activity(Label = "OpenSO Installer"
         , Icon = "@drawable/icon"
         , AlwaysRetainTaskState = true
         , LaunchMode = Android.Content.PM.LaunchMode.SingleInstance

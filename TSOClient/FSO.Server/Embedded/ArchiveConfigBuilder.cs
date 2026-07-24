@@ -111,7 +111,7 @@ namespace FSO.Server.Embedded
                                         guid = 1303919565,
                                         mail_subject = "1000 Days!",
                                         mail_message = "This is an example gift that shows how birthday gifts can be awarded by the server at different milestones - this one is for 1000 days. Please change this message. Or leave it the same, I don't mind.\n - Rhys",
-                                        mail_sender_name = "FreeSO Developers"
+                                        mail_sender_name = "OpenSO Developers"
                                     }
                                 }
                             }

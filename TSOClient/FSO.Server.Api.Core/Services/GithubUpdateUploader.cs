@@ -11,7 +11,7 @@ namespace FSO.Server.Api.Core.Services
     {
         private GithubConfig Config;
 
-        private static string Description = "This is an automated client release produced by the master FreeSO server. " +
+        private static string Description = "This is an automated client release produced by the master OpenSO server. " +
             "These releases match up with a branch on GitHub, but with some addon content such as a custom catalog and splash. " +
             "It can be downloaded and installed directly, but it is better to do so through the game's launcher/updater. \n\n" +
             "The incremental update is applied by simply extracting the zip over the previous version of the game " +

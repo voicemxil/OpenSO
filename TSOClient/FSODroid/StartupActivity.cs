@@ -9,7 +9,7 @@ using System.Threading;
 
 namespace FSODroid
 {
-    [Activity(Label = "FreeSO"
+    [Activity(Label = "OpenSO"
         , Icon = "@drawable/icon"
         , Theme = "@style/Theme.Splash"
         , AlwaysRetainTaskState = true

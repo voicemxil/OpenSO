@@ -90,7 +90,7 @@ namespace FSO.Windows
             {
                 if (exception is OutOfMemoryException)
                 {
-                    MessageBox.Show(e.ExceptionObject.ToString(), "Out of Memory! FreeSO needs to close.");
+                    MessageBox.Show(e.ExceptionObject.ToString(), "Out of Memory! OpenSO needs to close.");
                 }
                 else
                 {

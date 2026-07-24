@@ -332,9 +332,9 @@ namespace FSO.IDE.ContentEditors
         private void saveToolStripMenuItem_Click(object sender, EventArgs e)
         {
             var result = MessageBox.Show(
-                "This will save over the default FreeSO data service definitions. " +
+                "This will save over the default OpenSO data service definitions. " +
                 "(Content/FSODataDefinition.dat) " +
-                "These won't be automatically activated in this instance of FreeSO, " +
+                "These won't be automatically activated in this instance of OpenSO, " +
                 "but they will be when the game restarts. \r\n\r\n" +
                 "Are you sure you want to save here?", "Warning", MessageBoxButtons.YesNo);
             if (result == DialogResult.No) return;

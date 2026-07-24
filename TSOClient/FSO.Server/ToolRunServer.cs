@@ -462,7 +462,7 @@ namespace FSO.Server
                 TargetID = target_id,
                 Subject = subject,
                 Body = body,
-                SenderName = "FreeSO Staff",
+                SenderName = "OpenSO Staff",
                 Time = DateTime.UtcNow.Ticks,
                 Type = 4,
                 Subtype = 0,
@@ -507,7 +507,7 @@ namespace FSO.Server
 
                 string timeString = (remaining % 60 == 0 && remaining > 60) ? ((remaining / 60) + " minutes") : (remaining + " seconds");
                 LOG.Info("Shutdown in " + timeString);
-                BroadcastMessage("FreeSO Server", "Shutting down", "The game server will go down for maintenance in " + timeString + ".");
+                BroadcastMessage("OpenSO Server", "Shutting down", "The game server will go down for maintenance in " + timeString + ".");
             }
 
             await Task.Delay((int)remaining * 1000);

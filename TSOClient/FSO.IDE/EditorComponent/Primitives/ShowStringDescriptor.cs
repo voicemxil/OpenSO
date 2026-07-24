@@ -33,7 +33,7 @@ namespace FSO.IDE.EditorComponent.Primitives
         public override void PopulateOperandView(BHAVEditor master, EditorScope escope, TableLayoutPanel panel)
         {
             panel.Controls.Add(new OpLabelControl(master, escope, Operand, new OpStaticTextProvider("Allows the stack object to print a string. " +
-                "In FreeSO, this message prints to chat, and can be used to make NPCs talk.")));
+                "In OpenSO, this message prints to chat, and can be used to make NPCs talk.")));
             panel.Controls.Add(new OpValueControl(master, escope, Operand, "STR Table:", "StringTable", new OpStaticValueBoundsProvider(0, 65535)));
             panel.Controls.Add(new OpValueControl(master, escope, Operand, "String ID:", "StringID", new OpStaticValueBoundsProvider(0, 65535)));
             panel.Controls.Add(new OpFlagsControl(master, escope, Operand, "Flags:", new OpFlag[] { new OpFlag("No Chat History", "NoHistory") }));
