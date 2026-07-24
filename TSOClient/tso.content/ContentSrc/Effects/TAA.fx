@@ -68,7 +68,6 @@ float TuneStillGateFloor = 0.25;     // stillGate suspicion velocity scale floor
 float TuneMoveGateLo = 0.6;          // moveGate smoothstep lower edge (native px/frame)
 float TuneMoveGateHi = 2.0;          // moveGate smoothstep upper edge (native px/frame)
 float TuneRespEnd = 0.60;            // responsive end of the diff-driven blend lerp (full-diff history weight)
-float TuneMotionTrustCap = 0.65;     // motion trust cap at upscale (interior-texture ghost lever)
 float TuneMotionClampTighten = 0.72; // motion-scaled variance-clamp tighten at upscale (self-reveal lever)
 float TuneGamma = 1.5;               // variance clamp base width (sigma) — TAA_Core's GAMMA
 float TuneTexDetailFloor = 0.28;     // texture-detail blend floor / low-variance anti-ghost backstop
@@ -403,13 +402,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float4 vCen = tex2Dlod(velocitySampler, float4(boxUV, 0, 0));
     float2 centerVel = vCen.rg; // unwritten decodes as zero
     // Reactive-band centers get no depth anchor either — see the structural-transparency note in the
-    // loop; the pixel's tests and reprojection then follow the scene behind the streak. SM3 keeps the
-    // plain validity threshold (register budget — the whole exclusion is SM4-only there).
-#if SM4
+    // loop; the pixel's tests and reprojection then follow the scene behind the streak. BOTH
+    // profiles: the threshold itself costs no registers (only the reactMask DILATION needed the SM4
+    // gate), and 0.5 on SM3 let rain hijack dilation/depth-range/thin tests on the OGL backend.
 #define VEL_STRUCT 0.9
-#else
-#define VEL_STRUCT 0.5
-#endif
     float centerDepth = (vCen.a >= VEL_STRUCT) ? vCen.b : -1.0; // -1 = no depth anchor (weighting disabled)
     // REACTIVE MASK decode (a = 1 - 0.5*r band, currently written by the rain velocity pass): the
     // FSR particle contract — transient content declares itself instead of relying on inference.
@@ -571,6 +567,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // direct-clamp handoff, clamp slash) begin closing before any residue is visible, so the
     // rest->motion transition reads as a ramp instead of a hard cutoff.
     float slowMotion = smoothstep(0.015, 0.25, velPx);
+    // STORED-VELOCITY DEAD ZONE, LSB-SCALED: the meta GB encode (v*10+0.5, 8-bit) leaves a
+    // deterministic half-LSB error per axis at rest (0.5*255 sits exactly between two codes), and
+    // that error in PIXELS scales with output resolution — a fixed constant under-covered it above
+    // 1080p (0.43 px at 1080p, 0.58 at 1440p, 0.86 at 4K), so phantom rest motion crushed the deep
+    // window and part-armed the rejects on high-res outputs. 1.15 = safety over the exact diagonal.
+    float storedDead = 1.15 * length(1.961e-4 * texSize) * VelGatePxScale;
     // FOREIGN-VELOCITY SIGNAL: the nearest-depth dilation gives the ring of background pixels around a
     // mover's silhouette the MOVER's velocity — their history reprojects from the wrong place while
     // passing every depth test. foreign measures the dilated-vs-own-velocity disagreement; it feeds
@@ -691,7 +693,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // from the pixel's own, while canopy during a pan shares the camera's motion — relative motion
         // restores authority regardless of oscillation evidence (a slow trail over osc-proven ground must
         // still scrub).
-        float relFgnPxE = max(0.0, (debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale) - 0.45); // 8-bit decode noise floor — see storedMovePx
+        float relFgnPxE = max(0.0, (debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale) - storedDead); // 8-bit decode noise floor — see storedDead
         float relMotionE = smoothstep(0.1, 1.0, max(velFgnPx, relFgnPxE)); // low band — see relMotion
         pointDiffPre = saturate(abs(m1.x - hLow.x) / max(0.2, max(m1.x, hLow.x)));
         // The osc discount FADES on a visible resolution-matched difference: deeply-accumulated fine
@@ -712,14 +714,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 
     // Stored (remembered) motion decoded here so the continuous arm below can serve the range
     // reject too — see the storedMove comment at the ghost-side block for the semantics.
-    // QUANTIZATION DEAD ZONE: the meta GB encode (v*10+0.5, 8-bit) has a ~0.28 px/axis rounding
-    // step at output res, so at perfect rest the decode reads up to ~0.4 px of pure storage noise.
-    // The old walking-speed band sat above that floor implicitly; the continuous motion curves
-    // start from the first sub-pixel and armed on the noise — depth rejection "triggering on
-    // jitter-sized motion while stationary". Subtract the noise floor: stored motion below it is
-    // indistinguishable from rest by construction (the CURRENT-frame velocity is float and exactly
-    // zero at rest, so real slow motion still arms through velPx).
-    float storedMovePx = max(0.0, (debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1) * texSize) * VelGatePxScale) - 0.45);
+    // Quantization dead zone (storedDead, LSB-scaled — see its definition): stored motion below the
+    // encode's own noise floor is indistinguishable from rest by construction; the CURRENT-frame
+    // velocity is float and exactly zero at rest, so real slow motion still arms through velPx.
+    float storedMovePx = max(0.0, (debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1) * texSize) * VelGatePxScale) - storedDead);
     float storedMove = smoothstep(0.35, 1.5, storedMovePx);
     // CONTINUOUS REJECTION ARMING (completes the continuous-motion family): the walking-speed band
     // left depth evidence with NO authority below ~0.35 px — slow pans carried the ghost untouched
@@ -749,7 +747,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // has the near content moving RELATIVE to the background (current foreign velocity, or the REMEMBERED
     // meta velocity vs the pixel's own); a static edge shares the camera's motion. Invalid center falls
     // back to the range test.
-    float storedFgnPx = max(0.0, (debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale) - 0.45); // 8-bit decode noise floor — see storedMovePx
+    float storedFgnPx = max(0.0, (debugMeta ? 0.0 : length(((pm.gb - 0.5) * 0.1 - centerVel) * texSize) * VelGatePxScale) - storedDead); // 8-bit decode noise floor — see storedDead
     // LOW band (0.1..1.0 native px): relative/foreign velocity is EXACTLY zero at rest and on camera
     // pans (shared motion), and the un-jittered velocity buffer means jitter cannot fake it — so any
     // real foreign velocity, however slow, is honest evidence. The old walking-speed band left slow
@@ -874,11 +872,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // are re-born spatially anti-aliased for the memory window. SM4-only.
 #if SM4
     float nearerM = max(dmin - rnPrev - DepthRejectParams.x * 2.0, 0.0);
+    // Color-evidence bound at ALL ratios: staticAuth is only computed above 1.5x — at native it sat
+    // at 1.0 and memGhost fired at full strength for its whole memory window even after the trail
+    // color was already scrubbed (a raw crawling wake behind movers). The inline curve (m1 vs the
+    // history's low component, same operands as staticAuth's) collapses sustained fire once history
+    // matches current again; min() keeps the >1.5x path's steeper authority when present.
+    float memAuth = min(staticAuth, lerp(0.1, 1.0, smoothstep(0.02, 0.06, length(m1 - hLow))));
     float memGhost = (dmax < dmin) ? 0.0 :
         smoothstep(0.02, 0.08, nearerM / max(rnPrev, DepthRejectParams.w))
         * (1.0 - oscShield)
         * (1.0 - max(moveGate, storedMove))
-        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * staticAuth * 0.85;
+        * ((centerDepth >= 0.0) ? 1.0 : 0.0) * memAuth * 0.85;
     ghostReject = max(ghostReject, memGhost);
 #endif
 
@@ -1009,7 +1013,12 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // rounds away in storage and would hold residual osc forever (a monotonic ghost must decay
         // to zero).
         float oscUp = lerp(prevOsc, 1.0, oscRateUp * testify);
-        float oscDn = max(prevOsc - max(0.15 * prevOsc, 1.0 / 15.0) * testify, 0.0);
+        // Decay floor applied AT the storage quantum on witnessed frames: multiplying the floored
+        // step by a partial testify made sub-half-level decrements that round away in the 4-bit
+        // store — osc built (build steps span levels) but effectively never decayed at heavy TAAU.
+        // A witnessed frame (testify >= 0.5) now always decays at least one stored level.
+        float oscDn = max(prevOsc - max(max(0.15 * prevOsc, 1.0 / 15.0) * testify,
+                                        (1.0 / 15.0) * step(0.5, testify)), 0.0);
         osc = lerp(oscDn, oscUp, flip); // ~6-7 witnessed-flip build, base-rate decay
         // ALTERNATING AMPLITUDE (TSR Moire-lite state): the witnessed |delta| on flip frames, kept as
         // a 3-bit saturating counter — quantized one-level nudges instead of an EMA (3-bit EMA updates
@@ -1138,10 +1147,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // pixels on screen) the lock's amp slack and diff discount carried drifting history as visible
     // ghosting through the whole slow-pan range, then released at one speed. Locks now shed
     // strength from the first real motion along the same hyperbolic family as trust/box/arming:
-    // clean coherent motion (suspicion-scaled, TuneStillGateFloor) at ~0.83 by 0.25 px, ~0.53 at
-    // 1 px, ~0.33 at 2 px, gone by ~6-8 px; flagged pixels release much sooner. The 1.15 overshoot
-    // makes the release actually REACH zero (a pure hyperbola never does — and locks surviving
-    // fast motion is the reverted aliasing/crawl regression).
+    // clean coherent motion (suspicion-scaled, TuneStillGateFloor 0.25) at ~0.87 by 0.25 px, ~0.62
+    // at 1 px, ~0.43 at 2 px, zero by ~13 px; flagged pixels release much sooner. The 1.15
+    // overshoot makes the release actually REACH zero (a pure hyperbola never does — and locks
+    // surviving fast motion is the reverted aliasing/crawl regression).
     float stillGate = saturate(1.0 - 1.15 * (1.0 - 1.0 / (1.0 + velPx * lerp(TuneStillGateFloor, 1.0, suspicion) * 2.0)));
     // Lock entry eases with render scale (floorScale): under heavy TAAU an output pixel is witnessed only
     // ~1 frame in 1/scale^2, so lock evidence accumulates that much slower — entry edge 0.24 at <= 0.5x,
@@ -1194,7 +1203,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float staleFade = 1.0 - smoothstep(0.08, 0.25, pointDiffPre);
     // Amp slack fades with ACCUMULATED drift too (velPx * window): the swing it licenses belongs to
     // a stationary limit cycle; after ~half a pixel of translation the licensed values are stale.
-    float ampDrift = 1.0 - 0.75 * smoothstep(0.25, 0.75, velPx * min(prevN, 32.0));
+    // (window proxy clamped at 96, not 32: below ~0.02 px/frame the drift-budget window exceeds 32
+    // frames and the old clamp read "no drift" in exactly the ultra-slow band where steady-state
+    // staleness is largest)
+    float ampDrift = 1.0 - 0.75 * smoothstep(0.25, 0.75, velPx * min(prevN, 96.0));
     float ampSlackY = oscAmp * 0.35 * lockGates * staleFade * ampDrift;
     cmin.x -= ampSlackY;
     cmax.x += ampSlackY;
@@ -1207,8 +1219,11 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // it may calm phase noise around a CONVERGED blurred mean but can never escort a drifting one
     // (the staleness it admits raises the very signal that closes it). Evidence-collapsed; real
     // lines get none (dirCoherence zeroes clutter).
+    // ampDrift joins the gate stack: on SM3 pointDiffPre is 0 (staleFade permanently 1) and the
+    // instantaneous velocity gate cannot see sub-0.03 px creep — the accumulated-drift term is the
+    // slack's only self-limiter there, and a consistent extra bound on SM4.
     float clutterSlackY = clutter * 0.5 * sigma.x * saturate(upscaleRatio - 1.5)
-                        * (1.0 - suspGamma) * (1.0 - smoothstep(0.005, 0.03, velPx)) * staleFade;
+                        * (1.0 - suspGamma) * (1.0 - smoothstep(0.005, 0.03, velPx)) * staleFade * ampDrift;
     cmin.x -= clutterSlackY;
     cmax.x += clutterSlackY;
     // SAME-SURFACE BOX on thin ridges (replaces moving the box toward history — a history-inclusive
@@ -1317,7 +1332,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // instantaneous speed alone left it ~85% open at 0.05 px/frame while the detail it showed was a
     // dozen frames (~a full pixel of drift) stale — THE "branches ghost history detail at the
     // slowest speeds" carrier. Closed by half a pixel of accumulated drift, fully by 3/4.
-    float drifted = smoothstep(0.25, 0.75, velPx * min(prevN, 32.0));
+    float drifted = smoothstep(0.25, 0.75, velPx * min(prevN, 96.0)); // 96-clamp: see ampDrift note
     history = lerp(history, historyRaw, oscLock * (1.0 - 0.5 * oscAmp) * (1.0 - max(slowMotion, drifted)));
 
     // === BLEND — FSR2-style two-owner form: A = accumulated trust (in N-units, from the Kalman
@@ -1375,7 +1390,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // moderate+ speeds (per-frame displacement already exceeds the detail scale there — the clamp
     // owns it, and a 2-frame window at walking speed would shimmer), and the deep cap owns rest.
     // Full-strength min — the TARGET carries all velocity dependence, so no ramp can defeat it:
-    // rest deep, ~27 at 0.02 px, ~12 at 0.05, ~6 at 0.1, ~5.6 at 0.3, ~4.5 at 1, 1 by 20.
+    // rest deep, ~27 at 0.02 px, ~12 at 0.05, ~6 at 0.1, ~5.6 at 0.3, ~4.5 at 1, ~0.65 by 20
+    // (near equal-weight; the endpoint is the 0.65-scaled hyperbola, not exactly 1).
     float fsrVel = max(velPx, storedMovePx);
     float driftCap = 0.6 / max(fsrVel, 1e-3);
     A = min(A, max(driftCap, 0.65 * 10.0 / (1.0 + fsrVel * 0.45)));
@@ -1384,7 +1400,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     A = CapA(A, 0.05, reactMask); // raw at full reactivity (FSR resets accumulation outright) — a
                                   // drop's history residue must die in one frame, not tail for three
     // FSR3 clamp-event slash (computed at the rectification site): near-raw on a box violation.
-    A = lerp(A, min(A, 0.2), clampSlash);
+    // CapA form, not a linear A-lerp — trust weight is hyperbolic in A, so mid-range linear lerps
+    // barely move the blend (the exact toothless form the CapA helper exists to replace).
+    A = CapA(A, 0.2, clampSlash);
     // --- c: this frame's information. Base 1; under TAAU scaled by the nearest real sample's kernel
     // proximity (FSR2's frame weighting — off-phase frames are interpolation and inject less), with
     // the coverage-scaled anti-starvation floor and the motion regime as before. The old trust-fade
@@ -1584,7 +1602,10 @@ TAAOut TAALite_PS(VSOut input)
         if (dx == 0 || dy == 0) // compile-time: plus pattern only
         {
             float4 v = tex2Dlod(velocitySampler, float4(boxUV + float2(dx, dy) * InvColorSize, 0, 0));
-            float validTap = step(0.5, v.a);
+            // 0.9 edge: the reactive band (rain, a in [0.5,0.75]) is structurally unwritten here
+            // too — the streak's fall velocity must not win Lite's dilation or enter its depth
+            // range (same contract as the core's VEL_STRUCT).
+            float validTap = step(0.9, v.a);
             // Unwritten velocity pushed to sentinel depth 2.0 (beyond valid [0,1]) so a genuinely-far
             // valid pixel still wins the nearest-depth tiebreak. lerp, not ternary.
             float d = lerp(2.0, v.b, validTap);
@@ -1661,9 +1682,11 @@ TAAOut TAALite_PS(VSOut input)
     float blend = saturate((1.0 - historyWeight) + motionBoost); // current-frame weight
 
     // Sample-confidence injection gate: frames whose kernel barely covers this pixel inject little (their
-    // estimate is an amplified tail) — except under motion, where responsiveness wins. Exactly 1 at
-    // native (see sampleConf note).
-    blend *= lerp(lerp(LiteConfFloor, 1.0, sampleConf), 1.0, moveGate);
+    // estimate is an amplified tail) — except under motion, where responsiveness wins. RATIO-RAMPED
+    // (arithmetic-only, branch-law safe): native TAA still jitters, so sampleConf dips on off-centre
+    // phases even at 1:1 — ungated, the throttle phase-modulated native convergence ~2x.
+    blend *= lerp(1.0, lerp(lerp(LiteConfFloor, 1.0, sampleConf), 1.0, moveGate),
+                  saturate((upscaleRatio - 1.0) * 4.0));
     // Honest disocclusion: strong depth evidence forces the current frame through regardless of trust.
     blend = max(blend, smoothstep(LiteHonestLo, LiteHonestHi, depthReject));
     // Warmup: a young history (small N) cannot claim deep trust yet.
