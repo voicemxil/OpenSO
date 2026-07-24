@@ -6,6 +6,9 @@ using FSO.Files;
 using FSO.LotView.Model;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using System;
+using System.Collections.Generic;
+using System.IO;
 
 namespace FSO.LotView.Components
 {
@@ -203,12 +206,10 @@ namespace FSO.LotView.Components
             DepthClipEnable = false
         };
 
-        // previous-frame dome MVP for velocity output (camera-rotation reprojection)
+        // previous-frame dome MVP for the velocity output (camera-rotation reprojection)
         private Matrix _prevSkyMVP;
         private bool _prevSkyMVPValid;
 
-        // `projection` must be the UN-jittered camera projection - TAA jitter is applied here
-        // (PPXDepthEngine.TAAJitterNDC) so all callers get identical jitter/velocity handling.
         public void Draw(GraphicsDevice gd, Color outsideColor, Matrix view, Matrix projection, float time, WeatherController weather, Vector3 sunVector, float scale)
         {
             var ocolor = outsideColor.ToVector4();
@@ -216,16 +217,14 @@ namespace FSO.LotView.Components
 
             if (LastSkyPos != time) BuildSkyDome(gd, time);
 
-            var color = (ocolor - new Vector4(0.35f)) * 1.5f + new Vector4(0.35f);
+            var color = ocolor - new Vector4(0.35f) * 1.5f + new Vector4(0.35f);
             color.W = 1;
             var wint = Math.Min(1f, weather.WeatherIntensity);
 
             effect.LightingEnabled = false;
             effect.Texture = GradTex;
             effect.Alpha = (1 - (float)Math.Sqrt(wint) * 0.75f);
-            // exposure < 1 tames the LDR sunrise/sunset white band; pushed to both BasicEffect and SkyVelocity
-            const float SkyExposure = 0.85f;
-            effect.DiffuseColor = new Vector3(SkyExposure);
+            effect.DiffuseColor = Vector3.One;
             effect.AmbientLightColor = Vector3.One;
             //effect.DiffuseColor = new Vector3(Math.Min(1, color.X), Math.Min(1, color.Y), Math.Min(1, color.Z));
             //effect.AmbientLightColor = new Vector3(color.X, color.Y, color.Z);
@@ -234,12 +233,9 @@ namespace FSO.LotView.Components
 
             //var view = view;state.Camera.View;
             view.M41 = 0; view.M42 = 0; view.M43 = 0;
-            var scaleVec = Vector3.TransformNormal(new Vector3(1, 0, 0), view);
-            view = Matrix.CreateScale(1 / scaleVec.Length()) * view;
             effect.View = view;
-            // apply TAA jitter (incoming projection is un-jittered), same projection-agnostic NDC
-            // translation as WorldState.Projection — a raw M31/M32 offset would warp the dome relative to
-            // the world through the ortho<->perspective 2D/3D transition (see PPXDepthEngine.JitterProjection)
+            // TAA jitter (incoming projection is un-jittered); identity when TAA is off, so this is
+            // zero-diff from the upstream sky outside of TAA
             var jitter = PPXDepthEngine.TAAJitterNDC;
             var projJit = PPXDepthEngine.JitterProjection(projection, jitter);
             effect.Projection = projJit;// (state.Camera as WorldCamera3D)?.BaseProjection() ?? state.Camera.Projection;
@@ -249,13 +245,15 @@ namespace FSO.LotView.Components
             gd.BlendState = BlendState.AlphaBlend;
             gd.SamplerStates[0] = SamplerState.LinearWrap;
 
-            // when a velocity target is bound, draw with SkyVelocity so MRT1 gets camera-rotation velocity
+            // velocity-buffer support is the ONLY addition over the upstream sky: when the velocity
+            // MRT is active (TAA / per-pixel motion blur), the dome renders through SkyVelocity so
+            // MRT1 gets camera-rotation velocity; otherwise the draw is upstream's, untouched.
             var velRT = PPXDepthEngine.GetVelocityTarget();
             var skyVel = WorldContent.SkyVelocity;
             if (velRT != null && skyVel != null)
             {
                 var domeMVP = Matrix.CreateScale(5f * scale) * view * projJit;
-                // prev MVP stays un-jittered (shader un-jitters the current NDC) so velocity is jitter-free
+                // prev MVP stays un-jittered (the shader un-jitters the current NDC) so velocity is jitter-free
                 var domeMVPUnjit = Matrix.CreateScale(5f * scale) * view * projection;
                 var savedRTs = gd.GetRenderTargets();
                 PPXDepthEngine.BindVelocityMRT(gd, velRT);
@@ -265,7 +263,7 @@ namespace FSO.LotView.Components
                 skyVel.Parameters["PrevMVP"]?.SetValue(_prevSkyMVPValid ? _prevSkyMVP : domeMVPUnjit);
                 skyVel.Parameters["JitterNDC"]?.SetValue(jitter);
                 skyVel.Parameters["Alpha"]?.SetValue(1 - (float)Math.Sqrt(wint) * 0.75f);
-                skyVel.Parameters["Exposure"]?.SetValue(SkyExposure);
+                skyVel.Parameters["Exposure"]?.SetValue(1f);
                 skyVel.Parameters["SkyTex"]?.SetValue(GradTex);
                 skyVel.CurrentTechnique = skyVel.Techniques["DrawSky"];
                 foreach (var pass in skyVel.CurrentTechnique.Passes)
@@ -275,15 +273,15 @@ namespace FSO.LotView.Components
                     gd.SetVertexBuffer(Verts);
                     gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, PrimCount);
                 }
-                gd.SetRenderTargets(savedRTs); // unbind MRT - sun/moon below use BasicEffect (no velocity)
+                gd.SetRenderTargets(savedRTs); // unbind the MRT - the sun/moon below use BasicEffect (no velocity)
+                gd.BlendState = BlendState.AlphaBlend;
                 _prevSkyMVP = domeMVPUnjit;
                 _prevSkyMVPValid = true;
             }
             else
             {
-                // Velocity path not active this frame - invalidate the cached prev-MVP (mirrors
-                // EntityComponent.DrawHeadline3D's _PrevHeadlineWorldValid) so re-enabling TAA later
-                // doesn't replay a stale prev-MVP from before the gap as a bogus one-frame velocity smear.
+                // velocity inactive this frame - invalidate the cached prev-MVP so re-enabling TAA
+                // later doesn't replay a stale matrix as a one-frame velocity smear
                 _prevSkyMVPValid = false;
 
                 foreach (var pass in effect.CurrentTechnique.Passes)
@@ -306,7 +304,7 @@ namespace FSO.LotView.Components
             var dist = 0.5f + pos.Y * 2;
             dist *= dist;
             dist += 0.5f;
-            if (night) dist = 65;
+            if (night) dist = 35;
             var sunMat = Matrix.CreateTranslation(0, 0, dist) * Matrix.CreateBillboard(pos, new Vector3(0, 0.4f, 0), Vector3.Up, null);
 
             var geom = WorldContent.GetTextureVerts(gd);
@@ -314,25 +312,7 @@ namespace FSO.LotView.Components
             effect.VertexColorEnabled = false;
             effect.TextureEnabled = true;
             effect.Texture = (night) ? TextureGenerator.GetMoon(gd) : TextureGenerator.GetSun(gd);
-            gd.SamplerStates[0] = SamplerState.LinearClamp;
-
-            if (night)
-            {
-                var tint = new Vector3(color.X, color.Y, color.Z) * 0.6f;
-                var lightIntensity = new Vector3(color.X, color.Y, color.Z).Length() + 0.4f;
-                effect.DiffuseColor = FinaleUtils.BiasSunIntensity(new Vector3(lightIntensity) + tint, time);
-            }
-            else
-            {
-                float colorBias = Math.Abs(color.Z - color.X);
-
-                // when the colour is uniformly white, penalize the brightness a bit
-
-                color *= 0.6f + Math.Min(1f, colorBias / 0.8f) * 0.4f;
-
-                effect.DiffuseColor = FinaleUtils.BiasSunIntensity(new Vector3(color.X, color.Y, color.Z) * 0.6f, time);
-            }
-
+            effect.DiffuseColor = FinaleUtils.BiasSunIntensity(new Vector3(color.X, color.Y, color.Z) * ((night) ? 2f : 0.6f), time);
             gd.BlendState = (night) ? BlendState.NonPremultiplied : BlendState.Additive;
 
             foreach (var pass in effect.CurrentTechnique.Passes)

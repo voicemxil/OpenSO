@@ -1886,8 +1886,14 @@ namespace FSO.Client.Rendering.City
             // buffer stays jitter-free (CityComputeVel un-jitters; PrevBaseMatrix below is un-jittered).
             var pUnjit = p;
             if (taaJitter.X != 0 || taaJitter.Y != 0) { p.M31 -= taaJitter.X; p.M32 -= taaJitter.Y; }
-            var mvp = mv * p * Matrix.CreateScale(1f, 1f, 0.3f);
-            var mvpUnjit = mv * pUnjit * Matrix.CreateScale(1f, 1f, 0.3f);
+            // The 0.3 z-squash (upstream, anti-far-clip) alone parks z=0 content ON OpenGL's near
+            // plane: GL clip z spans [-w, w] (vs DirectX [0, w]), so squashed-toward-zero depth sits
+            // exactly at the near boundary and clips - the circular bite out of the backdrop during
+            // 2D/3D camera blends on GL. Bias the squashed range to mid-depth ([0.35, 0.65] in DX
+            // terms = [-0.3w, 0.3w] on GL): safely inside both clip volumes, ordering preserved.
+            var zFix = Matrix.CreateScale(1f, 1f, 0.3f) * Matrix.CreateTranslation(0f, 0f, 0.35f);
+            var mvp = mv * p * zFix;
+            var mvpUnjit = mv * pUnjit * zFix;
             m_MovMatrix = mvp;
             VertexShader.Parameters["BaseMatrix"].SetValue(mvp);
             VertexShader.Parameters["MV"].SetValue(mv);
