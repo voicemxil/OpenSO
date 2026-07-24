@@ -109,7 +109,13 @@ namespace FSO.LotView.Utils
 
         public void OffsetPixel(Vector2 pxOffset)
         {
-            this.PxOffset = pxOffset;
+            // Snap to whole pixels. Multi-tile objects project each part's offset through
+            // independent float math, so fractional offsets let adjacent parts' shared edges land a
+            // hair apart - 1px background seams and depth-resolved overlaps at the joins. Inter-part
+            // deltas are exact tile widths, so integer snapping makes parts abut bit-exactly; the
+            // scroll offset is already integer (SetScroll), and sprites are pixel art on a whole-pixel
+            // grid anyway.
+            this.PxOffset = new Vector2((float)System.Math.Round(pxOffset.X), (float)System.Math.Round(pxOffset.Y));
         }
 
         public void OffsetTile(Vector3 tileOffset)
@@ -749,16 +755,13 @@ namespace FSO.LotView.Utils
                 0.0f, -1.0f, 0.0f, 0.0f,
                 0.0f, 0.0f, -1.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 1.0f);
-            if (LotView.World.DirectX)
-            {
-                this.Projection = Matrix.CreateOrthographicOffCenter(
-                    transX - 2f, transX + width - 2f, transY - height - 0f, transY - 0f, 0, 1);
-            }
-            else
-            {
-                this.Projection = Matrix.CreateOrthographicOffCenter(
-                    transX - 1.5f, transX + width - 1.5f, transY - height - 0.5f, transY - 0.5f, 0, 1);
-            }
+            // One projection for both backends: effects compile with the modern MGFX toolchain (v11),
+            // which uses DX10-style rasterization conventions on OpenGL too. The old GL branch
+            // (transX - 1.5, transY - 0.5) pre-compensated MojoShader's (MGFX v8) DX9 half-pixel
+            // emulation; after the effect recompile that became a half-texel phase error that made
+            // every point-sampled sprite draw duplicate/skip pixel rows on GL.
+            this.Projection = Matrix.CreateOrthographicOffCenter(
+                transX - 2f, transX + width - 2f, transY - height - 0f, transY - 0f, 0, 1);
             //offset pixels by a little bit so that the center of them lies on the sample area. Avoids graphical bugs.
 
             ViewProjection = View * Projection;

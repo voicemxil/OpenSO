@@ -78,6 +78,19 @@ namespace FSO.Common.Utils
             SB = new SpriteBatch(gd);
         }
 
+        // macOS native-Retina: the authoritative backbuffer pixel size, set by TSOGame whenever the
+        // live PresentationParameters override is active. GraphicsDevice.Viewport is UNRELIABLE while
+        // it's on - MonoGame's resize handling reverts it to the window's point size until the next
+        // frame re-asserts it, and target (re)allocation can run from Update-phase code in that gap
+        // (world sized to points -> quarter-cropped render + 2x-offset picking). Zero = use Viewport.
+        public static Point ForcedBackbufferSize = Point.Zero;
+
+        private static Point ScreenSize()
+        {
+            if (ForcedBackbufferSize.X > 0 && ForcedBackbufferSize.Y > 0) return ForcedBackbufferSize;
+            return new Point(System.Math.Max(1, GD.Viewport.Width), System.Math.Max(1, GD.Viewport.Height));
+        }
+
         public static void InitScreenTargets()
         {
             if (GD == null) return;
@@ -87,9 +100,10 @@ namespace FSO.Common.Utils
             BackbufferDepth = null;
             if (Backbuffer != null) Backbuffer.Dispose();
             var scale = 1;//FSOEnvironment.DPIScaleFactor;
+            var screen = ScreenSize();
             // backbuffer is sized by the render scale (SSAA), rounded to whole pixels
-            int w = System.Math.Max(1, (int)System.Math.Round(SSAA * GD.Viewport.Width / scale));
-            int h = System.Math.Max(1, (int)System.Math.Round(SSAA * GD.Viewport.Height / scale));
+            int w = System.Math.Max(1, (int)System.Math.Round(SSAA * screen.X / scale));
+            int h = System.Math.Max(1, (int)System.Math.Round(SSAA * screen.Y / scale));
             if (!FSOEnvironment.Enable3D)
                 BackbufferDepth = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, w, h, DepthFormat.None);
             Backbuffer = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, w, h, DepthFormat.Depth24Stencil8);
@@ -114,6 +128,30 @@ namespace FSO.Common.Utils
             if (MBNeighborMax != null) { MBNeighborMax.Dispose(); MBNeighborMax = null; }
         }
 
+        /// <summary>
+        /// Ensure the packed-depth companion target exists while the 2D camera is active in a
+        /// 3D-enabled client. InitScreenTargets only creates BackbufferDepth for pure-2D clients,
+        /// but the 2D camera's sprite techniques write TWO outputs (color + packed depth) either
+        /// way - and on OpenGL a shader output with no bound target corrupts the bound color
+        /// output (DirectX silently drops it), mangling sprite edges/depth in hybrid-2D. Freed
+        /// again when the camera leaves 2D (pure-2D clients keep their always-on target).
+        /// </summary>
+        public static void Enable2DDepthTarget(bool enable)
+        {
+            if (FSOEnvironment.SoftwareDepth || !FSOEnvironment.Enable3D) return; //pure-2D/mobile own this target
+            if (!enable)
+            {
+                BackbufferDepth?.Dispose();
+                BackbufferDepth = null;
+                return;
+            }
+            if (GD == null || Backbuffer == null) return;
+            if (BackbufferDepth != null && BackbufferDepth.Width == Backbuffer.Width
+                && BackbufferDepth.Height == Backbuffer.Height && BackbufferDepth.MultiSampleCount == Backbuffer.MultiSampleCount) return;
+            BackbufferDepth?.Dispose();
+            BackbufferDepth = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, Backbuffer.Width, Backbuffer.Height, DepthFormat.None);
+        }
+
         // The two screen-res (no-MSAA) ping-pong intermediates the resolve chain draws through. Allocated
         // the first frame a post stage actually runs (DrawBackbuffer, before the ResolveTarget-dependent
         // doBloom/doSharpen guards), sized to the viewport; size-checked so a resize reallocates. When AA /
@@ -121,7 +159,8 @@ namespace FSO.Common.Utils
         private static void EnsureResolveTargets()
         {
             if (GD == null) return;
-            int rw = System.Math.Max(1, GD.Viewport.Width), rh = System.Math.Max(1, GD.Viewport.Height);
+            var screen = ScreenSize();
+            int rw = screen.X, rh = screen.Y;
             if (ResolveTarget == null || ResolveTarget.Width != rw || ResolveTarget.Height != rh)
             {
                 ResolveTarget?.Dispose();
@@ -146,7 +185,8 @@ namespace FSO.Common.Utils
                 return;
             }
             if (GD == null) return;
-            int rw = System.Math.Max(1, GD.Viewport.Width), rh = System.Math.Max(1, GD.Viewport.Height);
+            var screenR = ScreenSize();
+            int rw = screenR.X, rh = screenR.Y;
             int m0w = System.Math.Max(1, rw >> 1), m0h = System.Math.Max(1, rh >> 1);
             if (BloomMip != null && BloomMip.Length == BLOOM_MIPS && BloomMip[0] != null
                 && BloomMip[0].Width == m0w && BloomMip[0].Height == m0h) return; //already correct size
@@ -180,7 +220,8 @@ namespace FSO.Common.Utils
             // broken normals. Capped at viewport res when supersampling (SSAA > 1): subsampled depth
             // still yields valid derivatives, and native-res AO avoids the supersample cost. The
             // composite upsamples the (low-frequency) AO buffer bilinearly to the output grid.
-            int rw = System.Math.Max(1, GD.Viewport.Width), rh = System.Math.Max(1, GD.Viewport.Height);
+            var screenR = ScreenSize();
+            int rw = screenR.X, rh = screenR.Y;
             if (Backbuffer != null)
             {
                 rw = System.Math.Min(rw, Backbuffer.Width);
@@ -328,8 +369,9 @@ namespace FSO.Common.Utils
             int w = 1, h = 1;
             if (enable)
             {
-                w = System.Math.Max(1, GD.Viewport.Width);
-                h = System.Math.Max(1, GD.Viewport.Height);
+                var screenH = ScreenSize();
+                w = screenH.X;
+                h = screenH.Y;
                 if (SSAA < 0.999f && !TAAUEnabled && Backbuffer != null)
                 {
                     w = Backbuffer.Width;
@@ -402,6 +444,8 @@ namespace FSO.Common.Utils
         {
             return Backbuffer;
         }
+
+        public static bool Has2DDepthTarget => BackbufferDepth != null;
 
         public delegate void RenderPPXProcedureDelegate(bool depthPass);
         public static void RenderPPXDepth(Effect effect, bool forceDepth,
@@ -670,13 +714,20 @@ namespace FSO.Common.Utils
             }
 
             {
+                // Integer scales (1x pass-through, the 2x Retina apparent-Near double) point-sample:
+                // exact texel duplication - linear here BLENDS across sprite boundaries, smearing 1px
+                // outlines/depth fringes into visible seams. (An earlier point-sampled build looked
+                // blocky-broken, but that was the half-pixel ortho phase bug, since fixed - on an
+                // aligned grid an integer point double is clean.) Fractional zoom scales stay linear.
+                var integerScale = System.Math.Abs(scale - System.Math.Round(scale)) < 0.001f;
+                var sampler = integerScale ? SamplerState.PointClamp : SamplerState.LinearClamp;
                 if (!WithOpacity)
                 {
-                    SB.Begin(blendState: BlendState.Opaque);
+                    SB.Begin(blendState: BlendState.Opaque, samplerState: sampler);
                     opacity = 1;
                 }
                 else
-                    SB.Begin(blendState: BlendState.AlphaBlend);
+                    SB.Begin(blendState: BlendState.AlphaBlend, samplerState: sampler);
                 SB.Draw(Backbuffer, new Vector2(Backbuffer.Width * (1 - scale) / 2, Backbuffer.Height * (1 - scale) / 2), null, Color.White * opacity, 0f, new Vector2(), scale,
                     SpriteEffects.None, 0);
                 SB.End();
@@ -729,7 +780,11 @@ namespace FSO.Common.Utils
             // EXCEPTION — mobile keeps the old behavior: under SoftwareDepth, RenderPPXDepth runs stencil
             // ops against whatever color target is bound, and the non-MRT path depth-tests against the
             // packed-depth color target; both relied on every target having D24S8 regardless of request.
-            if (FSOEnvironment.SoftwareDepth || !FSOEnvironment.UseMRT) dformat = DepthFormat.Depth24Stencil8;
+            // Upstream behavior: EVERY engine target gets D24S8, ignoring the requested dformat.
+            // The 2D depth-channel passes depth-test against whatever target is bound (packed-depth
+            // buffer et al) and rely on it having a real depth attachment - honoring DepthFormat.None
+            // turns their depth testing silently off (last-drawn-wins: 2D sprite mis-sorting).
+            dformat = DepthFormat.Depth24Stencil8;
             return new RenderTarget2D(device,
                 width, height, (numberLevels > 1), surface,
                 dformat, multisample, RenderTargetUsage.PreserveContents);

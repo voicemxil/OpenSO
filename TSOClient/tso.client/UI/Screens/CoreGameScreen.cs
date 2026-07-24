@@ -96,7 +96,8 @@ namespace FSO.Client.UI.Screens
             {
                 if (m_ZoomLevel < 4 && InLot)
                 {
-                    return 4 - (int)World.State.Zoom;
+                    // apparent zoom, NOT World.State.Zoom: that holds the DPI-shifted art tier
+                    return 4 - (int)LotControl.ApparentZoom;
                 }
                 return m_ZoomLevel;
             }

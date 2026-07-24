@@ -1216,7 +1216,7 @@ namespace FSO.Client.Rendering.City
                 }
 
                 m_LastMouseState = m_MouseState;
-                m_MouseState = Mouse.GetState();
+                m_MouseState = FSO.Common.FSOEnvironment.ScaleMouse(Mouse.GetState());
 
                 if (HandleMouse && state.ProcessMouseEvents)
                 {

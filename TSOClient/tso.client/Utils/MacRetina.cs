@@ -39,6 +39,10 @@ namespace FSO.Client.Utils
         private static extern void msgSend_bool(IntPtr receiver, IntPtr selector, byte value);
         [DllImport(OBJC, EntryPoint = "objc_msgSend")]
         private static extern void msgSend_ptr(IntPtr receiver, IntPtr selector, IntPtr arg);
+        [DllImport(OBJC, EntryPoint = "objc_msgSend")]
+        private static extern byte msgSend_retByte(IntPtr receiver, IntPtr selector);
+        [DllImport(OBJC, EntryPoint = "objc_msgSend")]
+        private static extern double msgSend_retDouble(IntPtr receiver, IntPtr selector);
 
         [DllImport(CG)] private static extern uint CGMainDisplayID();
         [DllImport(CG)] private static extern IntPtr CGDisplayCopyDisplayMode(uint display);
@@ -100,6 +104,39 @@ namespace FSO.Client.Utils
                 return (ww > 0) ? (float)dw / ww : 1f;
             }
             catch { return 1f; }
+        }
+
+        /// <summary>
+        /// True if the SDL window's NSView actually has a best-resolution (Retina) GL surface. This is
+        /// the reliable post-flip check: SDL_GL_GetDrawableSize keeps reporting the window's POINT size
+        /// for windows created without ALLOW_HIGHDPI, even after the surface flip takes effect.
+        /// </summary>
+        public static bool SurfaceIsBestResolution(IntPtr sdlWindow)
+        {
+            try
+            {
+                var info = new SDL_SysWMinfo();
+                SDL_GetVersion(out info.version);
+                if (SDL_GetWindowWMInfo(sdlWindow, ref info) == 0 || info.window == IntPtr.Zero) return false;
+                var contentView = msgSend(info.window, sel("contentView"));
+                if (contentView == IntPtr.Zero) return false;
+                return msgSend_retByte(contentView, sel("wantsBestResolutionOpenGLSurface")) != 0;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>Backing scale of the window's CURRENT screen (NSWindow.backingScaleFactor) -
+        /// per-monitor correct, unlike the main-display query. 0 if it can't be read.</summary>
+        public static float WindowBackingScale(IntPtr sdlWindow)
+        {
+            try
+            {
+                var info = new SDL_SysWMinfo();
+                SDL_GetVersion(out info.version);
+                if (SDL_GetWindowWMInfo(sdlWindow, ref info) == 0 || info.window == IntPtr.Zero) return 0f;
+                return (float)msgSend_retDouble(info.window, sel("backingScaleFactor"));
+            }
+            catch { return 0f; }
         }
 
         /// <summary>Restore the bundle's Dock icon (Liquid Glass): MonoGame's SDL_SetWindowIcon replaces

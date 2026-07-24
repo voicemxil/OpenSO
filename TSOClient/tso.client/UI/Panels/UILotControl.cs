@@ -964,6 +964,22 @@ namespace FSO.Client.UI.Panels
             LastZoom = World.State.Zoom;
         }
 
+        /// <summary>
+        /// The zoom level the player has apparently selected (nearest discrete step to TargetZoom).
+        /// Distinct from World.State.Zoom, which holds the DPI-shifted ART tier the renderer uses -
+        /// UI state (UCP zoom buttons) must read this, or at UI scale > 1 the buttons see the tier
+        /// (pinned at Near) and can never step to Medium/Far.
+        /// </summary>
+        public WorldZoom ApparentZoom
+        {
+            get
+            {
+                if (TargetZoom < 0.375f) return WorldZoom.Far;
+                if (TargetZoom < 0.75f) return WorldZoom.Medium;
+                return WorldZoom.Near;
+            }
+        }
+
         public void ResetTargetZoom()
         {
             FoundMe = true;
@@ -972,6 +988,20 @@ namespace FSO.Client.UI.Panels
             {
                 var s3d = World.State.Cameras.Camera3D;
                 TargetZoom = (s3d.Zoom3D - 9.75f) / -5.7f + 0.25f;
+            }
+            else if (World.State.Cameras.ActiveType == LotView.Utils.Camera.CameraControllerType._2D)
+            {
+                // Landing in 2D with the continuous zoom carried over from the 3D camera: quantize to
+                // the nearest discrete sprite zoom. A fractional zoom in 2D stretches the whole sprite
+                // scene through BackbufferScale every frame (scaled/blurry sprites), and above the
+                // wheel snap threshold (1.25) nothing ever pulls it back to exact.
+                float best = 1f, dist = float.MaxValue;
+                foreach (var snap in new[] { 0.25f, 0.5f, 1f })
+                {
+                    var d = Math.Abs(TargetZoom - snap);
+                    if (d < dist) { dist = d; best = snap; }
+                }
+                TargetZoom = best;
             }
         }
 
@@ -1017,14 +1047,20 @@ namespace FSO.Client.UI.Panels
                     LastZoom = World.State.Zoom;
                 }
 
+                // DPI-aware sprite tier selection: at UI scale D the art tiers shift one level up so
+                // each apparent zoom uses the densest art available - apparent Medium renders Near art
+                // 1:1 (true Retina/high-DPI detail), apparent Far renders Medium art 1:1, and apparent
+                // Near renders Near art at an exact integer D:1 double (the composite blit point-samples
+                // integer scales, so it stays crisp). At D=1 this is identical to the classic mapping.
+                var effective = TargetZoom * FSOEnvironment.DPIScaleFactor;
                 float BaseScale;
                 WorldZoom targetZoom;
-                if (TargetZoom < 0.5f)
+                if (effective < 0.5f)
                 {
                     targetZoom = WorldZoom.Far;
                     BaseScale = 0.25f;
                 }
-                else if (TargetZoom < 1f)
+                else if (effective < 1f)
                 {
                     targetZoom = WorldZoom.Medium;
                     BaseScale = 0.5f;
@@ -1034,7 +1070,7 @@ namespace FSO.Client.UI.Panels
                     targetZoom = WorldZoom.Near;
                     BaseScale = 1f;
                 }
-                World.BackbufferScale = TargetZoom / BaseScale;
+                World.BackbufferScale = effective / BaseScale;
                 if (World.State.Zoom != targetZoom) World.State.Zoom = targetZoom;
                 LastZoom = targetZoom;
                 WorldConfig.Current.SmoothZoom = false;

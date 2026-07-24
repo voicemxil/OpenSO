@@ -103,7 +103,7 @@ namespace FSO.Common.Rendering.Framework
                 //single mouse state
                 if (hasFocus)
                 {
-                    State.MouseState = Mouse.GetState();
+                    State.MouseState = FSOEnvironment.ScaleMouse(Mouse.GetState());
                     State.KeyboardState = Keyboard.GetState();
                 }
                 else

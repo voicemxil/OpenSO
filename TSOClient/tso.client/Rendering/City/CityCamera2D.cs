@@ -348,7 +348,7 @@ namespace FSO.Client.Rendering.City
                 m_WheelZoomTarg = 0.10f / (2 - CenterCam.Dist);
             }
 
-            var m_MouseState = Mouse.GetState();
+            var m_MouseState = FSO.Common.FSOEnvironment.ScaleMouse(Mouse.GetState());
             if (m_MouseState.RightButton == ButtonState.Pressed && !WasRMBDown)
             {
                 m_MouseStart = new Vector2(m_MouseState.X, m_MouseState.Y); //if middle mouse button activated, record where we started pressing it (to use for panning)

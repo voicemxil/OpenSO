@@ -64,7 +64,8 @@ namespace FSO.LotView.Utils.Camera
                         RotationX -= ((mpos.X - mx) / 500f) * camera.FOV;
                         RotationY += ((mpos.Y - my) / 500f) * camera.FOV;
                     }
-                    Mouse.SetPosition(mx, my);
+                    // SetPosition takes OS window coordinates (points on macOS Retina); mx/my are pixels
+                    Mouse.SetPosition((int)(mx / FSOEnvironment.WindowPixelRatio), (int)(my / FSOEnvironment.WindowPixelRatio));
 
                     var speed = (state.KeyboardState.IsKeyDown(Keys.LeftShift)) ? 1.5f : 0.5f;
 

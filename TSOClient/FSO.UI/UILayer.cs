@@ -281,9 +281,13 @@ namespace FSO.Client.UI
             if (GameFacade.Game.Window == null) return;
 
             var mousePosition = state.MouseState.Position;
+            // ClientBounds is in OS window units (points on macOS Retina); the mouse state is in
+            // backbuffer pixels - compare in pixels or clicks die outside the top-left quarter.
             var bounds = GameFacade.Game.Window.ClientBounds;
+            var boundsW = bounds.Width * FSOEnvironment.WindowPixelRatio;
+            var boundsH = bounds.Height * FSOEnvironment.WindowPixelRatio;
             state.MouseOverWindow = mousePosition.X > 0 && mousePosition.Y > 0 &&
-                                    mousePosition.X < bounds.Width && mousePosition.Y < bounds.Height;
+                                    mousePosition.X < boundsW && mousePosition.Y < boundsH;
             if (FSOEnvironment.SoftwareKeyboard) state.MouseOverWindow = true;
             state.WindowFocused = GameFacade.Game.IsActive;
 
@@ -360,9 +364,10 @@ namespace FSO.Client.UI
                 var size = _lastWindowedSize;
                 if (size == Point.Zero)
                 {
+                    // window units: pixels / WindowPixelRatio (identical on Windows; points on macOS Retina)
                     size = new Point(
-                        (int)(GlobalSettings.Default.GraphicsWidth * FSOEnvironment.DPIScaleFactor),
-                        (int)(GlobalSettings.Default.GraphicsHeight * FSOEnvironment.DPIScaleFactor));
+                        (int)(GlobalSettings.Default.GraphicsWidth * FSOEnvironment.DPIScaleFactor / FSOEnvironment.WindowPixelRatio),
+                        (int)(GlobalSettings.Default.GraphicsHeight * FSOEnvironment.DPIScaleFactor / FSOEnvironment.WindowPixelRatio));
                 }
                 // never restore to a size covering the whole display - it cannot fit as a window
                 if (size.X >= display.Width && size.Y >= display.Height)
@@ -374,8 +379,12 @@ namespace FSO.Client.UI
             }
             gdm.ToggleFullScreen();
 
-            var width = Math.Max(1, window.ClientBounds.Width);
-            var height = Math.Max(1, window.ClientBounds.Height);
+            // render pixels = window units * WindowPixelRatio (macOS Retina backbuffer override)
+            var width = (int)(Math.Max(1, window.ClientBounds.Width) * FSOEnvironment.WindowPixelRatio);
+            var height = (int)(Math.Max(1, window.ClientBounds.Height) * FSOEnvironment.WindowPixelRatio);
+            // keep the authoritative target size current before GameResized rebuilds world targets
+            if (FSOEnvironment.WindowPixelRatio != 1f)
+                FSO.Common.Utils.PPXDepthEngine.ForcedBackbufferSize = new Microsoft.Xna.Framework.Point(width, height);
             SpriteBatch?.ResizeBuffer(width, height);
             GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
             GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);

@@ -407,8 +407,9 @@ namespace FSO.Client.Rendering.City
             {
                 if (state.WindowFocused)
                 {
-                    var mx = (int)UIScreen.Current.ScreenWidth / 2;
-                    var my = (int)UIScreen.Current.ScreenHeight / 2;
+                    // pixel-space center (ScreenWidth is UI units); MouseState is in backbuffer pixels
+                    var mx = (int)(UIScreen.Current.ScreenWidth * FSOEnvironment.DPIScaleFactor) / 2;
+                    var my = (int)(UIScreen.Current.ScreenHeight * FSOEnvironment.DPIScaleFactor) / 2;
 
                     var mpos = state.MouseState.Position;
                     if (LastFP)
@@ -416,7 +417,8 @@ namespace FSO.Client.Rendering.City
                         RotationX -= (mpos.X - mx) / 500f;
                         RotationY += (mpos.Y - my) / 500f;
                     }
-                    Mouse.SetPosition(mx, my);
+                    // SetPosition takes OS window coordinates (points on macOS Retina)
+                    Mouse.SetPosition((int)(mx / FSOEnvironment.WindowPixelRatio), (int)(my / FSOEnvironment.WindowPixelRatio));
 
                     var speed = (state.KeyboardState.IsKeyDown(Keys.LeftShift)) ? 1.5f : 0.5f;
                     speed *= 1 + FPCamHeight / 10f;

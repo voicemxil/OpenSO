@@ -46,6 +46,21 @@ namespace FSO.Common
         public static int GLVer = 3;
         public static float UIZoomFactor = 1f;
         public static float DPIScaleFactor = 1;
+        /// <summary>
+        /// Scale from OS window coordinates (points) to backbuffer pixels. 1 everywhere except macOS
+        /// native-Retina rendering, where the GL drawable is denser than the SDL window (e.g. 2).
+        /// Mouse reads multiply by this (window points -> render pixels); Mouse.SetPosition divides.
+        /// </summary>
+        public static float WindowPixelRatio = 1f;
+
+        /// <summary>Map a window-space mouse state to backbuffer pixels (see WindowPixelRatio).</summary>
+        public static Microsoft.Xna.Framework.Input.MouseState ScaleMouse(Microsoft.Xna.Framework.Input.MouseState m)
+        {
+            if (WindowPixelRatio == 1f) return m;
+            return new Microsoft.Xna.Framework.Input.MouseState(
+                (int)(m.X * WindowPixelRatio), (int)(m.Y * WindowPixelRatio), m.ScrollWheelValue,
+                m.LeftButton, m.MiddleButton, m.RightButton, m.XButton1, m.XButton2, m.HorizontalScrollWheelValue);
+        }
         public static bool SoftwareKeyboard = false;
         public static bool NoSound = false;
         public static int RefreshRate = 60;

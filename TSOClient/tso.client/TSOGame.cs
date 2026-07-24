@@ -53,6 +53,10 @@ namespace FSO.Client
 
             Utils.DPIScaleDetect.Startup(GlobalSettings.Default);
             FSOEnvironment.DPIScaleFactor = GlobalSettings.Default.DPIScaleFactor;
+            // macOS: never exclusive-fullscreen. Mode switching black-screens on Retina GL surfaces
+            // (MonoGame#4802) and macOS emulates modes anyway; borderless sizes the backbuffer to the
+            // display and composes correctly with the native-Retina override (ApplyMacRetina).
+            if (OperatingSystem.IsMacOS()) Graphics.HardwareModeSwitch = false;
             if (!FSOEnvironment.SoftwareDepth)
             {
                 var width = (int)(GlobalSettings.Default.GraphicsWidth * FSOEnvironment.DPIScaleFactor);
@@ -107,15 +111,31 @@ namespace FSO.Client
             newChange = true;
             var width = Math.Max(1, Window.ClientBounds.Width);
             var height = Math.Max(1, Window.ClientBounds.Height);
-            Graphics.PreferredBackBufferWidth = width;
-            Graphics.PreferredBackBufferHeight = height;
-            Graphics.ApplyChanges();
+            if (_macDpi > 0)
+            {
+                // Retina: the SDL window stays in points; the backbuffer runs at points * dpi via
+                // the live PresentationParameters override (see Draw). Pushing pixel sizes through
+                // ApplyChanges would grow the real window - skip it and hand the PIXEL size to the
+                // game-side resize below (whose /DPIScaleFactor math then lands back on points).
+                width *= _macDpi;
+                height *= _macDpi;
+                // must be current BEFORE GameResized below rebuilds world targets - Draw's per-frame
+                // update hasn't run yet, so the old size would be baked in until the next resize
+                FSO.Common.Utils.PPXDepthEngine.ForcedBackbufferSize = new Point(width, height);
+            }
+            else
+            {
+                Graphics.PreferredBackBufferWidth = width;
+                Graphics.PreferredBackBufferHeight = height;
+                Graphics.ApplyChanges();
+            }
             newChange = false;
 
             // Auto DPI follows the live window: re-fit the detected scale to the new client size
             // (stepping down a quarter tier while the window is too small for it) and track the
-            // monitor the window is on.
-            if (GlobalSettings.Default.AutoDPI == 1)
+            // monitor the window is on. Skipped under macOS Retina - the scale is the display's
+            // backing factor, not an OS setting the window can move between.
+            if (GlobalSettings.Default.AutoDPI == 1 && _macDpi == 0)
             {
                 var scale = Utils.DPIScaleDetect.GetScaleForWindow(Window.Handle, width, height);
                 if (scale != FSOEnvironment.DPIScaleFactor)
@@ -169,6 +189,68 @@ namespace FSO.Client
             if (!OperatingSystem.IsMacOS()) return;
             try { Utils.MacRetina.RestoreBundleDockIcon(); }
             catch { /* best effort */ }
+        }
+
+        // macOS native-Retina scale (0 = inactive). The NSView is flipped to a best-resolution GL
+        // surface and the backbuffer is re-asserted to currentWindowPoints * _macDpi each frame in
+        // Draw: MonoGame reverts PresentationParameters to the window's point size on SDL resize
+        // events, and deriving from live ClientBounds makes the native render track window resizing.
+        // GraphicsDevice.Reset must NOT be used for this - it recreates the GL context, which clears
+        // the best-resolution flag and couples the backbuffer to the window size.
+        private int _macDpi;
+
+        /// <summary>
+        /// macOS only: render at native Retina resolution. Stock MonoGame creates its SDL window
+        /// without ALLOW_HIGHDPI, so the GL drawable is point-sized and macOS pixel-doubles it
+        /// (pixel-art sprites read as nearest-scaled). Flip the NSView to a best-resolution surface,
+        /// size the backbuffer to native pixels, and route the scale through the existing DPI system:
+        /// UI scale via DPIScaleFactor, mouse points-to-pixels via WindowPixelRatio (FNA's model).
+        /// </summary>
+        private void ApplyMacRetina()
+        {
+            if (!OperatingSystem.IsMacOS()) return;
+            try
+            {
+                // per-window backing scale (falls back to the main display's for safety)
+                float backing = Utils.MacRetina.WindowBackingScale(Window.Handle);
+                if (backing <= 0f) backing = Utils.MacRetina.MainDisplayBackingScale();
+                if (backing < 1.1f) return; //non-Retina display - stock rendering
+                int dpi = Math.Clamp((int)Math.Round(backing), 1, 4);
+                var prevDpiScale = FSOEnvironment.DPIScaleFactor;
+
+                // set before the surface flip: its window-size nudge fires resize events that must
+                // already route through the Retina branch of Window_ClientSizeChanged
+                _macDpi = dpi;
+                FSOEnvironment.DPIScaleFactor = dpi;
+                FSOEnvironment.WindowPixelRatio = dpi;
+
+                Utils.MacRetina.EnableBestResolutionSurface(Window.Handle);
+                // Verify via Cocoa (the NSView flag), NOT SDL_GL_GetDrawableSize: SDL reports the
+                // point size forever for windows created without ALLOW_HIGHDPI, even when the flip
+                // took - gating on it turned a working Retina surface into quarter-screen rendering.
+                if (!Utils.MacRetina.SurfaceIsBestResolution(Window.Handle))
+                {
+                    //surface refused - roll back to stock point-resolution rendering
+                    _macDpi = 0;
+                    FSOEnvironment.DPIScaleFactor = prevDpiScale;
+                    FSOEnvironment.WindowPixelRatio = 1f;
+                    return;
+                }
+
+                // apply the native size immediately (Draw re-asserts each frame from here on)
+                var cb = Window.ClientBounds;
+                var pp = GraphicsDevice.PresentationParameters;
+                pp.BackBufferWidth = Math.Max(1, cb.Width) * dpi;
+                pp.BackBufferHeight = Math.Max(1, cb.Height) * dpi;
+                FSO.Common.Utils.PPXDepthEngine.ForcedBackbufferSize = new Point(pp.BackBufferWidth, pp.BackBufferHeight);
+                uiLayer?.SpriteBatch.ResizeBuffer(pp.BackBufferWidth, pp.BackBufferHeight);
+                if (uiLayer?.CurrentUIScreen != null)
+                {
+                    uiLayer.CurrentUIScreen.ScaleX = uiLayer.CurrentUIScreen.ScaleY = dpi;
+                    uiLayer.CurrentUIScreen.GameResized();
+                }
+            }
+            catch { /* best effort - any failure leaves stock point-resolution rendering */ }
         }
 
         protected override void Initialize()
@@ -362,6 +444,9 @@ namespace FSO.Client
                 Window_ClientSizeChanged(null, EventArgs.Empty);
             }
 
+            // after the window reaches its final startup state (fullscreen toggle / clamp resync)
+            ApplyMacRetina();
+
             if (GameFacade.Linux) MP3Player.NewMode = false;
 
             //(new Utils.PalMapper()).DoIt();
@@ -500,6 +585,29 @@ namespace FSO.Client
 
         protected override void Draw(GameTime gameTime)
         {
+            // macOS native Retina: keep the backbuffer at native pixels = currentWindowPoints * _macDpi.
+            // MonoGame reverts PresentationParameters to the window's point size on resize events, so
+            // re-assert before the frame binds the backbuffer (SetRenderTarget(null) reads it live).
+            if (_macDpi > 0)
+            {
+                var cb = Window.ClientBounds;
+                int tw = Math.Max(1, cb.Width) * _macDpi;
+                int th = Math.Max(1, cb.Height) * _macDpi;
+                var pp = GraphicsDevice.PresentationParameters;
+                if (pp.BackBufferWidth != tw || pp.BackBufferHeight != th)
+                {
+                    pp.BackBufferWidth = tw;
+                    pp.BackBufferHeight = th;
+                }
+                FSO.Common.Utils.PPXDepthEngine.ForcedBackbufferSize = new Point(tw, th);
+                // Fix the LIVE viewport too: MonoGame's resize handling sets it to the point size
+                // directly, and SetRenderTarget(null) (which re-derives it from the PP) may not run
+                // for many frames on UI-only screens - the startup "quarter render" until a lot loads.
+                // At the top of Draw no render target is bound, so this always targets the backbuffer.
+                var vp = GraphicsDevice.Viewport;
+                if (vp.Width != tw || vp.Height != th)
+                    GraphicsDevice.Viewport = new Viewport(0, 0, tw, th);
+            }
             base.Draw(gameTime);
 
             if (_frameTimer == null) { _frameTimer = System.Diagnostics.Stopwatch.StartNew(); return; }

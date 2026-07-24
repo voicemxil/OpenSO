@@ -15,6 +15,7 @@ namespace FSO.Client
         {
             GameFacade.DirectX = useDX;
             World.DirectX = useDX;
+            FSO.Common.FSOEnvironment.DirectX = useDX; //file/content layers gate texture decisions on this
             TSOGame game = new TSOGame();
 
             game.Run();
