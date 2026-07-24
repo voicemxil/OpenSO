@@ -351,7 +351,14 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // upscale-gated so the native kernel is untouched, faded in with edge strength.
     float2 grad = float2(cboxE.x - cboxW.x, cboxS.x - cboxN.x);
     float gmag = length(grad);
+#if SM4
     float edgeAniso = smoothstep(0.15, 0.5, gmag) * saturate(kscale - 1.0);
+#else
+    // GL trade (ps_3_0 register budget): the anisotropic edge kernel is exchanged for the
+    // occluder-memory state — en/et and the per-tap radial branch fold away at edgeAniso = 0.
+    // Ghost-trail correctness beats along-edge gathering on the tier that cannot have both.
+    const float edgeAniso = 0.0;
+#endif
     float2 en = grad / max(gmag, 1e-5);   // across-edge unit direction
     float2 et = float2(-en.y, en.x);      // along-edge unit direction
     float3 sigma = sqrt(max(m2 - m1 * m1, 0.0)); // neighborhood stddev (clamp box + clutter test below)
@@ -360,6 +367,17 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // the reconstruction below and the clutter clamp slack at the box.
     float dirCoherence = smoothstep(0.15, 0.5, gmag);
     float clutter = smoothstep(0.10, 0.25, sigma.x) * (1.0 - dirCoherence);
+    // LUMA THIN-FEATURE TEST (FSR2.2 lock-creation, hand-ported): a 1-px luma feature — the center
+    // separated from BOTH opposite neighbours which are themselves mutually coherent — is same-frame
+    // spatial proof of thin detail with NO depth ridge required (dark trim, texture lines, pattern
+    // strokes). The background-coherence factor is the edge discriminator: a step edge has dissimilar
+    // sides and never qualifies. Computed HERE (not at its consumer below the tap loop) so the box
+    // taps' last scalar consumers sit before the loop — on SM3 the compiler can then retire four
+    // float3 registers across the loop, which is what funds the aux/ring features on ps_3_0.
+    float lumaThinH = step(0.08, abs(cboxC.x - cboxW.x)) * step(0.08, abs(cboxC.x - cboxE.x))
+                    * step(abs(cboxW.x - cboxE.x), 0.06);
+    float lumaThinV = step(0.08, abs(cboxC.x - cboxN.x)) * step(0.08, abs(cboxC.x - cboxS.x))
+                    * step(abs(cboxN.x - cboxS.x), 0.06);
     // Tap k in {-1,0,1} sits at distance fracd + k.
     // KERNEL SELECT: at upscale the reconstruction kernel is the FSR2 Lanczos2 approximation (negative
     // lobes = passband distinctness; ringing bounded by the 3x3 tap-hull clamp at the reconstruction
@@ -393,7 +411,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float wC = 0;     // center tap's actual kernel weight — sample confidence below
     float2 dilatedVel = float2(0, 0);
     float closestDepth = 1e9;
-    float closestMask = 0.0;
     float dmin = 1e9, dmax = -1e9; // valid-tap depth RANGE for the disocclusion test below
     float4 plusD = float4(2.0, 2.0, 2.0, 2.0); // W,E,N,S plus-tap depths (unwritten = far sentinel) — thin-line prior
     // Center velocity tap PRE-FETCHED (the loop re-reads it as its (0,0) plus tap — cached, ~free): the
@@ -422,7 +439,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // weights; the dilation/range statistics stay on the 5-tap plus pattern (corner contribution to
         // dilation is marginal — the [unroll]'d literal test compiles the corner taps out of it).
         float4 v = tex2Dlod(velocitySampler, float4(boxUV + ofs, 0, 0));
-#if SM4 // ps_3_0 temp-register budget — SM3 keeps the center-tap mask only
+#if SM4 // the one transient this adds at the loop peak is exactly one register over ps_3_0's budget
+        // (verified empirically) — GL keeps the center-tap mask; drops still cap/lean via their own
+        // pixels, only the one-texel reactive halo is DX-only.
         reactMask = max(reactMask, (v.a >= 0.5) ? saturate((1.0 - v.a) * 2.0) : 0.0); // dilation
 #endif
         if (dx == 0 || dy == 0)
@@ -438,7 +457,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
             // thin line — instant locks on transients would trail them). The dilated reactMask above
             // is the ONLY structural voice reactive content gets.
             float d = (v.a >= VEL_STRUCT) ? v.b : 2.0;
-            if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; closestMask = v.a; }
+            if (d < closestDepth) { closestDepth = d; dilatedVel = v.rg; }
             if (v.a >= VEL_STRUCT) { dmin = min(dmin, v.b); dmax = max(dmax, v.b); }
             // Capture the four side depths for the thin-line test (compile-time folds under [unroll]).
             if (dx == -1) plusD.x = d; else if (dx == 1) plusD.y = d;
@@ -490,15 +509,8 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float thinEps = TuneThinLineEps * max(thinDC, DepthRejectParams.w); // relative step, floored denominator
     float thinLine = max(step(thinEps, plusD.x - thinDC) * step(thinEps, plusD.y - thinDC),
                          step(thinEps, plusD.z - thinDC) * step(thinEps, plusD.w - thinDC));
-    // LUMA THIN-FEATURE TEST (FSR2.2 lock-creation, hand-ported): a 1-px luma feature — the center
-    // separated from BOTH opposite neighbours which are themselves mutually coherent — is same-frame
-    // spatial proof of thin detail with NO depth ridge required (dark trim, texture lines, pattern
-    // strokes). The background-coherence factor is the edge discriminator: a step edge has dissimilar
-    // sides and never qualifies. Complements the depth ridge above; both grant the instant lock share.
-    float lumaThinH = step(0.08, abs(cboxC.x - cboxW.x)) * step(0.08, abs(cboxC.x - cboxE.x))
-                    * step(abs(cboxW.x - cboxE.x), 0.06);
-    float lumaThinV = step(0.08, abs(cboxC.x - cboxN.x)) * step(0.08, abs(cboxC.x - cboxS.x))
-                    * step(abs(cboxN.x - cboxS.x), 0.06);
+    // Both the depth ridge and the luma thin tests (hoisted above the tap loop) grant the instant
+    // lock share.
     float spatialThin = max(thinLine, max(lumaThinH, lumaThinV));
     // Thin-coverage fallback: with the output-sized kernel, some frames leave an output pixel with almost
     // no in-support sample (wsum ~ 0). Divide-guard + smooth fallback to the NEAREST RAW TEXEL (crawC,
@@ -517,6 +529,10 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
 #else
     float3 curr = lerp(stationaryC, filt / max(wsum, 1e-4), saturate(wsum / (0.15 * kscale)));
 #endif
+    // Coverage for the confidence floor, computed HERE so wsum and kscale can retire before the
+    // long back half (each was otherwise held live ~900 lines for this one expression — ps_3_0
+    // register budget).
+    float covg = saturate(wsum / (0.3 * kscale));
 
     // TEXTURE-DETAIL PRESERVATION: TAA area-averages everywhere — unlike MSAA, which leaves texture
     // interiors alone — so fine texture detail converges to a mip-like blur. On LOW-VARIANCE
@@ -624,13 +640,6 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float4 pm = tex2Dlod(metaHistorySampler, float4(histUV, 0, 0));
     float prevN = pm.r * MaxAccum;
 
-    // Reprojected aux state, OWN-velocity anchor like every structural test: R = recent-nearest depth
-    // (occluder memory), GBA = the three-frame input-luma ring (consumed by the oscillation detector).
-    // SM3 (ps_3_0 temp-register budget) runs without both aux consumers and writes depth-only aux.
-#if SM4
-    float4 aux = tex2Dlod(auxHistorySampler, float4(histUVDepth, 0, 0));
-    float rnPrev = aux.r;
-#endif
 
     // META.A DECODE — byte-exact layout sign(1) + osc(4) + amp(3): bit 7 = the last real luma delta's
     // sign, bits 3-6 = oscillation EMA (16 levels), bits 0-2 = witnessed alternating amplitude
@@ -869,22 +878,32 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // motion-gated tests own rejection (ungated, camera-parallax reveals during pans fired this for
     // the whole memory window); the memory owns the MOTION-SILENT trail window after the mover exits
     // the 3x3, where every gate above closes. Feeds the kernel modulation below too, so trail pixels
-    // are re-born spatially anti-aliased for the memory window. SM4-only.
-#if SM4
+    // are re-born spatially anti-aliased for the memory window.
+    // Aux state fetched HERE at its first consumer, not with the history fetches: R = recent-nearest
+    // depth (occluder memory), GBA = the 3-frame input-luma ring — OWN-velocity anchor like every
+    // structural test. The late fetch keeps the vector's live range out of the bicubic/rejection
+    // region, which is what lets the aux system fit the ps_3_0 register budget.
+    float4 aux = tex2Dlod(auxHistorySampler, float4(histUVDepth, 0, 0));
+    float rnPrev = aux.r;
     float nearerM = max(dmin - rnPrev - DepthRejectParams.x * 2.0, 0.0);
+#if SM4
     // Color-evidence bound at ALL ratios: staticAuth is only computed above 1.5x — at native it sat
     // at 1.0 and memGhost fired at full strength for its whole memory window even after the trail
     // color was already scrubbed (a raw crawling wake behind movers). The inline curve (m1 vs the
     // history's low component, same operands as staticAuth's) collapses sustained fire once history
     // matches current again; min() keeps the >1.5x path's steeper authority when present.
     float memAuth = min(staticAuth, lerp(0.1, 1.0, smoothstep(0.02, 0.06, length(m1 - hLow))));
+#else
+    // Luma-only color evidence on SM3 (the float3 length spikes the register peak; staticAuth is 1
+    // below 1.5x there anyway, so the inline curve is the only authority and luma carries it).
+    float memAuth = lerp(0.1, 1.0, smoothstep(0.02, 0.06, abs(m1.x - hLow.x)));
+#endif
     float memGhost = (dmax < dmin) ? 0.0 :
         smoothstep(0.02, 0.08, nearerM / max(rnPrev, DepthRejectParams.w))
         * (1.0 - oscShield)
         * (1.0 - max(moveGate, storedMove))
         * ((centerDepth >= 0.0) ? 1.0 : 0.0) * memAuth * 0.85;
     ghostReject = max(ghostReject, memGhost);
-#endif
 
     // FSR3 KERNEL-WIDTH MODULATION (ffx_fsr2_upsample fKernelBias, hand-ported): the reconstruction
     // kernel widens from output-sized (sharp) toward INPUT-sized (smooth) on structural evidence —
@@ -979,13 +998,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
         // repairing ghost has constant input (changed = 0) and a monotonic fade never revisits an old
         // value (match = 0).
         float flipSign = mag * abs(sgn - prevSgn); // 1 only when a real-amplitude delta reversed sign
-#if SM4
         float ringChanged = smoothstep(0.03, 0.05, abs(cboxC.x - aux.g));
         float ringMatch = 1.0 - smoothstep(0.005, 0.011, min(abs(cboxC.x - aux.b), abs(cboxC.x - aux.a)));
         float flip = max(flipSign, mag * ringChanged * ringMatch);
-#else
-        float flip = flipSign;
-#endif
         // STRUCTURAL FLIP CREDIT (the dotted-thin-line fix): the spatial thin tests only fire on
         // jitter phases whose centre sample actually catches the line — on miss phases the instant
         // lock share vanishes and the pixel churns, reading as dotted/flickering thin geometry. The
@@ -1411,7 +1426,7 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     float c = 1.0;
     if (upscaleRatio > 1.001)
     {
-        float confFloor = lerp(TuneConfFloor, 0.08, saturate(upscaleRatio - 2.0)) * saturate(wsum / (0.3 * kscale));
+        float confFloor = lerp(TuneConfFloor, 0.08, saturate(upscaleRatio - 2.0)) * covg;
         // THE LAST HARD STEP LIVED HERE: the motion regime keyed on the walking-speed moveGate band,
         // so below it off-phase frames injected c ~= confFloor (~1% blend against a drift-capped A —
         // tiny c silently turns every A-cap into a hold, the exact throttle-defeat class the floors
@@ -1483,13 +1498,9 @@ TAAOut TAA_Core(VSOut input, uniform bool debugMeta)
     // AUX WRITE: refresh the occluder memory with this frame's dilated depth (min) while the remembered
     // value decays toward far, and shift the luma ring one slot. Off-screen = fresh seed (no memory,
     // zeroed ring — zeros can only "match" near-black luma, and the amplitude gate owns that regime).
-#if SM4
     o.aux = reprojectable
         ? float4(min(depthForHistory, rnPrev + 0.008), cboxC.x, aux.g, aux.b)
         : float4(depthForHistory, cboxC.x, 0.0, 0.0);
-#else
-    o.aux = float4(depthForHistory, cboxC.x, 0.0, 0.0); // no aux consumers on SM3
-#endif
 
     if (debugMeta)
     {
