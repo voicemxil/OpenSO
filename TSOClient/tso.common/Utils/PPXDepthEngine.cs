@@ -128,30 +128,6 @@ namespace FSO.Common.Utils
             if (MBNeighborMax != null) { MBNeighborMax.Dispose(); MBNeighborMax = null; }
         }
 
-        /// <summary>
-        /// Ensure the packed-depth companion target exists while the 2D camera is active in a
-        /// 3D-enabled client. InitScreenTargets only creates BackbufferDepth for pure-2D clients,
-        /// but the 2D camera's sprite techniques write TWO outputs (color + packed depth) either
-        /// way - and on OpenGL a shader output with no bound target corrupts the bound color
-        /// output (DirectX silently drops it), mangling sprite edges/depth in hybrid-2D. Freed
-        /// again when the camera leaves 2D (pure-2D clients keep their always-on target).
-        /// </summary>
-        public static void Enable2DDepthTarget(bool enable)
-        {
-            if (FSOEnvironment.SoftwareDepth || !FSOEnvironment.Enable3D) return; //pure-2D/mobile own this target
-            if (!enable)
-            {
-                BackbufferDepth?.Dispose();
-                BackbufferDepth = null;
-                return;
-            }
-            if (GD == null || Backbuffer == null) return;
-            if (BackbufferDepth != null && BackbufferDepth.Width == Backbuffer.Width
-                && BackbufferDepth.Height == Backbuffer.Height && BackbufferDepth.MultiSampleCount == Backbuffer.MultiSampleCount) return;
-            BackbufferDepth?.Dispose();
-            BackbufferDepth = CreateRenderTarget(GD, 1, MSAA, SurfaceFormat.Color, Backbuffer.Width, Backbuffer.Height, DepthFormat.None);
-        }
-
         // The two screen-res (no-MSAA) ping-pong intermediates the resolve chain draws through. Allocated
         // the first frame a post stage actually runs (DrawBackbuffer, before the ResolveTarget-dependent
         // doBloom/doSharpen guards), sized to the viewport; size-checked so a resize reallocates. When AA /
