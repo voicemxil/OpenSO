@@ -692,8 +692,6 @@ namespace FSO.Files.Formats.IFF.Chunks
                 // artifacts on GL. GL loses a little smoothness on far 3D billboards.
                 var mip = FSOEnvironment.Enable3D && FSOEnvironment.DirectX && (FSOEnvironment.EnableNPOTMip || (effectiveWidth == 128 && Height == 64));
                 if (mip && TextureUtils.OverrideCompression(effectiveWidth, Height)) tc = false;
-                if (FSO.Common.Utils.TwoDFingerprint.CountOk(8))
-                    FSO.Common.Utils.TwoDFingerprint.Log($"spr2 {Width}x{Height} eff={effectiveWidth} tc={tc} mip={mip} enable3D={FSOEnvironment.Enable3D} dx={FSOEnvironment.DirectX}");
                 if (tc)
                 {
                     
@@ -800,8 +798,6 @@ namespace FSO.Files.Formats.IFF.Chunks
                 var zTc = FSOEnvironment.TexCompress;
                 var zMip = FSOEnvironment.Enable3D && FSOEnvironment.DirectX && (FSOEnvironment.EnableNPOTMip || (effectiveWidth == 128 && Height == 64));
                 if (zMip && TextureUtils.OverrideCompression(effectiveWidth, Height)) zTc = false;
-                if (FSO.Common.Utils.TwoDFingerprint.CountOk(8))
-                    FSO.Common.Utils.TwoDFingerprint.Log($"spr2z {Width}x{Height} eff={effectiveWidth} zPadded={zTc}");
                 if (zTc)
                 {
                     result = new CachableTexture2D(device, ((effectiveWidth+3)/4)*4, ((Height+3)/4)*4, false, SurfaceFormat.Alpha8);

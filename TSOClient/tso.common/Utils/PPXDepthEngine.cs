@@ -445,7 +445,6 @@ namespace FSO.Common.Utils
             return Backbuffer;
         }
 
-        public static bool Has2DDepthTarget => BackbufferDepth != null;
 
         public delegate void RenderPPXProcedureDelegate(bool depthPass);
         public static void RenderPPXDepth(Effect effect, bool forceDepth,
