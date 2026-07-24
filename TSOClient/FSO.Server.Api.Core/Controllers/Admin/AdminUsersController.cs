@@ -125,22 +125,38 @@ namespace FSO.Server.Api.Core.Controllers.Admin
                     });
                 }
 
-                // Save mail in db
-                int message_id = da.Inbox.CreateMessage(new DbInboxMsg
-                {
-                    sender_id = 2147483648,
-                    target_id = uint.Parse(mail.target_id),
-                    subject = mail.subject,
-                    body = mail.body,
-                    sender_name = "OpenSO Staff",
-                    time = DateTime.UtcNow,
-                    msg_type = 4,
-                    msg_subtype = 0,
-                    read_state = 0,
-                });
+                // fso_inbox.target_id references fso_avatars.avatar_id, and the in-game inbox +
+                // notify path are avatar-addressed — so deliver one message per avatar of the
+                // target user. Inserting the raw user_id here violates the FK constraint.
+                var avatars = da.Avatars.GetByUserId(uint.Parse(mail.target_id));
 
-                // Try and notify the user ingame
-                api.RequestMailNotify(message_id, mail.subject, mail.body, uint.Parse(mail.target_id));
+                if (avatars == null || avatars.Count == 0)
+                {
+                    return ApiResponse.Json(HttpStatusCode.OK, new
+                    {
+                        status = "no_avatars"
+                    });
+                }
+
+                foreach (var avatar in avatars)
+                {
+                    // Save mail in db
+                    int message_id = da.Inbox.CreateMessage(new DbInboxMsg
+                    {
+                        sender_id = 2147483648,
+                        target_id = avatar.avatar_id,
+                        subject = mail.subject,
+                        body = mail.body,
+                        sender_name = "OpenSO Staff",
+                        time = DateTime.UtcNow,
+                        msg_type = 4,
+                        msg_subtype = 0,
+                        read_state = 0,
+                    });
+
+                    // Try and notify the user ingame
+                    api.RequestMailNotify(message_id, mail.subject, mail.body, avatar.avatar_id);
+                }
 
                 return ApiResponse.Json(HttpStatusCode.OK, new
                 {

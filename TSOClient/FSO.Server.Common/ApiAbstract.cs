@@ -35,7 +35,7 @@
         /// <param name="target_id"></param>
         public void RequestMailNotify(int message_id, string subject, string body, uint target_id)
         {
-            OnRequestMailNotify(message_id, subject, body, target_id);
+            OnRequestMailNotify?.Invoke(message_id, subject, body, target_id);
         }
 
         public void BroadcastMessage(string sender, string title, string message)

@@ -1,6 +1,7 @@
 ﻿using FSO.Server.Common;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -34,7 +35,7 @@ namespace FSO.Server.Api.Core
                 options.AddPolicy("AdminAppPolicy",
                     builder =>
                     {
-                        builder.WithOrigins("https://admin.openso.org", "https://freeso.org", "http://localhost:8080").AllowAnyMethod().AllowAnyHeader().AllowCredentials().WithExposedHeaders("content-disposition");
+                        builder.WithOrigins("https://admin.openso.org", "https://freeso.org", "http://localhost:8080").AllowAnyMethod().AllowAnyHeader().AllowCredentials().WithExposedHeaders("content-disposition", "X-Total-Count", "X-Offset");
                     });
             }).AddMvc(options =>
             {
@@ -62,6 +63,29 @@ namespace FSO.Server.Api.Core
                 app.UseHsts();
             }
             app.UseCors();
+            // Unhandled exceptions (including DemandAdmin/DemandModerator failures) would otherwise
+            // surface as an empty 500 with no CORS headers — browsers report those to JS as an opaque
+            // "failed to fetch", hiding the real error from the admin webapp. Catch them here and write
+            // a JSON error body WITHOUT clearing the response, so CORS headers already applied by the
+            // MVC CORS filter / middleware survive.
+            app.Use(async (context, next) =>
+            {
+                try
+                {
+                    await next();
+                }
+                catch (System.Exception ex)
+                {
+                    if (context.Response.HasStarted) throw;
+                    context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+                    context.Response.ContentType = "application/json";
+                    await context.Response.WriteAsync(Newtonsoft.Json.JsonConvert.SerializeObject(new
+                    {
+                        error = "internal_error",
+                        error_description = ex.Message
+                    }));
+                }
+            });
             //app.UseHttpsRedirection();
             app.UseMvc();
             AppLifetime = appLifetime;
