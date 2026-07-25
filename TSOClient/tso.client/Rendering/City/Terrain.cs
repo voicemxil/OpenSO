@@ -1925,7 +1925,15 @@ namespace FSO.Client.Rendering.City
             PixelShader.Parameters["Time"].SetValue(OceanTime);
 
             var weatherMult = (Camera is CityCamera3D) ? (1 + Weather.Darken) : 1;
-            PixelShader.Parameters["FogMaxDist"].SetValue(m_LotZoomProgress*fogColor.W + (1- m_LotZoomProgress)* fogColor.W*weatherMult*Camera.FogMultiplier);
+            // The lot-view fog term is scaled *3 because the lot backdrop renders the city mesh at
+            // 75*3 units per tile (the CreateScale(75f * 3, ...) world matrix above) while FogColor.W
+            // is tuned for the city view's 75 units per tile — the same FogMaxDist therefore saturates
+            // at a third of the tile distance in lot view, flattening the backdrop into the fog colour
+            // in heavy weather. This was applied once, reverted as "never verified against the city
+            // view's actual units" (44a728f6f), and is now re-applied with both legs verified: the
+            // matrix above is the unit mismatch, and the too-close fog was observed in-game during
+            // heavy fog (2026-07-25).
+            PixelShader.Parameters["FogMaxDist"].SetValue(m_LotZoomProgress*fogColor.W*3 + (1- m_LotZoomProgress)* fogColor.W*weatherMult*Camera.FogMultiplier);
             fogColor.W = 1f;
             PixelShader.Parameters["FogColor"].SetValue(fogColor);
 
