@@ -317,6 +317,22 @@
       "requires": [
         "b21e29a1-8c25-465e-aa43-c7a0d6f44fb8"
       ]
+    },
+    {
+      "id": "3f7a29c6-52d4-4b1f-9d3e-8aa10c47e6b2",
+      "script": "changes/0036_edit_sim_tuning.sql",
+      "idempotent": false,
+      "requires": [
+        "b529fbeb-c205-445c-b480-5326025f342b"
+      ]
+    },
+    {
+      "id": "9e8b41d0-77aa-4f2c-b6c1-4d92f0a3517e",
+      "script": "changes/0037_avatar_name_change_date.sql",
+      "idempotent": false,
+      "requires": [
+        "3f7a29c6-52d4-4b1f-9d3e-8aa10c47e6b2"
+      ]
     }
   ]
 }
