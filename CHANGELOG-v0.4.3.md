@@ -8,10 +8,8 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 
 ## Edit A Sim
 - **You can now rename your sim** from the Edit A Sim screen — no more support requests. The name field is editable when re-entering CAS for an existing sim, and the server enforces the same rules as creation: 3–24 letters/spaces, must start with a letter, and the name can't already be taken on the shard.
-- Keeping your current name is always allowed, even if it predates the naming rules — only a *changed* name is re-validated, so older sims can still edit their appearance freely.
-- **A new look now costs §1,000.** The charge applies only when you actually change something about your sim's appearance — gender, skin tone, head or body. If you can't afford it nothing is applied and nothing is deducted.
+- **A new look now costs §1,000.** The charge applies only when you actually change something about your sim's appearance — gender, skin tone, head or body. If you can't afford it nothing is applied and or deducted. The edit screen displays the makeover cost and your sim's balance up front, and the Accept button refuses a look you can't afford
 - **Renaming is free**, and so is editing your bio. To stop names being churned, a sim can only be renamed **once per day** — you can still change their look as often as you can pay for it.
-- **CAS shows the price before you commit.** The edit screen displays the makeover cost and your sim's balance up front, and the Accept button refuses a look you can't afford — no more finding out after you've built the whole outfit. A free rename or bio edit is never blocked by the price.
 - Renames and appearance edits now show up immediately on person pages and searches — the server no longer serves the old cached name until the nightly restart.
 
 ## macOS: Native Retina Rendering
@@ -20,29 +18,27 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 - Window resizing and borderless fullscreen (Alt+Enter) track correctly at any size.
 
 ## 2D Mode Fixed on Mac
-- Fixed the long-standing **blocky, nearest-neighbor sprite scaling** in 2D mode on the OpenGL backend — a half-pixel projection error introduced by the shader toolchain upgrade. Sprites are pixel-crisp again.
-- Fixed 2D **depth sorting**: object pieces no longer show through each other (mailbox flags, shower walls), whether the client was launched in 2D or 3D mode.
-- Fixed **thin seams and overlap slivers** between the parts of multi-tile objects (hot tubs, large furniture).
-- **Sharper 2D zoom on high-DPI displays**: each zoom level now uses the densest sprite art available — middle zoom shows closest-zoom art at true 1:1 Retina detail, and closest zoom is a clean integer double.
+- Fixed an issue causing **blocky sprite scaling** in 2D mode on the OpenGL backend — a half-pixel projection error introduced by the shader toolchain upgrade. Sprites are pixel-crisp again.
+- Fixed 2D depth: object pieces no longer show slivers through each other e.g. (mailbox flags, shower walls), if the client was launched in 3D mode.
+- **Sharper 2D zoom on high-DPI displays**: each zoom level uses the densest sprite art available — middle zoom shows closest-zoom art at true 1:1 Retina detail, and closest zoom is a clean integer double.
 - Switching from 3D to 2D no longer leaves the sprite scene subtly stretched by a carried-over fractional zoom (all platforms), and the zoom buttons track your actual zoom level.
 - Windows high-DPI: free-cam mouse look no longer drifts off-center at UI scales above 100%.
 
 ## Graphics
-- **Ground-up SSAO** (Scalable Ambient Obscurance) replaces the old disabled ambient occlusion path — proper contact shadows in 3D mode, correct under render scaling, with an ambient/direct lighting split. Further refined with motion-gated temporal validity and a plane-aware blur, so it stays stable while the camera moves.
-- **Temporal anti-aliasing rebuilt along FSR2/FSR3 lines.** Thin features — railings, wires, fence posts — lock in a single frame instead of shimmering; moving sims leave far less ghosting; rain is treated as its own reactive case rather than smearing; and disocclusion behind slow-moving silhouettes is handled properly.
+- **Ground-up SSAO** (Scalable Ambient Obscurance) — proper contact shadows in 3D mode, correct under render scaling, with an ambient/direct lighting split. Further refined with motion-gated temporal validity and a plane-aware blur, so it stays stable while the camera moves.
+- **Temporal anti-aliasing rebuilt along FSR2/FSR3 lines.**
 - **OpenGL now matches DirectX** for temporal quality, including on older `ps_3_0` hardware.
 - **Motion blur** no longer shows tile seams, and reactive surfaces are excluded from it.
 - **New Sharp Bilinear upscaling option**, plus reduced terrain grain and fixes to disabled items in the graphics dropdowns.
-- The **sky dome returns to the classic upstream look** (brightness and day/night colors restored) with velocity-buffer support for TAA and motion blur as the only addition.
-- Fixed the sky/city backdrop taking a **circular bite** out of the horizon during 2D↔3D camera transitions on the OpenGL backend.
+- The **sky dome returns to the classic upstream look** (brightness and day/night colors restored).
 - 3D picking: small objects made of tiny mesh pieces (roaches, firefly lights, wall phones) are reliably clickable — clicks within a small buffer of the geometry now count.
-- Fixed a **crash to desktop** when the game re-created its render targets (switching to 2D with supersampling on, and similar): a target could be disposed while still bound, and the next frame tried to resolve it.
+- Fixed a potential **crash to desktop** when the game re-created its render targets (switching to 2D with supersampling on, and similar): a target could be disposed while still bound, and the next frame tried to resolve it.
 
 ## Build Mode
 - The **eyedropper and sledgehammer** now hide themselves when they can't be used: in the buy-mode inventory tab, and for anyone without build/buy permission (a plain roommate or visitor). If you switch to inventory or lose permission while a tool is active, it's cancelled automatically.
 
 ## Polish
-- The remaining **FreeSO branding in game text** is now OpenSO: the welcome/hint system, money and property guides, staff mail sender names, and error dialogs.
+- Updated some remaining **FreeSO branding in game text** to OpenSO: the welcome/hint system, money and property guides, staff mail sender names, and error dialogs.
 - **The OpenGL client now shows the OpenSO icon.** The Windows client carries both graphics backends and they read different icon resources — DirectX had the OpenSO mark while OpenGL still showed the old FreeSO one. The Linux/macOS executable and the Linux desktop icon were also still FreeSO-branded, and are fixed too.
 - **The version string on the login screen stays inside the window.** It was positioned against the background image, which is larger than the default window, so it could sit off-screen entirely; it is now pinned to the bottom-left corner and follows the window when resized.
 
@@ -71,14 +67,12 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 ## The Sims Online: detection, repair and reinstall
 - **Detects an existing TSO install** — launcher-managed, registry, or a legacy retail path — and validates that it is actually complete rather than trusting a bare folder.
 - A partial or truncated install is reported as **Incomplete** with what's missing, and offers a repair.
-- **Reinstall now always downloads a fresh, verified copy.** It previously reused another install found on your machine without saying so, which — because the source comes from the Maxis registry — could be an unrelated server's game files.
-- Reusing a local copy is still supported, but as a deliberate **"Use existing copy"** action that names the folder it would copy from, offered only when nothing is installed yet. It saves the 1.27 GB download on a fresh setup.
+- Reusing a local copy is supported, but as a deliberate **"Use existing copy"** action that names the folder it would copy from, offered only when nothing is installed yet. It saves the 1.27 GB download on a fresh setup.
 
 ## Self-update
-- **Fixed: the launcher could not update on accounts with non-Latin usernames.** Greek, Cyrillic, CJK and similar profile names were mangled into garbage in the update script, and the update failed with "the launcher cannot be found at the path specified".
+- **Fixed: the launcher could not update on accounts with non-Latin usernames.** Greek, Cyrillic, CJK and similar profile names were mangled in the update script, and the update failed with "the launcher cannot be found at the path specified".
 - **No more console window during an update.** A command window used to flash — and could be left stranded on screen showing an error.
 
 ## Interface
-- **New: DAILY PAYOUTS on the home page.** Each money object's payout rate for today, its movement since yesterday, and the day's bonus object — with the objects' catalog sprites. Appears automatically once the game server is running v0.4.3 or later (the rates come from its new public payouts API); against an older server the launcher simply doesn't show the section.
-- **The city map is legible.** Genesis' map thumbnail never appeared at all, because the shard runs one of the original TSO maps and the launcher only looked among the OpenSO-bundled ones. It's now shown at its natural size instead of being blown up sevenfold into a blur, and sits beside the live server stats under the shard name.
-- The 3D Mesh Pack row on the Installer page showed the literal text "True" instead of its install state, and its button now reads Reinstall once the pack is present.
+- **City map display & UI improvements**
+- **Added daily job object payouts from live server stats**
