@@ -327,6 +327,8 @@ namespace FSO.Client.Rendering.City
             }
         }
 
+        private static bool _edgeSpaceLogged;
+
         public void Update(UpdateState state, Terrain city)
         {
             var screen = UIScreen.Current;
@@ -379,18 +381,28 @@ namespace FSO.Client.Rendering.City
                 }
                 else if (GlobalSettings.Default.EdgeScroll && state.ProcessMouseEvents) //edge scroll check - do this even if mouse events are blocked
                 {
-                    // m_MouseState was scaled into drawable pixels by ScaleMouse (× WindowPixelRatio),
-                    // so the bounds must scale by the SAME ratio — WindowPixelRatio is 1 everywhere
-                    // except macOS native-Retina, which is exactly where the raw comparison broke:
-                    // everything past the first screen-of-points read as the right/bottom edge, so the
-                    // map scrolled whenever the mouse crossed the middle of the window. Deliberately
-                    // NOT DPIScaleFactor: that also moves with Windows UI scaling, where mouse and
-                    // ScreenWidth already share a space and inflating the bounds would push the
-                    // right/bottom edge zones outside the window.
-                    var ratio = FSO.Common.FSOEnvironment.WindowPixelRatio;
-                    var pxWidth = (int)(screen.ScreenWidth * ratio);
-                    var pxHeight = (int)(screen.ScreenHeight * ratio);
-                    var edge = (int)(32 * ratio);
+                    // Compare in the mouse's OWN space. ScaleMouse maps window points -> render pixels
+                    // (the Retina contract on WindowPixelRatio), and the render surface's true size is
+                    // the backbuffer — so take the bounds from the device directly instead of
+                    // reconstructing them from ScreenWidth × some factor. Two prior attempts guessed
+                    // that factor and each broke one platform: ScreenWidth alone made everything past
+                    // the first screen-of-points scroll on Retina Macs; ScreenWidth × a ratio overshot
+                    // and made the edges unreachable. BackBufferWidth is what the scaled mouse maxes
+                    // out at BY DEFINITION, on every platform and DPI. Only the 32px margin scales,
+                    // so the trigger zone keeps its physical size on dense displays.
+                    var pp = GameFacade.GraphicsDevice.PresentationParameters;
+                    var pxWidth = pp.BackBufferWidth;
+                    var pxHeight = pp.BackBufferHeight;
+                    var edge = (int)(32 * FSO.Common.FSOEnvironment.WindowPixelRatio);
+                    if (!_edgeSpaceLogged)
+                    {
+                        // one line per session: every candidate coordinate space, so a mis-scaled edge
+                        // zone on some platform/DPI combo can be diagnosed from a log instead of guessed
+                        _edgeSpaceLogged = true;
+                        Console.WriteLine($"[edgescroll] mouse=({m_MouseState.X},{m_MouseState.Y}) backbuffer={pxWidth}x{pxHeight}" +
+                            $" screenWH={screen.ScreenWidth}x{screen.ScreenHeight} winPxRatio={FSO.Common.FSOEnvironment.WindowPixelRatio}" +
+                            $" dpi={FSO.Common.FSOEnvironment.DPIScaleFactor} edge={edge}");
+                    }
                     if (m_MouseState.X > pxWidth - edge)
                     {
                         Triggered = true;
