@@ -79,5 +79,6 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 - **No more console window during an update.** A command window used to flash — and could be left stranded on screen showing an error.
 
 ## Interface
+- **New: DAILY PAYOUTS on the home page.** Each money object's payout rate for today, its movement since yesterday, and the day's bonus object — with the objects' catalog sprites. Appears automatically once the game server is running v0.4.3 or later (the rates come from its new public payouts API); against an older server the launcher simply doesn't show the section.
 - **The city map is legible.** Genesis' map thumbnail never appeared at all, because the shard runs one of the original TSO maps and the launcher only looked among the OpenSO-bundled ones. It's now shown at its natural size instead of being blown up sevenfold into a blur, and sits beside the live server stats under the shard name.
 - The 3D Mesh Pack row on the Installer page showed the literal text "True" instead of its install state, and its button now reads Reinstall once the pack is present.
