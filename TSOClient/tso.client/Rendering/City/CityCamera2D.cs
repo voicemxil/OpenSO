@@ -379,16 +379,18 @@ namespace FSO.Client.Rendering.City
                 }
                 else if (GlobalSettings.Default.EdgeScroll && state.ProcessMouseEvents) //edge scroll check - do this even if mouse events are blocked
                 {
-                    // m_MouseState is in backbuffer PIXELS (ScaleMouse), ScreenWidth/Height are UI
-                    // units — same conversion as the 3D camera's mouse-look center. Comparing them raw
-                    // meant that on native-Retina macOS (2x) everything past the first screen-of-points
-                    // read as the right/bottom edge, so the map scrolled whenever the mouse crossed the
-                    // middle of the window. The 32px margin scales too so the edge zone keeps its
-                    // physical size.
-                    var dpi = FSO.Common.FSOEnvironment.DPIScaleFactor;
-                    var pxWidth = (int)(screen.ScreenWidth * dpi);
-                    var pxHeight = (int)(screen.ScreenHeight * dpi);
-                    var edge = (int)(32 * dpi);
+                    // m_MouseState was scaled into drawable pixels by ScaleMouse (× WindowPixelRatio),
+                    // so the bounds must scale by the SAME ratio — WindowPixelRatio is 1 everywhere
+                    // except macOS native-Retina, which is exactly where the raw comparison broke:
+                    // everything past the first screen-of-points read as the right/bottom edge, so the
+                    // map scrolled whenever the mouse crossed the middle of the window. Deliberately
+                    // NOT DPIScaleFactor: that also moves with Windows UI scaling, where mouse and
+                    // ScreenWidth already share a space and inflating the bounds would push the
+                    // right/bottom edge zones outside the window.
+                    var ratio = FSO.Common.FSOEnvironment.WindowPixelRatio;
+                    var pxWidth = (int)(screen.ScreenWidth * ratio);
+                    var pxHeight = (int)(screen.ScreenHeight * ratio);
+                    var edge = (int)(32 * ratio);
                     if (m_MouseState.X > pxWidth - edge)
                     {
                         Triggered = true;
