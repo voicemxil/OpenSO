@@ -5,10 +5,10 @@
 # <div align="center">OpenSO</div>
 
 
-**OpenSO** is a modernized, self-hostable client and server reimplementation for *The Sims Online*, built on the
-[FreeSO](https://github.com/riperiperi/FreeSO) engine. 
+**OpenSO** is a fan-hosted client and server for *The Sims Online*, built on the
+[FreeSO](https://github.com/riperiperi/FreeSO) engine.
 
-Faithful to the original game, OpenSO carries forward FreeSO’s hardware rendering, dynamic lighting, high-resolution output, multi-floor homes, and optional 3D view — then moves the project forward with a .NET 10 toolchain, a cleaned-up dependency stack that retires legacy build and networking components, high-refresh rendering, scalable post-processing and anti-aliasing, cross-platform releases, and a practical self-hosting stack.
+Faithful to the original game, OpenSO carries forward FreeSO’s improvements such as hardware rendering, dynamic lighting, high-resolution output, multi-floor homes, and optional 3D view, while modernizing the codebase to .NET 10 with a cleaned-up dependency stack that retires legacy build and networking components. It offers high-refresh rendering, scalable post-processing and anti-aliasing, cross-platform releases, and improved building/hosting infrastructure.
 
 See **[openso.org](https://openso.org)**
 for downloads, news, and account registration.
@@ -24,16 +24,15 @@ of the original game. The project has no affiliation with Electronic Arts or Max
 ## What OpenSO adds over upstream
 
 * **Modern foundation and toolchain:** the whole solution builds with the plain `dotnet` CLI on **.NET 10** with MonoGame from NuGet — no Protobuild or Visual Studio requirement. 
-* **New rendering improvements:** a consolidated in-game graphics settings dialog provides granular resolution and AA options. An optional post processing stack for 3D mode adds depth & velocity buffer support and unlocks several effects: FXAA/SMAA, a custom TAA with temporal upscaling (TAAU) or FSR1, motion blur, and bloom. Offers room to add future effects.
-* **Dynamic high framerate support:** the original renderer was limited to a fixed 60Hz. Ours rewrites the timing logic with delta time for a fully unlocked and dynamic FPS, matching your GPU and monitor. The new render scale setting lets you fine-tune the graphics workload, whether you have a potato laptop or want to supersample on a high-end PC.
+* **New rendering improvements:** a consolidated in-game graphics settings dialog provides granular resolution and AA options. An optional post processing stack for 3D mode adds depth & velocity buffer support and unlocks several effects: FXAA/SMAA/TAA, scaling options, motion blur, and AO/bloom.
+* **Dynamic high framerate support:** the original renderer was limited to a fixed 60Hz. Ours uses delta time for a fully unlocked and dynamic FPS, matching your GPU and monitor. The new render scale setting lets you fine-tune the graphics workload, whether you have a potato laptop or want to supersample on a high-end PC.
 * **Modernized networking:** the legacy Mina.NET stack is replaced with a custom async
   `TcpClient`/`SslStream` transport, with opt-in **TLS 1.2/1.3** for client↔server traffic via the
   `tls://` host scheme.
 * **Self-update pipeline:** the client updates itself to the latest live version, including incremental release deltas on Windows with a
   full-download fallback. The server ships as a container image for one-command upgrades, and can also update on a routine.
 * **OpenSO Launcher:** The [OpenSO Launcher](https://github.com/voicemxil/OpenSO.Launcher) built on native C# and Avalonia is the cross-platform installer and updater for OpenSO, providing a straightforward way to install, update, and repair the game on Windows, macOS, and Linux.
-* **Turnkey server hosting:** a Docker Compose stack (game server + MariaDB + Caddy HTTPS) with a
-  from-zero runbook, email-verification registration, and the admin web panel.
+* **Turnkey server hosting:** a Docker Compose stack (game server + MariaDB + Caddy HTTPS) with email-verification registration and admin web panel.
 * **Automated releases:** tag-driven CI builds versioned client packages for Windows, Linux,
   and macOS (x64 + Apple Silicon), recompiling shaders from source on every build. macOS gets a native app bundle instead of a folder of loose files.
 
