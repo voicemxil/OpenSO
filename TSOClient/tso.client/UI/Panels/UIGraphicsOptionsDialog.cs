@@ -68,6 +68,7 @@ namespace FSO.Client.UI.Panels
         private UICombobox AACombo, MotionBlurCombo, BloomCombo, AOCombo, UpscalerCombo, TAADebugCombo;
         private object[] _aaObjs, _mblurObjs, _bloomObjs, _aoObjs, _upscalerObjs, _taaDbgObjs;
         private UILabel TAADebugRowLabel; // row hides when Cosmic TAA isn't the AA mode
+        private UILabel MSAANoteLabel;    // "MSAA is off in 3D while SSAO is on" — see ctor comment
         private UISlider RenderScaleSlider, SharpenSlider, MotionBlurSlider, BloomThresholdSlider, BloomIntensitySlider, AORadiusSlider, AOIntensitySlider;
         private UILabel RenderScaleLabel, SharpenLabel, MotionBlurLabel, BloomThresholdLabel, BloomIntensityLabel, AORadiusLabel, AOIntensityLabel;
         // Min 1/3 = the DLSS/FSR2 "Ultra Performance" ratio (1080p output from 360p render at 0.33x).
@@ -573,6 +574,18 @@ namespace FSO.Client.UI.Panels
             AACombo = AddRow("Anti-aliasing", 46, aaNames.ToArray(), aaValues.ToArray(), out _aaObjs, OnAAMode);
             AddGroupHeader("Anti-aliasing", 20);
 
+            // The engine zeroes 3D MSAA while SSAO is on (World.ChangeAAMode: a multisampled G-buffer
+            // resolve averages depth/normals at exactly the silhouettes AO needs clean) — but the AA
+            // dropdown kept showing the MSAA tier as selected, so MSAA appeared to silently stop
+            // working after toggling AO. Say so. Sits in the Cosmic-TAA-debug row's slot: that row
+            // needs TAA on and this note needs TAA off, so they can never collide.
+            MSAANoteLabel = new UILabel();
+            MSAANoteLabel.Caption = "MSAA is off in 3D mode while SSAO is enabled.";
+            if (TAADebugRowLabel != null) MSAANoteLabel.CaptionStyle = TAADebugRowLabel.CaptionStyle;
+            MSAANoteLabel.Position = new Vector2(23, 78);
+            MSAANoteLabel.Visible = false;
+            Add(MSAANoteLabel);
+
             RefreshSelections();
         }
 
@@ -957,6 +970,10 @@ namespace FSO.Client.UI.Panels
             SelectValue(AOCombo, _aoObjs, s.AO ? 1 : 0);
             SetAOSliders(s.AORadius, s.AOIntensity);
             SetSharpenSlider(s.SharpenAmount);
+            // visible exactly when the dropdown shows an MSAA tier the engine is discarding (the TAA
+            // dropdown entries store MSAALevel 0, so this can only fire with TAA off — no row clash)
+            if (MSAANoteLabel != null)
+                MSAANoteLabel.Visible = s.MSAALevel > 0 && s.AO && s.AOIntensity > 0 && FSOEnvironment.Enable3D;
             InternalChange = false;
         }
 

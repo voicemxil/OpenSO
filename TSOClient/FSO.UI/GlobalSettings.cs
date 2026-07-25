@@ -52,6 +52,20 @@ namespace FSO.Client
                         defaultInstance.Save();
                     }
 
+                    // macOS one-shot: default the render scale to 0.5 for 3D mode. Native-Retina
+                    // rendering made the 3D scene draw at full panel density — a 4x pixel cost that
+                    // runs laptop GPUs hot for detail 3D doesn't especially benefit from. 0.5x of
+                    // Retina is point resolution for the 3D scene; 2D modes are unaffected (render
+                    // scale <1 is 3D-only — World.ChangeAAMode resets it to native for the pixel-exact
+                    // sprite scene). Only an untouched slider (== the old default of 1) is moved, and
+                    // the flag makes this once-ever, so deliberately choosing 1.0 afterwards sticks.
+                    if (!defaultInstance.MacRenderScaleDefaulted && OperatingSystem.IsMacOS())
+                    {
+                        if (defaultInstance.RenderScale == 1f) defaultInstance.RenderScale = 0.5f;
+                        defaultInstance.MacRenderScaleDefaulted = true;
+                        defaultInstance.Save();
+                    }
+
                     // Migrate the legacy mutually-exclusive AntiAlias preset (0/1/2) into the decoupled
                     // MSAA + supersampling fields the first time we see a config without them.
                     if (defaultInstance.MSAALevel < 0)
@@ -95,6 +109,7 @@ namespace FSO.Client
             { "MSAALevel", "-1"},        //hardware MSAA samples: 0/2/4/8
             { "SuperSampling", "1"},     //legacy supersample factor: 1 (off) or 2; superseded by RenderScale, kept in sync
             { "RenderScale", "1"},       //render-scale slider: <1 upscales (FSR/EASU), >1 supersamples (downsample resolve)
+            { "MacRenderScaleDefaulted", "false" }, //one-shot macOS 0.5x default applied (see Default getter)
             { "PostAA", "0"},            //post-process AA: 0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High (shader pass; built on Windows)
             { "Sharpen", "0"},           //resolve sharpening: 0=Bilinear, 1=FSR (EASU+RCAS) (shader pass; built on Windows)
             { "SharpenAmount", "0.25"},  //RCAS sharpening strength, 0..1
@@ -191,6 +206,7 @@ namespace FSO.Client
         public int MSAALevel { get; set; } //hardware MSAA samples: 0/2/4/8
         public int SuperSampling { get; set; } //legacy supersample factor: 1 (off) or 2; kept in sync with RenderScale
         public float RenderScale { get; set; } //render scale: <1 upscale (FSR/EASU), 1 native, >1 supersample
+        public bool MacRenderScaleDefaulted { get; set; } //one-shot macOS 0.5x render-scale default applied
         public int PostAA { get; set; } //0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High
         public int Sharpen { get; set; } //0=Bilinear, 1=FSR (EASU+RCAS)
         public float SharpenAmount { get; set; } //RCAS strength 0..1
