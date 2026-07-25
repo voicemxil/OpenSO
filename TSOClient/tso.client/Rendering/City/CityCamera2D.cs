@@ -379,25 +379,35 @@ namespace FSO.Client.Rendering.City
                 }
                 else if (GlobalSettings.Default.EdgeScroll && state.ProcessMouseEvents) //edge scroll check - do this even if mouse events are blocked
                 {
-                    if (m_MouseState.X > screen.ScreenWidth - 32)
+                    // m_MouseState is in backbuffer PIXELS (ScaleMouse), ScreenWidth/Height are UI
+                    // units — same conversion as the 3D camera's mouse-look center. Comparing them raw
+                    // meant that on native-Retina macOS (2x) everything past the first screen-of-points
+                    // read as the right/bottom edge, so the map scrolled whenever the mouse crossed the
+                    // middle of the window. The 32px margin scales too so the edge zone keeps its
+                    // physical size.
+                    var dpi = FSO.Common.FSOEnvironment.DPIScaleFactor;
+                    var pxWidth = (int)(screen.ScreenWidth * dpi);
+                    var pxHeight = (int)(screen.ScreenHeight * dpi);
+                    var edge = (int)(32 * dpi);
+                    if (m_MouseState.X > pxWidth - edge)
                     {
                         Triggered = true;
                         m_TargVOffX += m_ScrollSpeed * rScale;
                         CursorManager.INSTANCE.SetCursor(CursorType.ArrowRight);
                     }
-                    if (m_MouseState.X < 32)
+                    if (m_MouseState.X < edge)
                     {
                         Triggered = true;
                         m_TargVOffX -= m_ScrollSpeed * rScale;
                         CursorManager.INSTANCE.SetCursor(CursorType.ArrowLeft);
                     }
-                    if (m_MouseState.Y > screen.ScreenHeight - 32)
+                    if (m_MouseState.Y > pxHeight - edge)
                     {
                         Triggered = true;
                         m_TargVOffY -= m_ScrollSpeed * rScale;
                         CursorManager.INSTANCE.SetCursor(CursorType.ArrowDown);
                     }
-                    if (m_MouseState.Y < 32)
+                    if (m_MouseState.Y < edge)
                     {
                         Triggered = true;
                         m_TargVOffY += m_ScrollSpeed * rScale;
