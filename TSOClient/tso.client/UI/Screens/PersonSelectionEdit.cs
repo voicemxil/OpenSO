@@ -483,7 +483,7 @@ namespace FSO.Client.UI.Screens
             UpdateAcceptButtonState();
         }
 
-        private void UpdateAcceptButtonState()
+        protected void UpdateAcceptButtonState()
         {
             var enabled = true;
             //keeping the current name is always allowed in edit mode (it may predate these rules);

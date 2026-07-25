@@ -44,6 +44,11 @@ namespace FSO.Client.UI.Screens
         private UIImage _NameBox, _BioBox;
         private UILabel _NameLabel, _BioLabel, _NameReqLabel;
 
+        /// <summary>Edit-mode price line above Accept: what the makeover costs, and — when the sim can't
+        /// pay — why Accept is disabled. Hidden while creating a sim or when edits are free.</summary>
+        private UILabel _PriceLabel;
+        private TextStyle _PriceDim, _PriceOk, _PriceBad;
+
         public CASScreenV2() : base()
         {
             var gw = GlobalSettings.Default.GraphicsWidth;
@@ -58,8 +63,12 @@ namespace FSO.Client.UI.Screens
             this.AddAt(1, SimBox);
             if (DialogBackground != null) this.Remove(DialogBackground);
 
-            m_HeadSkinBrowser.OnChange += (e) => SimBox.FocusHead();
-            m_BodySkinBrowser.OnChange += (e) => SimBox.FocusBody();
+            // Focus follows the tab; the accept re-check keeps the affordability gate live — without it
+            // a paid look change only re-evaluated Accept on the next name/bio keystroke.
+            m_HeadSkinBrowser.OnChange += (e) => { SimBox.FocusHead(); UpdateAcceptButtonState(); };
+            m_BodySkinBrowser.OnChange += (e) => { SimBox.FocusBody(); UpdateAcceptButtonState(); };
+            foreach (var b in new[] { FemaleButton, MaleButton, SkinLightButton, SkinMediumButton, SkinDarkButton })
+                if (b != null) b.OnButtonClick += x => UpdateAcceptButtonState(); // runs after the base handler sets the value
 
             // hide all legacy controls
             foreach (var child in new List<UIElement>(Children))
@@ -169,6 +178,24 @@ namespace FSO.Client.UI.Screens
                 this.Add(_BioLabel);
             }
 
+            // Price line for Edit A Sim (creation is free, so it stays hidden there). Populated by
+            // Update() from the server's EditSimInfo answer; teal when payable, salmon when short.
+            _PriceDim = TextStyle.Create(new Color(140, 152, 170), 11);
+            _PriceOk  = TextStyle.Create(new Color(140, 236, 210), 11);
+            _PriceBad = TextStyle.Create(new Color(255, 122, 110), 11);
+            _PriceLabel = new UILabel
+            {
+                Caption = "",
+                CaptionStyle = _PriceDim,
+                Wrapped = false,
+                // centred across the whole panel, not the grid edge - it reads as a status line for the
+                // Accept row below it rather than another form field
+                Alignment = TextAlignment.Center | TextAlignment.Top,
+                Size = new Vector2(PW, 16),
+                Visible = false
+            };
+            this.Add(_PriceLabel);
+
             LayoutGeometry();
             SetTab(0);
         }
@@ -253,6 +280,10 @@ namespace FSO.Client.UI.Screens
 
             Place(AcceptButton,        _PX + 330, _PY + 600);
             Place(CancelButton,        _PX + 170, _PY + 600);
+
+            // just above the Accept/Cancel row, centred across the panel. Positioned directly (not via
+            // Place) because its visibility belongs to Update, not the layout pass.
+            if (_PriceLabel != null) _PriceLabel.Position = new Vector2(_PX, _PY + 574);
         }
 
         public override void GameResized()
@@ -316,6 +347,47 @@ namespace FSO.Client.UI.Screens
             int pages = (b?.DataProvider == null) ? 0 : b.NumPages;
             if (_PgLeft != null) _PgLeft.Disabled = b == null || b.SelectedPage <= 0;
             if (_PgRight != null) _PgRight.Disabled = b == null || b.SelectedPage >= pages - 1;
+            UpdatePriceLine();
+        }
+
+        /// <summary>
+        /// Keeps the price line current. Polled from Update like the chevrons — the inputs that change it
+        /// (outfit selection, gender/skin, the async EditSimInfo answer) funnel through too many paths to
+        /// hook individually, and both the Caption setter and the Visible setter no-op when unchanged.
+        /// </summary>
+        private void UpdatePriceLine()
+        {
+            if (_PriceLabel == null) return;
+            // nothing to say while creating a sim (free), before the server has quoted a price, or when
+            // edits are configured free
+            if (!EditMode || AppearancePrice <= 0)
+            {
+                _PriceLabel.Visible = false;
+                return;
+            }
+
+            //terse status-line copy: the long explanatory sentence read as overflowing body text
+            //jammed between the pagination row and the buttons
+            string caption; TextStyle style;
+            var price = "$" + AppearancePrice.ToString("##,#0");
+            if (!AppearanceChanged)
+            {
+                caption = "New look: " + price + "  ·  renaming is free";
+                style = _PriceDim;
+            }
+            else if (CannotAffordChange)
+            {
+                caption = "New look: " + price + "  ·  you only have $" + AvatarBudget.ToString("##,#0");
+                style = _PriceBad;
+            }
+            else
+            {
+                caption = "New look: " + price + "  ·  you have $" + AvatarBudget.ToString("##,#0");
+                style = _PriceOk;
+            }
+            _PriceLabel.Visible = true;
+            if (_PriceLabel.Caption != caption) _PriceLabel.Caption = caption;
+            if (_PriceLabel.CaptionStyle != style) _PriceLabel.CaptionStyle = style;
         }
 
         // Solid rounded-rectangle texture (transparent outside the radius, soft-AA edge), with an
