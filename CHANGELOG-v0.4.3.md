@@ -20,13 +20,13 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 ## 2D Mode Fixed on Mac
 - Fixed an issue causing **blocky sprite scaling** in 2D mode on the OpenGL backend — a half-pixel projection error introduced by the shader toolchain upgrade. Sprites are pixel-crisp again.
 - Fixed 2D depth: object pieces no longer show slivers through each other e.g. (mailbox flags, shower walls), if the client was launched in 3D mode.
-- **Sharper 2D zoom on high-DPI displays**: each zoom level uses the densest sprite art available — middle zoom shows closest-zoom art at true 1:1 Retina detail, and closest zoom is a clean integer double.
+- Sharper 2D zoom on high-DPI displays: each zoom level uses the densest sprite art available — middle zoom shows closest-zoom art at true 1:1 Retina detail, and closest zoom is a clean integer double.
 - Switching from 3D to 2D no longer leaves the sprite scene subtly stretched by a carried-over fractional zoom (all platforms), and the zoom buttons track your actual zoom level.
 - Windows high-DPI: free-cam mouse look no longer drifts off-center at UI scales above 100%.
 
 ## Graphics
-- **Ground-up SSAO** (Scalable Ambient Obscurance) — proper contact shadows in 3D mode, correct under render scaling, with an ambient/direct lighting split. Further refined with motion-gated temporal validity and a plane-aware blur, so it stays stable while the camera moves.
-- **Temporal anti-aliasing rebuilt along FSR2/FSR3 lines.**
+- **3D Mode SSAO** (Scalable Ambient Obscurance) — proper contact shadows in 3D mode, correct under render scaling, with an ambient/direct lighting split. Further refined with motion-gated temporal validity and a plane-aware blur, so it stays stable while the camera moves.
+- **Temporal anti-aliasing rebuilt with FSR2/FSR3 style improvements.**
 - **OpenGL now matches DirectX** for temporal quality, including on older `ps_3_0` hardware.
 - **Motion blur** no longer shows tile seams, and reactive surfaces are excluded from it.
 - **New Sharp Bilinear upscaling option**, plus reduced terrain grain and fixes to disabled items in the graphics dropdowns.
@@ -43,7 +43,7 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 - **The version string on the login screen stays inside the window.** It was positioned against the background image, which is larger than the default window, so it could sit off-screen entirely; it is now pinned to the bottom-left corner and follows the window when resized.
 
 ## Server
-- **Moving out no longer bricks the plot.** Previously, if the cleanup after a move-out didn't complete, the empty plot stayed unbuyable forever ("lot taken" on a plot showing only its coordinates as the title). Dead lots are now recycled automatically: buying the location just works, the nightly maintenance sweeps up any that linger, and they no longer reappear as phantom lots after a server restart. Objects left on a recycled lot return to their owners' inventories.
+- **Moving out protections.** Previously, if the cleanup after a move-out didn't complete, the empty plot stayed unbuyable forever ("lot taken" on a plot showing only its coordinates as the title). Dead lots are now recycled automatically: buying the location just works, the nightly maintenance sweeps up any that linger, and they no longer reappear as phantom lots after a server restart. Objects left on a recycled lot return to their owners' inventories.
 - **The AFK timeout works again in first person / direct control.** These camera modes stream a control packet every tick, which counted as activity and kept idle players on lots forever. Only real movement input counts now, restoring the FreeSO behavior: idle warning after 15 minutes, disconnect at 20.
 - Archive-only in-game moderation (the self-host user list actions) is now fully disabled on the live server, as are its user-list broadcasts.
 - **Admin API hardening**: admin authentication now defaults to deny, and the localhost login bypass has been removed.
