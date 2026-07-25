@@ -11,6 +11,7 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 - Keeping your current name is always allowed, even if it predates the naming rules — only a *changed* name is re-validated, so older sims can still edit their appearance freely.
 - **A new look now costs §1,000.** The charge applies only when you actually change something about your sim's appearance — gender, skin tone, head or body. If you can't afford it nothing is applied and nothing is deducted.
 - **Renaming is free**, and so is editing your bio. To stop names being churned, a sim can only be renamed **once per day** — you can still change their look as often as you can pay for it.
+- **CAS shows the price before you commit.** The edit screen displays the makeover cost and your sim's balance up front, and the Accept button refuses a look you can't afford — no more finding out after you've built the whole outfit. A free rename or bio edit is never blocked by the price.
 - Renames and appearance edits now show up immediately on person pages and searches — the server no longer serves the old cached name until the nightly restart.
 
 ## macOS: Native Retina Rendering
@@ -53,6 +54,10 @@ Everything below is new since v0.4.2, for both the game client/server and the la
 - Admin mail now delivers to **every avatar** on the target account (previously it could fail outright against the database's constraints), and reports cleanly when an account has no avatars.
 - The admin API returns readable JSON errors to the admin webapp instead of opaque "failed to fetch" responses, and supports paginated listings.
 - **New public API: daily money-object payout rates** (`GET /userapi/payouts`). The nightly rebalance already decided which money objects pay more today and which one gets the bonus, but that was only visible in the in-game newspaper. It's now readable by launchers and community dashboards: per object, the current multiplier, the day-over-day change, and the bonus object of the day. No login required — these are global rates, identical for everyone. Player balances remain private and are exposed by no endpoint.
+
+## For self-hosters
+- This release adds two database migrations (the `edit_sim` price tuning row and `fso_avatars.name_change_date` for the rename cooldown). Run `FSO.Server.Core db-init` after updating, or Edit A Sim stays free and renames are unlimited.
+- The makeover price is tunable: change the `edit_sim` row in `fso_tuning` (0 = free).
 
 ---
 
