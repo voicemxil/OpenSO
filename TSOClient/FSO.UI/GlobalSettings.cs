@@ -110,6 +110,7 @@ namespace FSO.Client
             { "SuperSampling", "1"},     //legacy supersample factor: 1 (off) or 2; superseded by RenderScale, kept in sync
             { "RenderScale", "1"},       //render-scale slider: <1 upscales (FSR/EASU), >1 supersamples (downsample resolve)
             { "MacRenderScaleDefaulted", "false" }, //one-shot macOS 0.5x default applied (see Default getter)
+            { "World2xScale", "false" }, //opt-in 2x 2D world enlargement; only honoured at UI scale >= 2 (integer, crisp)
             { "PostAA", "0"},            //post-process AA: 0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High (shader pass; built on Windows)
             { "Sharpen", "0"},           //resolve sharpening: 0=Bilinear, 1=FSR (EASU+RCAS) (shader pass; built on Windows)
             { "SharpenAmount", "0.25"},  //RCAS sharpening strength, 0..1
@@ -207,6 +208,7 @@ namespace FSO.Client
         public int SuperSampling { get; set; } //legacy supersample factor: 1 (off) or 2; kept in sync with RenderScale
         public float RenderScale { get; set; } //render scale: <1 upscale (FSR/EASU), 1 native, >1 supersample
         public bool MacRenderScaleDefaulted { get; set; } //one-shot macOS 0.5x render-scale default applied
+        public bool World2xScale { get; set; } //opt-in 2x 2D world enlargement (UI scale >= 2 only)
         public int PostAA { get; set; } //0=Off, 1=FXAA, 2=SMAA-Low, 3=SMAA-High
         public int Sharpen { get; set; } //0=Bilinear, 1=FSR (EASU+RCAS)
         public float SharpenAmount { get; set; } //RCAS strength 0..1

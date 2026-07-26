@@ -989,7 +989,13 @@ namespace FSO.Client.UI.Panels
         public UILabel DPILabel;
         public UISlider DPISlider;
         public UIButton AutoButton;
+        public UIButton World2xButton;
+        public UILabel World2xLabel;
         private bool InternalChange;
+
+        /// <summary>UI scale at/above which the 2x world enlargement is offered. Below this the
+        /// multiplier would be fractional and the further zooms blur (see the ctor).</summary>
+        private const float WORLD2X_MIN_DPI = 2f;
 
         public UIDPIScaleDialog() : base(UIDialogStyle.OK, true) {
 
@@ -1021,6 +1027,29 @@ namespace FSO.Client.UI.Panels
             AutoButton.OnButtonClick += AutoButton_OnButtonClick;
             DynamicOverlay.Add(AutoButton);
 
+            // Opt-in 2x world enlargement. The 2D sprite tiers can shift up one level so the world is
+            // drawn twice as large, matching a 2x-scaled UI instead of sitting small beside it. It lives
+            // here rather than in the graphics dialog because it only makes sense against this slider.
+            //
+            // Gated at >= 200% ON PURPOSE: the enlargement multiplies the sprite scale, and only an
+            // INTEGER multiplier survives the composite blit's point sampling. At 125/150/175% it
+            // produced a fractional scale and the further zooms went visibly blurry - which is exactly
+            // how this shipped by accident when the tier selection keyed off DPI scale directly.
+            World2xButton = new UIButton();
+            World2xButton.Size = new Vector2(100, 35);
+            World2xButton.Caption = "2x World";
+            World2xButton.Position = new Vector2(140, 105);
+            World2xButton.OnButtonClick += World2xButton_OnButtonClick;
+            DynamicOverlay.Add(World2xButton);
+
+            World2xLabel = new UILabel();
+            World2xLabel.Position = new Vector2(245, 112);
+            World2xLabel.Size = new Vector2(140f, 0f);
+            World2xLabel.Alignment = TextAlignment.Left;
+            DynamicOverlay.Add(World2xLabel);
+
+            RefreshWorld2x();
+
             SetSize(400, 150);
 
             OKButton.OnButtonClick += (btn) =>
@@ -1036,6 +1065,30 @@ namespace FSO.Client.UI.Panels
             DPISlider.Value = Utils.DPIScaleDetect.GetSnappedScale() * 4;
             InternalChange = false;
             GlobalSettings.Default.Save(); //persist the auto flag even when the scale didn't change
+        }
+
+        private void World2xButton_OnButtonClick(UIElement button)
+        {
+            if (FSOEnvironment.DPIScaleFactor < WORLD2X_MIN_DPI) return; // disabled; ignore stray clicks
+            GlobalSettings.Default.World2xScale = !GlobalSettings.Default.World2xScale;
+            GlobalSettings.Default.Save();
+            RefreshWorld2x();
+        }
+
+        /// <summary>Button state + caption for the current UI scale. Re-run whenever the slider moves,
+        /// so raising the scale to 200% un-grays it immediately.</summary>
+        private void RefreshWorld2x()
+        {
+            var eligible = FSOEnvironment.DPIScaleFactor >= WORLD2X_MIN_DPI;
+            World2xButton.Disabled = !eligible;
+            World2xButton.Selected = eligible && GlobalSettings.Default.World2xScale;
+            World2xButton.Tooltip = eligible
+                ? "Draw the 2D world twice as large, to match the scaled interface."
+                : "Needs a UI scale of 200% or more — at smaller scales the world would blur.";
+            World2xLabel.Caption = eligible
+                ? (GlobalSettings.Default.World2xScale ? "World: 2x" : "World: 1x")
+                : "200%+ only";
+            World2xLabel.Tooltip = World2xButton.Tooltip;
         }
 
         private void DPISlider_OnChange(UIElement element)
@@ -1057,6 +1110,7 @@ namespace FSO.Client.UI.Panels
 
                 UIScreen.Current.GameResized();
                 GlobalSettings.Default.Save();
+                RefreshWorld2x(); // eligibility follows the scale that was just applied
             });
         }
 

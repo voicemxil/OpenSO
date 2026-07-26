@@ -1059,7 +1059,15 @@ namespace FSO.Client.UI.Panels
                 // selection with it made Windows UI scaling resize the world, and at the common
                 // non-integer scales (125/150/175%) BackbufferScale became fractional, so Far and Medium
                 // art was blitted at 1.5:1 and looked blurry (reported 2026-07-25).
-                var effective = TargetZoom * FSOEnvironment.WindowPixelRatio;
+                //
+                // World2xScale opts back into the enlargement deliberately (DPI dialog). Only ever an
+                // exact 2 — the blit point-samples integer scales and blurs on anything else — and only
+                // at UI scale >= 2, where a 2x world matches the 2x interface instead of dwarfing it.
+                // Enforced here, not just in the UI, so a hand-edited config can't reintroduce the blur.
+                var density = FSOEnvironment.WindowPixelRatio;
+                if (GlobalSettings.Default.World2xScale && FSOEnvironment.DPIScaleFactor >= 2f)
+                    density = Math.Max(density, 2f);
+                var effective = TargetZoom * density;
                 float BaseScale;
                 WorldZoom targetZoom;
                 if (effective < 0.5f)
