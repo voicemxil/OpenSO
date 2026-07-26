@@ -160,6 +160,11 @@ namespace FSO.Client
             GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
             GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);
 
+            // Recomputed here as well as at the fullscreen toggle: macOS finishes its Spaces transition
+            // by firing this resize, and the notch inset depends on the UI scale, which the AutoDPI
+            // block above may have just changed. Must precede GameResized, which re-lays-out the UI.
+            FSOEnvironment.UpdateSafeArea(fullscreen);
+
             if (uiLayer?.CurrentUIScreen == null) return;
             uiLayer.SpriteBatch.ResizeBuffer(width, height);
             uiLayer.CurrentUIScreen.GameResized();

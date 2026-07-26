@@ -1,4 +1,5 @@
 ﻿using System;
+using FSO.Common;
 using FSO.Client.UI.Framework;
 using FSO.Client.UI.Controls;
 using Microsoft.Xna.Framework;
@@ -96,6 +97,9 @@ namespace FSO.Client.UI.Panels
             var width = twidth + 72;
 
             X = ScreenWidth - (width / 2 + 40);
+            // Top-centre at Y=0 is exactly where a MacBook camera housing sits, and the game renders
+            // under it by design (see MacSafeArea) - so drop below it. Zero everywhere else.
+            Y = FSOEnvironment.SafeAreaTop;
             Background.X = 0;
             Background.SetSize(width + 80, 24);
             Size = new Vector2(width + 80, 24);
@@ -141,6 +145,7 @@ namespace FSO.Client.UI.Panels
             var width = ShowInfo ? twidth + 28 : twidth;
 
             X = ScreenWidth - (width / 2 + 40);
+            Y = FSOEnvironment.SafeAreaTop; // clear the camera housing - see SetOverrideMode
             Background.X = 0;
             Background.SetSize(width + 80, 24);
             Size = new Vector2(width + 80, 24);

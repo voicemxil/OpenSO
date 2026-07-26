@@ -53,6 +53,27 @@ namespace FSO.Common
         /// </summary>
         public static float WindowPixelRatio = 1f;
 
+        /// <summary>
+        /// Vertical space at the top of the screen that top-anchored UI must keep clear, in the same
+        /// logical units UI elements are positioned in. Non-zero only while running fullscreen on a Mac
+        /// with a camera housing, where we render under the notch by design (see MacSafeArea) - windowed,
+        /// the OS already keeps the window below the menu bar and this is 0.
+        /// </summary>
+        public static float SafeAreaTop = 0f;
+
+        /// <summary>
+        /// Recompute SafeAreaTop for the current mode. Notch height is reported in window points, so it
+        /// converts the same way any other window measurement does: to pixels via WindowPixelRatio, then
+        /// into UI units by dividing out the UI scale.
+        /// </summary>
+        public static void UpdateSafeArea(bool fullscreen)
+        {
+            var points = fullscreen ? Utils.MacSafeArea.TopPoints : 0f;
+            SafeAreaTop = (points <= 0f || DPIScaleFactor <= 0f)
+                ? 0f
+                : points * WindowPixelRatio / DPIScaleFactor;
+        }
+
         /// <summary>Map a window-space mouse state to backbuffer pixels (see WindowPixelRatio).</summary>
         public static Microsoft.Xna.Framework.Input.MouseState ScaleMouse(Microsoft.Xna.Framework.Input.MouseState m)
         {
