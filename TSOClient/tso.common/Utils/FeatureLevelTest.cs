@@ -54,6 +54,13 @@ namespace FSO.Common.Utils
                 {
                     using (var msaaTarg = new RenderTarget2D(gd, 4, 4, false, SurfaceFormat.Color, DepthFormat.Depth24Stencil8, samples, RenderTargetUsage.PreserveContents))
                     {
+                        // The driver can silently GRANT FEWER samples than requested - MonoGame clamps to
+                        // the device maximum while constructing the target, without failing. The target
+                        // then renders and resolves perfectly well at the lower level, so the colour test
+                        // below passes and we would conclude the requested level is supported. That is how
+                        // 8x came to be listed on Apple Silicon while the GPU quietly ran 4x. Believe the
+                        // count we were actually given, not the one we asked for.
+                        if (msaaTarg.MultiSampleCount < samples) continue;
                         gd.SetRenderTarget(msaaTarg);
                         gd.Clear(Color.Red);
                         using (var tex = TextureUtils.CopyAccelerated(gd, msaaTarg))
