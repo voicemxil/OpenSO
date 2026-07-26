@@ -20,7 +20,10 @@ namespace FSO.Common.Utils
         private static Queue<Callback> _StreamUpdateCallbacks = new Queue<Callback>();
         private static Queue<Callback> _StreamUpdateCallbacksSwap = new Queue<Callback>();
 
-        private static AssetStreamingMode _LoadingType = AssetStreamingMode.None;
+        // volatile: written by the render thread (BeginStreaming/EndStreaming) and read by loader threads.
+        // ARM's memory model is weakly ordered - unlike x86 - so on Apple Silicon a worker could otherwise
+        // keep observing a stale value after EndStreaming and pick the wrong branch in LoadTexture.
+        private static volatile AssetStreamingMode _LoadingType = AssetStreamingMode.None;
         private static int _LoadingCount;
 
         private static int _LoadingRequests;
@@ -109,6 +112,26 @@ namespace FSO.Common.Utils
 
                         RemoveLoadingResource();
                     });
+                });
+            }
+            else if (!GameThread.IsInGameThread())
+            {
+                // Streaming is off, but we are NOT on the render thread - so the synchronous path below
+                // would upload texture data from whatever thread we happen to be on. An OpenGL context is
+                // current on exactly one thread, so on macOS that call lands with no context bound and
+                // segfaults inside glGetIntegerv (no managed exception - the CLR never sees it).
+                //
+                // This is reachable during lot entry: VMStateSyncCmd runs the whole lot load on a
+                // ThreadPool worker, while EndStreaming() flips _LoadingType back to None from the render
+                // thread (UILayer.AddScreen) - so a texture requested late in the load takes this branch.
+                // Decode here (that part is pure CPU work and is why we're on a worker at all) and hand
+                // only the upload to the render thread.
+                AddLoadingResource();
+                var data = dataProvider();
+                InStreamUpdate(() =>
+                {
+                    TextureUtils.UploadTexData(tex, data);
+                    RemoveLoadingResource();
                 });
             }
             else

@@ -12,8 +12,12 @@ namespace FSO.Common.Rendering
         /// <param name="graphicsDevice"></param>
         /// <param name="width"></param>
         /// <param name="height"></param>
+        // The GLThreadGuard.Check calls sit in the base(...) argument list deliberately: allocating a
+        // texture is a GL call, so if it happens off the render thread it segfaults inside the base
+        // constructor and we never reach a body where we could have logged. Argument expressions are
+        // evaluated first, so this reports the offending stack while we still can.
         public CachableTexture2D(GraphicsDevice graphicsDevice, int width, int height)
-            : base(graphicsDevice, width, height)
+            : base(GLThreadGuard.Check(graphicsDevice, "CachableTexture2D(w,h)"), width, height)
         {
         }
         /// <summary>
@@ -25,7 +29,7 @@ namespace FSO.Common.Rendering
         /// <param name="mipmap"></param>
         /// <param name="format"></param>
         public CachableTexture2D(GraphicsDevice graphicsDevice, int width, int height, bool mipmap, SurfaceFormat format)
-            : base(graphicsDevice, width, height, mipmap, format)
+            : base(GLThreadGuard.Check(graphicsDevice, "CachableTexture2D(w,h,mip,fmt)"), width, height, mipmap, format)
         {
         }
         /// <summary>
@@ -39,7 +43,7 @@ namespace FSO.Common.Rendering
         /// <param name="format"></param>
         /// <param name="arraySize"></param>
         public CachableTexture2D(GraphicsDevice graphicsDevice, int width, int height, bool mipmap, SurfaceFormat format, int arraySize)
-            : base(graphicsDevice, width, height, mipmap, format, arraySize)
+            : base(GLThreadGuard.Check(graphicsDevice, "CachableTexture2D(w,h,mip,fmt,array)"), width, height, mipmap, format, arraySize)
         {
 
         }
