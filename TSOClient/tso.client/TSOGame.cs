@@ -102,12 +102,16 @@ namespace FSO.Client
         bool newChange = false;
         void Window_ClientSizeChanged(object sender, EventArgs e)
         {
-            // Gate on the live fullscreen state, not the persisted Windowed setting: Alt+Enter
-            // toggles fullscreen without touching the setting, and a fullscreen-driven resize must
-            // never be recorded as the windowed size (it makes the next windowed launch open at
-            // full display size, which the OS clamps - stretched image + offset mouse).
-            if (newChange || Graphics.IsFullScreen) return;
+            // A fullscreen-driven resize must never be RECORDED as the windowed size (it makes the next
+            // windowed launch open at full display size, which the OS clamps - stretched image + offset
+            // mouse). That is a reason to skip the persistence below, not to skip the resize itself:
+            // bailing out here meant the frame macOS actually grants on entering fullscreen was never
+            // adopted. On a notched Mac that frame is shorter than the display mode - the system lays
+            // content out beneath the strip - so the game kept rendering at full display height, the
+            // strip showed as a black bar, and the bottom of the screen was pushed off.
+            if (newChange) return;
             if (Window.ClientBounds.Width == 0 || Window.ClientBounds.Height == 0) return;
+            var fullscreen = Graphics.IsFullScreen;
             newChange = true;
             var width = Math.Max(1, Window.ClientBounds.Width);
             var height = Math.Max(1, Window.ClientBounds.Height);
@@ -123,8 +127,10 @@ namespace FSO.Client
                 // update hasn't run yet, so the old size would be baked in until the next resize
                 FSO.Common.Utils.PPXDepthEngine.ForcedBackbufferSize = new Point(width, height);
             }
-            else
+            else if (!fullscreen)
             {
+                // Skipped while fullscreen: the frame is the system's to choose there, and pushing a
+                // size back through ApplyChanges mid-transition can fight it.
                 Graphics.PreferredBackBufferWidth = width;
                 Graphics.PreferredBackBufferHeight = height;
                 Graphics.ApplyChanges();
@@ -135,7 +141,7 @@ namespace FSO.Client
             // (stepping down a quarter tier while the window is too small for it) and track the
             // monitor the window is on. Skipped under macOS Retina - the scale is the display's
             // backing factor, not an OS setting the window can move between.
-            if (GlobalSettings.Default.AutoDPI == 1 && _macDpi == 0)
+            if (GlobalSettings.Default.AutoDPI == 1 && _macDpi == 0 && !fullscreen)
             {
                 var scale = Utils.DPIScaleDetect.GetScaleForWindow(Window.Handle, width, height);
                 if (scale != FSOEnvironment.DPIScaleFactor)
@@ -147,6 +153,10 @@ namespace FSO.Client
                 }
             }
 
+            // Set even while fullscreen: this is the LIVE layout size GameResized lays out against, not
+            // only the persisted one (ToggleFullscreenMode already assigned it on the fullscreen path for
+            // that reason). A fullscreen size reaching the settings file is caught on next launch, where
+            // the constructor treats a saved windowed size covering the whole display as stale.
             GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
             GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);
 

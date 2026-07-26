@@ -356,8 +356,16 @@ namespace FSO.Client.UI
                 _lastWindowedSize = new Point(
                     Math.Max(1, window.ClientBounds.Width),
                     Math.Max(1, window.ClientBounds.Height));
-                gdm.PreferredBackBufferWidth = display.Width;
-                gdm.PreferredBackBufferHeight = display.Height;
+                // macOS lays fullscreen content out BENEATH the notch/menu strip rather than behind it,
+                // so the usable frame is shorter than the display mode. Forcing the display height here
+                // made the backbuffer taller than the frame: the strip became a black bar and the bottom
+                // of the screen was pushed off. Let the system pick the frame and adopt whatever it gives
+                // us (Window_ClientSizeChanged) - which is exactly why the green stoplight button works.
+                if (FSOEnvironment.WindowPixelRatio == 1f)
+                {
+                    gdm.PreferredBackBufferWidth = display.Width;
+                    gdm.PreferredBackBufferHeight = display.Height;
+                }
             }
             else
             {
@@ -379,26 +387,15 @@ namespace FSO.Client.UI
             }
             gdm.ToggleFullScreen();
 
-            // Re-sync to the frame the OS ACTUALLY gave us instead of the one we asked for. On a notched
-            // Mac the usable fullscreen frame is shorter than the display mode — macOS reserves the menu
-            // bar / notch strip — so requesting display.Height above produced a backbuffer taller than the
-            // window and the bottom of the UI fell off the screen. Going fullscreen with the green button
-            // never had this problem because it sizes to that usable frame rather than the display mode.
-            // Elsewhere the two agree and this is a no-op.
-            var clientW = Math.Max(1, window.ClientBounds.Width);
-            var clientH = Math.Max(1, window.ClientBounds.Height);
-            if (gdm.PreferredBackBufferWidth != clientW || gdm.PreferredBackBufferHeight != clientH)
-            {
-                gdm.PreferredBackBufferWidth = clientW;
-                gdm.PreferredBackBufferHeight = clientH;
-                gdm.ApplyChanges();
-                clientW = Math.Max(1, window.ClientBounds.Width);
-                clientH = Math.Max(1, window.ClientBounds.Height);
-            }
+            // macOS enters and leaves fullscreen through an ANIMATED Spaces transition, so ClientBounds
+            // is still the pre-toggle frame at this point - sizing from it would bake in the old
+            // dimensions. Window_ClientSizeChanged fires once the new frame actually lands and redoes
+            // all of the below with real numbers, so leave it to that.
+            if (FSOEnvironment.WindowPixelRatio != 1f) return;
 
             // render pixels = window units * WindowPixelRatio (macOS Retina backbuffer override)
-            var width = (int)(clientW * FSOEnvironment.WindowPixelRatio);
-            var height = (int)(clientH * FSOEnvironment.WindowPixelRatio);
+            var width = (int)(Math.Max(1, window.ClientBounds.Width) * FSOEnvironment.WindowPixelRatio);
+            var height = (int)(Math.Max(1, window.ClientBounds.Height) * FSOEnvironment.WindowPixelRatio);
             // keep the authoritative target size current before GameResized rebuilds world targets
             if (FSOEnvironment.WindowPixelRatio != 1f)
                 FSO.Common.Utils.PPXDepthEngine.ForcedBackbufferSize = new Microsoft.Xna.Framework.Point(width, height);
