@@ -140,7 +140,8 @@ namespace FSO.Common.Utils
             // real edges). Only needed when SSAA < 1.
             if (RenderPostTarget != null) { RenderPostTarget.Dispose(); RenderPostTarget = null; }
             if (SSAA < 0.999f)
-                RenderPostTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, w, h, DepthFormat.None);
+                // discard: written once per frame by the spatial-AA pass, consumed by the upscaler
+                RenderPostTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, w, h, DepthFormat.None, discard: true);
 
             // Bloom mip chain and SSAO targets are allocated on demand (EnableBloomTargets / EnableAOTargets,
             // driven by World.ChangeAAMode / ConfigureCityAA) so they cost nothing when bloom is off / AO is
@@ -161,15 +162,17 @@ namespace FSO.Common.Utils
             if (GD == null) return;
             var screen = ScreenSize();
             int rw = screen.X, rh = screen.Y;
+            // discard: the resolve chain only ever blits THROUGH these — each stage is a full-screen
+            // Opaque pass covering the whole target, and neither is read on a later frame.
             if (ResolveTarget == null || ResolveTarget.Width != rw || ResolveTarget.Height != rh)
             {
                 ResolveTarget?.Dispose();
-                ResolveTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
+                ResolveTarget = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None, discard: true);
             }
             if (ResolveTarget2 == null || ResolveTarget2.Width != rw || ResolveTarget2.Height != rh)
             {
                 ResolveTarget2?.Dispose();
-                ResolveTarget2 = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None);
+                ResolveTarget2 = CreateRenderTarget(GD, 1, 0, SurfaceFormat.Color, rw, rh, DepthFormat.None, discard: true);
             }
         }
 
@@ -229,8 +232,11 @@ namespace FSO.Common.Utils
             }
             if (AOTarget != null && AOTarget.Width == rw && AOTarget.Height == rh) return; //already correct size
             AOTarget?.Dispose(); AOTarget2?.Dispose(); AOHistoryA?.Dispose(); AOHistoryB?.Dispose();
-            AOTarget = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-            AOTarget2 = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+            // Working pair: DiscardContents. Every bind is a full-screen quad under Opaque blending
+            // (AOPass: SAO -> horizontal blur -> vertical blur), so nothing is ever read back from what
+            // was there before. The history pair below is the opposite case and must preserve.
+            AOTarget = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.DiscardContents);
+            AOTarget2 = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.DiscardContents);
             AOHistoryA = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
             AOHistoryB = new RenderTarget2D(GD, rw, rh, false, SurfaceFormat.Color, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
             _AOHistoryAIsPrev = true;
@@ -277,8 +283,10 @@ namespace FSO.Common.Utils
                 int th = System.Math.Max(1, (Backbuffer.Height + MB_TILE_SIZE - 1) / MB_TILE_SIZE);
                 MBTileMax?.Dispose();
                 MBNeighborMax?.Dispose();
-                MBTileMax = new RenderTarget2D(GD, tw, th, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
-                MBNeighborMax = new RenderTarget2D(GD, tw, th, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.PreserveContents);
+                // DiscardContents: both are computed fresh each frame by a single full-screen Opaque
+                // pass (PerPixelMotionBlur TileMax -> NeighborMax) and never read across frames.
+                MBTileMax = new RenderTarget2D(GD, tw, th, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.DiscardContents);
+                MBNeighborMax = new RenderTarget2D(GD, tw, th, false, SurfaceFormat.HalfVector4, DepthFormat.None, 0, RenderTargetUsage.DiscardContents);
             }
             return VelocityTarget;
         }
@@ -757,7 +765,13 @@ namespace FSO.Common.Utils
             return new Point(Backbuffer.Width, Backbuffer.Height);
         }
 
-        public static RenderTarget2D CreateRenderTarget(GraphicsDevice device, int numberLevels, int multisample, SurfaceFormat surface, int width, int height, DepthFormat dformat)
+        /// <param name="discard">Pass true ONLY for a target every bind of which fully rewrites it (a
+        /// full-screen Opaque pass) and which is never read across frames. That lets a tile-based GPU —
+        /// every Apple Silicon Mac — skip loading the old contents into tile memory on each bind, which
+        /// on a Retina-sized target is a real per-pass cost. Anything accumulated into (bloom's additive
+        /// upsample), bound twice with the first write still needed (the scene backbuffer), or read next
+        /// frame (temporal history) MUST stay on the PreserveContents default.</param>
+        public static RenderTarget2D CreateRenderTarget(GraphicsDevice device, int numberLevels, int multisample, SurfaceFormat surface, int width, int height, DepthFormat dformat, bool discard = false)
         {
             //apparently in xna4, there is no way to check device format... (it looks for the closest format if desired is not supported) need to look into if this affects anything.
 
@@ -805,7 +819,8 @@ namespace FSO.Common.Utils
             dformat = DepthFormat.Depth24Stencil8;
             return new RenderTarget2D(device,
                 width, height, (numberLevels > 1), surface,
-                dformat, multisample, RenderTargetUsage.PreserveContents);
+                dformat, multisample,
+                discard ? RenderTargetUsage.DiscardContents : RenderTargetUsage.PreserveContents);
         }
     }
 }
