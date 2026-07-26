@@ -379,9 +379,26 @@ namespace FSO.Client.UI
             }
             gdm.ToggleFullScreen();
 
+            // Re-sync to the frame the OS ACTUALLY gave us instead of the one we asked for. On a notched
+            // Mac the usable fullscreen frame is shorter than the display mode — macOS reserves the menu
+            // bar / notch strip — so requesting display.Height above produced a backbuffer taller than the
+            // window and the bottom of the UI fell off the screen. Going fullscreen with the green button
+            // never had this problem because it sizes to that usable frame rather than the display mode.
+            // Elsewhere the two agree and this is a no-op.
+            var clientW = Math.Max(1, window.ClientBounds.Width);
+            var clientH = Math.Max(1, window.ClientBounds.Height);
+            if (gdm.PreferredBackBufferWidth != clientW || gdm.PreferredBackBufferHeight != clientH)
+            {
+                gdm.PreferredBackBufferWidth = clientW;
+                gdm.PreferredBackBufferHeight = clientH;
+                gdm.ApplyChanges();
+                clientW = Math.Max(1, window.ClientBounds.Width);
+                clientH = Math.Max(1, window.ClientBounds.Height);
+            }
+
             // render pixels = window units * WindowPixelRatio (macOS Retina backbuffer override)
-            var width = (int)(Math.Max(1, window.ClientBounds.Width) * FSOEnvironment.WindowPixelRatio);
-            var height = (int)(Math.Max(1, window.ClientBounds.Height) * FSOEnvironment.WindowPixelRatio);
+            var width = (int)(clientW * FSOEnvironment.WindowPixelRatio);
+            var height = (int)(clientH * FSOEnvironment.WindowPixelRatio);
             // keep the authoritative target size current before GameResized rebuilds world targets
             if (FSOEnvironment.WindowPixelRatio != 1f)
                 FSO.Common.Utils.PPXDepthEngine.ForcedBackbufferSize = new Microsoft.Xna.Framework.Point(width, height);

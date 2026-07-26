@@ -1079,6 +1079,19 @@ namespace FSO.Client.UI.Panels
         /// so raising the scale to 200% un-grays it immediately.</summary>
         private void RefreshWorld2x()
         {
+            // Native-Retina macOS already draws the world at 2x via WindowPixelRatio, so this setting
+            // can neither add nor remove anything there — UILotControl takes the max of the two. Show it
+            // locked ON rather than off-and-toggleable, because that is the true state of the renderer.
+            if (FSOEnvironment.WindowPixelRatio >= WORLD2X_MIN_DPI)
+            {
+                World2xButton.Disabled = true;
+                World2xButton.Selected = true;
+                World2xButton.Tooltip = "This display already renders the world at 2x, so it is always on here.";
+                World2xLabel.Caption = "World: 2x";
+                World2xLabel.Tooltip = World2xButton.Tooltip;
+                return;
+            }
+
             var eligible = FSOEnvironment.DPIScaleFactor >= WORLD2X_MIN_DPI;
             World2xButton.Disabled = !eligible;
             World2xButton.Selected = eligible && GlobalSettings.Default.World2xScale;
@@ -1100,8 +1113,13 @@ namespace FSO.Client.UI.Panels
                 FSOEnvironment.DPIScaleFactor = DPISlider.Value / 4f;
                 GlobalSettings.Default.DPIScaleFactor = FSOEnvironment.DPIScaleFactor;
 
-                var width = Math.Max(1, GameFacade.Game.Window.ClientBounds.Width);
-                var height = Math.Max(1, GameFacade.Game.Window.ClientBounds.Height);
+                // ClientBounds is in WINDOW UNITS — points on macOS Retina, where the backbuffer is
+                // WindowPixelRatio times larger. Using it raw laid the UI out for a half-size screen, so
+                // anchored elements (the bottom-left toolbar) snapped to the pre-Retina dimensions and
+                // only corrected on the next real resize event. Convert to render pixels first, exactly
+                // as the Alt+Enter path in UILayer.ToggleFullscreenMode does.
+                var width = (int)(Math.Max(1, GameFacade.Game.Window.ClientBounds.Width) * FSOEnvironment.WindowPixelRatio);
+                var height = (int)(Math.Max(1, GameFacade.Game.Window.ClientBounds.Height) * FSOEnvironment.WindowPixelRatio);
 
                 UIScreen.Current.ScaleX = UIScreen.Current.ScaleY = FSOEnvironment.DPIScaleFactor;
 
