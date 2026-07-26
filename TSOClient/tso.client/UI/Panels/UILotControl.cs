@@ -1047,12 +1047,19 @@ namespace FSO.Client.UI.Panels
                     LastZoom = World.State.Zoom;
                 }
 
-                // DPI-aware sprite tier selection: at UI scale D the art tiers shift one level up so
-                // each apparent zoom uses the densest art available - apparent Medium renders Near art
-                // 1:1 (true Retina/high-DPI detail), apparent Far renders Medium art 1:1, and apparent
-                // Near renders Near art at an exact integer D:1 double (the composite blit point-samples
-                // integer scales, so it stays crisp). At D=1 this is identical to the classic mapping.
-                var effective = TargetZoom * FSOEnvironment.DPIScaleFactor;
+                // Density-aware sprite tier selection: where the drawable is denser than the window, the
+                // art tiers shift one level up so each apparent zoom uses the densest art available -
+                // apparent Medium renders Near art 1:1 (true Retina detail), apparent Far renders Medium
+                // art 1:1, and apparent Near renders Near art at an exact integer double (the composite
+                // blit point-samples integer scales, so it stays crisp). At ratio 1 this is identical to
+                // the classic mapping.
+                //
+                // Keyed on WindowPixelRatio (macOS native-Retina's fixed 2x), NOT DPIScaleFactor. The
+                // latter is the user's UI-scale preference, which must scale the GUI only: driving sprite
+                // selection with it made Windows UI scaling resize the world, and at the common
+                // non-integer scales (125/150/175%) BackbufferScale became fractional, so Far and Medium
+                // art was blitted at 1.5:1 and looked blurry (reported 2026-07-25).
+                var effective = TargetZoom * FSOEnvironment.WindowPixelRatio;
                 float BaseScale;
                 WorldZoom targetZoom;
                 if (effective < 0.5f)
