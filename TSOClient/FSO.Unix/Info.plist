@@ -15,13 +15,11 @@
         <string>OpenSO</string>
         <key>NSHighResolutionCapable</key>
         <true/>
-        <!-- Use the whole display, including the area beside/behind the camera housing, instead of the
-             legacy compatibility mode that letterboxes content below it. Without this macOS lays
-             fullscreen content out beneath the notch: the strip becomes a black bar, the window origin
-             stops matching the content origin, and mouse coordinates end up offset by the notch height.
-             The UI keeps clear of the notch itself via FSOEnvironment.SafeAreaTop. -->
-        <key>NSPrefersDisplaySafeAreaCompatibilityMode</key>
-        <false/>
+        <!-- NOTE: NSPrefersDisplaySafeAreaCompatibilityMode=false was tried here to render under the
+             camera housing, and macOS ignored it - the .NET apphost is not linked against an SDK new
+             enough for the key to apply. Content stays laid out below the notch; the resulting mouse
+             offset is corrected in FSOEnvironment.WindowTopOffset instead. Do not re-add without
+             verifying on a notched Mac first. -->
         <key>LSApplicationCategoryType</key>
         <string>public.app-category.simulation-games</string>
         <key>LSMinimumSystemVersion</key>

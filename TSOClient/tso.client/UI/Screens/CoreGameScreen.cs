@@ -341,14 +341,11 @@ namespace FSO.Client.UI.Screens
             CityFloatingContainer.ScaleX = 1f / Scale.X;
             CityFloatingContainer.ScaleY = 1f / Scale.Y;
             CityRenderer.Camera.ProjectionDirty();
-            Title.SetTitle(Title.Label.Caption); // also re-applies the notch inset (FSOEnvironment.SafeAreaTop)
+            Title.SetTitle(Title.Label.Caption);
             ucp.Y = ScreenHeight - 210;
             gizmo.X = ScreenWidth - 430;
             gizmo.Y = ScreenHeight - 230;
             MessageTray.X = ScreenWidth - 70;
-            // Y was previously set once in the constructor and never revisited, so it could not follow
-            // the notch inset changing with the fullscreen state.
-            MessageTray.Y = 12 + FSO.Common.FSOEnvironment.SafeAreaTop;
             World?.GameResized();
             TransitionWorld?.GameResized();
             var oldPanel = ucp.CurrentPanel;

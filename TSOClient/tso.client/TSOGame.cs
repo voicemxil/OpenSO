@@ -160,10 +160,11 @@ namespace FSO.Client
             GlobalSettings.Default.GraphicsWidth = (int)(width / FSOEnvironment.DPIScaleFactor);
             GlobalSettings.Default.GraphicsHeight = (int)(height / FSOEnvironment.DPIScaleFactor);
 
-            // Recomputed here as well as at the fullscreen toggle: macOS finishes its Spaces transition
-            // by firing this resize, and the notch inset depends on the UI scale, which the AutoDPI
-            // block above may have just changed. Must precede GameResized, which re-lays-out the UI.
-            FSOEnvironment.UpdateSafeArea(fullscreen);
+            // The gap between the display and the frame macOS actually gave us IS the notch strip, and
+            // it is exactly how far mouse coordinates are out. Computed here because this is where the
+            // Spaces transition finishes and the real frame first becomes known.
+            FSOEnvironment.UpdateWindowTopOffset(fullscreen,
+                GraphicsAdapter.DefaultAdapter.CurrentDisplayMode.Height, Window.ClientBounds.Height);
 
             if (uiLayer?.CurrentUIScreen == null) return;
             uiLayer.SpriteBatch.ResizeBuffer(width, height);

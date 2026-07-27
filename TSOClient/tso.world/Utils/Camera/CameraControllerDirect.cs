@@ -67,7 +67,7 @@ namespace FSO.LotView.Utils.Camera
                         RotationY += ((mpos.Y - my) / 500f) * camera.FOV;
                     }
                     // SetPosition takes OS window coordinates (points on macOS Retina); mx/my are pixels
-                    Mouse.SetPosition((int)(mx / FSOEnvironment.WindowPixelRatio), (int)(my / FSOEnvironment.WindowPixelRatio));
+                    Mouse.SetPosition((int)(mx / FSOEnvironment.WindowPixelRatio), FSOEnvironment.UnscaleMouseY(my));
 
                     var wheel = state.MouseState.ScrollWheelValue;
 

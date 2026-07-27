@@ -54,34 +54,42 @@ namespace FSO.Common
         public static float WindowPixelRatio = 1f;
 
         /// <summary>
-        /// Vertical space at the top of the screen that top-anchored UI must keep clear, in the same
-        /// logical units UI elements are positioned in. Non-zero only while running fullscreen on a Mac
-        /// with a camera housing, where we render under the notch by design (see MacSafeArea) - windowed,
-        /// the OS already keeps the window below the menu bar and this is 0.
+        /// Distance in WINDOW POINTS between the window origin the mouse is reported against and the top
+        /// of the content area we actually draw into. Non-zero only while fullscreen on a Mac with a
+        /// camera housing: macOS lays the content out beneath the notch strip while the window still
+        /// starts at the top of the display, so raw mouse coordinates read this much too low.
         /// </summary>
-        public static float SafeAreaTop = 0f;
+        public static float WindowTopOffset = 0f;
 
         /// <summary>
-        /// Recompute SafeAreaTop for the current mode. Notch height is reported in window points, so it
-        /// converts the same way any other window measurement does: to pixels via WindowPixelRatio, then
-        /// into UI units by dividing out the UI scale.
+        /// Recompute WindowTopOffset. Measures the discrepancy directly - the gap between the display
+        /// and the client area we were given - and falls back to asking the OS for the notch height if
+        /// the two agree. Clamped: a wrong offset here breaks all mouse input, so an implausible value
+        /// is discarded in favour of the old behaviour rather than trusted.
         /// </summary>
-        public static void UpdateSafeArea(bool fullscreen)
+        public static void UpdateWindowTopOffset(bool fullscreen, int displayHeightPoints, int clientHeightPoints)
         {
-            var points = fullscreen ? Utils.MacSafeArea.TopPoints : 0f;
-            SafeAreaTop = (points <= 0f || DPIScaleFactor <= 0f)
-                ? 0f
-                : points * WindowPixelRatio / DPIScaleFactor;
+            if (!fullscreen || WindowPixelRatio == 1f) { WindowTopOffset = 0f; return; }
+            float offset = displayHeightPoints - clientHeightPoints;
+            if (offset <= 0f) offset = Utils.MacSafeArea.TopPoints;
+            WindowTopOffset = (offset > 0f && offset < 120f) ? offset : 0f;
         }
 
-        /// <summary>Map a window-space mouse state to backbuffer pixels (see WindowPixelRatio).</summary>
+        /// <summary>
+        /// Map a window-space mouse state to backbuffer pixels (see WindowPixelRatio), first shifting to
+        /// content-relative coordinates (see WindowTopOffset). Every mouse read goes through here, so
+        /// this is the one place that correction belongs - Mouse.SetPosition inverts it.
+        /// </summary>
         public static Microsoft.Xna.Framework.Input.MouseState ScaleMouse(Microsoft.Xna.Framework.Input.MouseState m)
         {
-            if (WindowPixelRatio == 1f) return m;
+            if (WindowPixelRatio == 1f && WindowTopOffset == 0f) return m;
             return new Microsoft.Xna.Framework.Input.MouseState(
-                (int)(m.X * WindowPixelRatio), (int)(m.Y * WindowPixelRatio), m.ScrollWheelValue,
+                (int)(m.X * WindowPixelRatio), (int)((m.Y - WindowTopOffset) * WindowPixelRatio), m.ScrollWheelValue,
                 m.LeftButton, m.MiddleButton, m.RightButton, m.XButton1, m.XButton2, m.HorizontalScrollWheelValue);
         }
+
+        /// <summary>Inverse of ScaleMouse's Y mapping, for handing a pixel position back to Mouse.SetPosition.</summary>
+        public static int UnscaleMouseY(float pixelY) => (int)(pixelY / WindowPixelRatio + WindowTopOffset);
         public static bool SoftwareKeyboard = false;
         public static bool NoSound = false;
         public static int RefreshRate = 60;

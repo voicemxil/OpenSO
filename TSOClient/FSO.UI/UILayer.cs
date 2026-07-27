@@ -356,12 +356,16 @@ namespace FSO.Client.UI
                 _lastWindowedSize = new Point(
                     Math.Max(1, window.ClientBounds.Width),
                     Math.Max(1, window.ClientBounds.Height));
-                // The display mode is the right target again: the bundle opts out of safe-area
-                // compatibility mode (Info.plist), so macOS hands us the whole display rather than
-                // letterboxing content below the notch. Top-anchored UI keeps clear of the notch itself
-                // through FSOEnvironment.SafeAreaTop instead.
-                gdm.PreferredBackBufferWidth = display.Width;
-                gdm.PreferredBackBufferHeight = display.Height;
+                // macOS lays fullscreen content out BENEATH the notch/menu strip rather than behind it,
+                // so the usable frame is shorter than the display mode. Forcing the display height here
+                // made the backbuffer taller than the frame: the strip became a black bar and the bottom
+                // of the screen was pushed off. Let the system pick the frame and adopt whatever it gives
+                // us (Window_ClientSizeChanged) - which is exactly why the green stoplight button works.
+                if (FSOEnvironment.WindowPixelRatio == 1f)
+                {
+                    gdm.PreferredBackBufferWidth = display.Width;
+                    gdm.PreferredBackBufferHeight = display.Height;
+                }
             }
             else
             {
@@ -382,9 +386,6 @@ namespace FSO.Client.UI
                 gdm.PreferredBackBufferHeight = size.Y;
             }
             gdm.ToggleFullScreen();
-
-            // Only fullscreen puts UI near the notch - windowed, the OS keeps us below the menu bar.
-            FSOEnvironment.UpdateSafeArea(gdm.IsFullScreen);
 
             // macOS enters and leaves fullscreen through an ANIMATED Spaces transition, so ClientBounds
             // is still the pre-toggle frame at this point - sizing from it would bake in the old
