@@ -349,6 +349,17 @@ namespace FSO.Client.UI
         private void ToggleFullscreenMode()
         {
             var gdm = GameFacade.GraphicsDeviceManager;
+
+            // macOS: Alt+Enter drives the NATIVE (Spaces) fullscreen - the exact mechanism behind the
+            // green stoplight button - instead of SDL's. Native is the only variant that has ever
+            // handled the notch correctly (frame placed below the housing, mouse origin matching the
+            // content), and running SDL fullscreen alongside it let the two stack, sizing the drawable
+            // to the raw display mode with the top UI cut off. One mechanism, one layout path: the exit
+            // and entry both land in Window_ClientSizeChanged, which adopts whatever frame the system
+            // grants. gdm.IsFullScreen therefore never becomes true on macOS. Returns false off-mac (or
+            // with no key window), falling through to the SDL toggle below.
+            if (FSO.Common.Utils.MacWindowState.ToggleNativeFullScreen()) return;
+
             var window = GameFacade.Game.Window;
             var display = GraphicsAdapter.DefaultAdapter.CurrentDisplayMode;
             if (!gdm.IsFullScreen)
